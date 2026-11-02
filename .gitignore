@@ -1,0 +1,20 @@
+# phpize / configure output
+*.lo
+*.la
+*.o
+.libs/
+modules/
+autom4te.cache/
+build/
+Makefile*
+config.h
+config.h.in
+config.log
+config.nice
+config.status
+configure
+configure.ac
+libtool
+run-tests.php
+tools/oracle/codec_oracle.so
+__pycache__/

@@ -1,0 +1,11 @@
+ext-dlpack
+Copyright (c) 2026 Frode Børli
+
+This product includes dlpack.h from DLPack (https://github.com/dmlc/dlpack),
+Copyright (c) 2017 by Contributors, licensed under the Apache License 2.0
+(see LICENSE.dlpack). The vendored file is unmodified, taken from upstream
+commit 94485e23519bc30e22a18397a9c8ff1ea6b2b81e (DLPack v1.3).
+
+The reduced-precision floating point formats follow the ml_dtypes project
+(https://github.com/jax-ml/ml_dtypes, Apache License 2.0), which is used as the
+test oracle; no ml_dtypes source code is included.
