@@ -34,7 +34,7 @@ foreach ([
     function() use ($v) { unset($v[0][0][0]); }, function() use ($v) { unset($v[0]); },
     function() use ($v) { $v->foo = 1; }, fn() => clone $v, fn() => serialize($v), fn() => new BufferView(),
 ] as $i => $f) {
-    try { $f(); echo "$i: no error\n"; } catch (Throwable $e) { echo "$i: ", get_class($e), ": ", $e->getMessage(), "\n"; }
+    try { $f(); echo "$i: no error\n"; } catch (Throwable $e) { echo "$i: ", get_class($e), ": ", str_replace([(string)PHP_INT_MAX, (string)PHP_INT_MIN], ["INT_MAX", "INT_MIN"], $e->getMessage()), "\n"; }
 }
 set_error_handler(function ($no, $msg) { echo "notice: $msg\n"; return true; });
 $v[0][0][0]++;
@@ -88,8 +88,8 @@ int(23)
 1: ValueError: Index -1 is out of range for an axis of length 2
 2: ValueError: Index 3 is out of range for an axis of length 3
 3: ValueError: Index 4 is out of range for an axis of length 4
-4: ValueError: Index 9223372036854775807 is out of range for an axis of length 2
-5: ValueError: Index -9223372036854775808 is out of range for an axis of length 2
+4: ValueError: Index INT_MAX is out of range for an axis of length 2
+5: ValueError: Index INT_MIN is out of range for an axis of length 2
 6: TypeError: BufferView offset must be of type int, array given
 7: TypeError: BufferView offset must be of type int, string given
 8: TypeError: BufferView offset must be of type int, float given

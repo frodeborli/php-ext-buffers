@@ -80,9 +80,9 @@ BUFFERS_API zend_class_entry *buffers_get_class(int which);
  * object stores nothing for them. Call it from MINIT, once per class, before the class is used. Userland
  * classes cannot implement Tensor. */
 BUFFERS_API void buffers_implement_tensor(zend_class_entry *ce,
-	void (*get_dtype)(INTERNAL_FUNCTION_PARAMETERS),
-	void (*get_shape)(INTERNAL_FUNCTION_PARAMETERS),
-	void (*get_ndim)(INTERNAL_FUNCTION_PARAMETERS));
+	zif_handler get_dtype,
+	zif_handler get_shape,
+	zif_handler get_ndim);
 
 /* ---- devices --------------------------------------------------------------------------- */
 

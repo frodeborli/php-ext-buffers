@@ -39,7 +39,7 @@ $cases = [
     'gap'               => fn() => new Shape([1 => 2]),
     'no arguments'      => fn() => new Shape(),
     'int argument'      => fn() => new Shape(3),
-    'overflow size'     => fn() => (new Shape([PHP_INT_MAX, 2]))->size(),
+    'overflow size'     => fn() => (new Shape([PHP_INT_MAX, PHP_INT_MAX, PHP_INT_MAX]))->size(),
     'clone'             => fn() => clone $s,
     'serialize'         => fn() => serialize($s),
     'dynamic property'  => function () use ($s) { $s->x = 1; },

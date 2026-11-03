@@ -27,6 +27,7 @@ var_dump($wr->get());
 
 echo "every dtype round trips\n";
 foreach (DType::cases() as $c) {
+    if (PHP_INT_SIZE === 4 && in_array($c, [DType::Int64, DType::UInt64, DType::UInt32])) continue;   // not viewable on 32-bit PHP
     $buf = new ArrayBuffer(128);
     $sh = $c->byteSize() === null ? [2, 8] : [2, 3]; // packed rows must be whole bytes
     $x = $buf->view($c, $sh);

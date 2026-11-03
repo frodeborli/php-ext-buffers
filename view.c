@@ -100,11 +100,14 @@ CODEC_CPLX(COMPLEX64, 4, (double)ld_f32(q), st_f32(q, (float)x))
 CODEC_CPLX(COMPLEX128, 8, ld_f64(q), st_f64(q, x))
 
 /* Packed sub-byte formats: element i of a row is the bits [i*BITS, (i+1)*BITS) of the row's bytes, little-bit-endian
- * (DLPack's default). A row starts on a byte boundary. fp6 elements can straddle a byte boundary: they read a
- * 16-bit window only when they do (the second byte may lie past the end of the buffer otherwise). */
+ * (DLPack's default). A row starts on a byte boundary. fp6 elements can straddle a byte boundary: they read
+ * a 16-bit window only when they do (the second byte may lie past the end of the buffer otherwise). The window
+ * is assembled byte by byte, (b0 | b1 << 8) >> shift, on every host: the bit order inside packed data is defined
+ * by the format, not by the byte order of the machine. Whole elements (int16, float32, ...) use the host's
+ * native byte order, like NumPy, PyTorch, DLPack and JS typed arrays; they are loaded with memcpy. */
 static zend_always_inline unsigned pk_get(const uint8_t *row, zend_ulong i, unsigned bits)
 {
-	zend_ulong bit = i * bits;
+	uint64_t bit = (uint64_t)i * bits;
 	const uint8_t *p = row + (bit >> 3);
 	unsigned sh = bit & 7, w = p[0];
 
@@ -114,7 +117,7 @@ static zend_always_inline unsigned pk_get(const uint8_t *row, zend_ulong i, unsi
 
 static zend_always_inline void pk_put(uint8_t *row, zend_ulong i, unsigned bits, unsigned code)
 {
-	zend_ulong bit = i * bits;
+	uint64_t bit = (uint64_t)i * bits;
 	uint8_t *p = row + (bit >> 3);
 	unsigned sh = bit & 7, mask = ((1u << bits) - 1) << sh, w = p[0];
 
@@ -648,6 +651,11 @@ zend_object *buf_view_make(zend_object *bufobj, int dt, int ndim, const int64_t 
 	int64_t size = info->size, bits = info->bits;
 	int64_t shape[BUF_MAX_NDIM] = {0}, st[BUF_MAX_NDIM] = {0}, sb[BUF_MAX_NDIM] = {0}, t, last = 0, extent;
 
+#if SIZEOF_ZEND_LONG == 4
+	if (!buf_dtype_fits_php_int(dt)) {
+		FAIL(1, "the dtype %s is not supported on 32-bit PHP: its values do not fit a PHP int", info->name);
+	}
+#endif
 	if (ndim < 0 || ndim > BUF_MAX_NDIM) {
 		FAIL(2, "must have between 0 and %d elements", BUF_MAX_NDIM);
 	}
@@ -766,6 +774,10 @@ void buf_buffer_view_impl(zend_object *bufobj, INTERNAL_FUNCTION_PARAMETERS)
 	ZEND_PARSE_PARAMETERS_END();
 
 	dt = buf_dtype_from_object(dtobj);
+	if (!buf_dtype_fits_php_int(dt)) {
+		zend_argument_value_error(1, "the dtype %s is not supported on 32-bit PHP: its values do not fit a PHP int", buf_dtypes[dt].name);
+		RETURN_THROWS();
+	}
 	packed = buf_is_packed(dt);
 
 	if (!shape_zv || Z_TYPE_P(shape_zv) == IS_NULL) {
@@ -850,11 +862,11 @@ ZEND_END_ARG_INFO()
 ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(ai_get_array, 0, 0, IS_ARRAY, 0)
 ZEND_END_ARG_INFO()
 
-static void hook_dtype(INTERNAL_FUNCTION_PARAMETERS) { ZEND_PARSE_PARAMETERS_NONE(); buf_dtype_to_zval(VIEW->dt, return_value); }
-static void hook_ndim(INTERNAL_FUNCTION_PARAMETERS) { ZEND_PARSE_PARAMETERS_NONE(); RETURN_LONG(VIEW->ndim); }
-static void hook_buffer(INTERNAL_FUNCTION_PARAMETERS) { ZEND_PARSE_PARAMETERS_NONE(); RETURN_OBJ_COPY(VIEW->buf); }
+static ZEND_NAMED_FUNCTION(hook_dtype) { ZEND_PARSE_PARAMETERS_NONE(); buf_dtype_to_zval(VIEW->dt, return_value); }
+static ZEND_NAMED_FUNCTION(hook_ndim) { ZEND_PARSE_PARAMETERS_NONE(); RETURN_LONG(VIEW->ndim); }
+static ZEND_NAMED_FUNCTION(hook_buffer) { ZEND_PARSE_PARAMETERS_NONE(); RETURN_OBJ_COPY(VIEW->buf); }
 
-static void hook_shape(INTERNAL_FUNCTION_PARAMETERS)
+static ZEND_NAMED_FUNCTION(hook_shape)
 {
 	buf_view *v = VIEW;
 
@@ -862,7 +874,7 @@ static void hook_shape(INTERNAL_FUNCTION_PARAMETERS)
 	RETURN_OBJ(buf_shape_new_ints(v->ndim, v->shape));
 }
 
-static void hook_strides(INTERNAL_FUNCTION_PARAMETERS)
+static ZEND_NAMED_FUNCTION(hook_strides)
 {
 	buf_view *v = VIEW;
 	int64_t st[BUF_MAX_NDIM];
@@ -873,7 +885,7 @@ static void hook_strides(INTERNAL_FUNCTION_PARAMETERS)
 	for (int i = 0; i < v->ndim; i++) add_next_index_long(return_value, st[i]);
 }
 
-static void hook_offset(INTERNAL_FUNCTION_PARAMETERS)
+static ZEND_NAMED_FUNCTION(hook_offset)
 {
 	buf_view *v = VIEW;
 
@@ -895,8 +907,8 @@ static zend_result tensor_implemented(zend_class_entry *iface, zend_class_entry 
 	return SUCCESS;
 }
 
-void buffers_implement_tensor(zend_class_entry *ce, void (*get_dtype)(INTERNAL_FUNCTION_PARAMETERS),
-	void (*get_shape)(INTERNAL_FUNCTION_PARAMETERS), void (*get_ndim)(INTERNAL_FUNCTION_PARAMETERS))
+void buffers_implement_tensor(zend_class_entry *ce, zif_handler get_dtype,
+	zif_handler get_shape, zif_handler get_ndim)
 {
 	const buf_prop_def defs[] = {
 		{ "dtype", class_type("Buffers\\DType", true), get_dtype, ai_get_dtype_n, 0 },

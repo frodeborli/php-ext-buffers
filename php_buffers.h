@@ -75,6 +75,16 @@ extern const buf_dtype_info buf_dtypes[BUF_NTYPES];
 
 static inline bool buf_is_packed(int dt) { return buf_dtypes[dt].size == 0; }
 
+/* 32-bit PHP (SIZEOF_ZEND_LONG == 4): Int64, UInt64 and UInt32 elements do not fit a PHP int, so no view can have them */
+static inline bool buf_dtype_fits_php_int(int dt)
+{
+#if SIZEOF_ZEND_LONG == 4
+	return dt != BUF_T_INT64 && dt != BUF_T_UINT64 && dt != BUF_T_UINT32;
+#else
+	return true;
+#endif
+}
+
 /* Memory owner: ArrayBuffer (alloc != NULL) or DLPackBuffer (foreign memory or memory kept alive by an owner). */
 typedef struct {
 	uint8_t *base;
@@ -210,7 +220,7 @@ const char *buf_device_type_name(int32_t type);
 typedef struct {
 	const char *name;
 	zend_type type;
-	void (*get)(INTERNAL_FUNCTION_PARAMETERS);
+	zif_handler get;
 	const zend_internal_arg_info *arginfo;
 	uint32_t num_args;
 } buf_prop_def;

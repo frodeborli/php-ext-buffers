@@ -15,7 +15,7 @@ foreach (DType::cases() as $c) {
     foreach ($inputs as $x) {
         $v[0] = $x;
         $r = $v[0];
-        printf("  %-10s code=%02x %s\n", is_nan($x) ? (fdiv(1, 1) && unpack('J', pack('d', $x))[1] >> 63 ? '-NAN' : 'NAN') : var_export($x, true), ord($b->toString()[0]) & ((1 << $c->bits()) - 1), is_nan($r) ? 'NAN' : (($r == 0 && fdiv(1, $r) < 0) ? '-0' : var_export($r, true)));
+        printf("  %-10s code=%02x %s\n", is_nan($x) ? (fdiv(1, 1) && ord(pack('E', $x)[0]) >> 7 ? '-NAN' : 'NAN') : var_export($x, true), ord($b->toString()[0]) & ((1 << $c->bits()) - 1), is_nan($r) ? 'NAN' : (($r == 0 && fdiv(1, $r) < 0) ? '-0' : var_export($r, true)));
     }
 }
 echo "decode every code\n";
@@ -58,7 +58,7 @@ Float8E3M4
   INF        code=70 INF
   -INF       code=f0 -INF
   NAN        code=78 NAN
-  NAN        code=f8 NAN
+  -NAN       code=f8 NAN
 Float8E4M3
   0.0        code=00 0.0
   -0.0       code=80 -0
@@ -84,7 +84,7 @@ Float8E4M3
   INF        code=78 INF
   -INF       code=f8 -INF
   NAN        code=7c NAN
-  NAN        code=fc NAN
+  -NAN       code=fc NAN
 Float8E4M3B11FNUZ
   0.0        code=00 0.0
   -0.0       code=00 0.0
@@ -110,7 +110,7 @@ Float8E4M3B11FNUZ
   INF        code=80 NAN
   -INF       code=80 NAN
   NAN        code=80 NAN
-  NAN        code=80 NAN
+  -NAN       code=80 NAN
 Float8E4M3FN
   0.0        code=00 0.0
   -0.0       code=80 -0
@@ -136,7 +136,7 @@ Float8E4M3FN
   INF        code=7f NAN
   -INF       code=ff NAN
   NAN        code=7f NAN
-  NAN        code=ff NAN
+  -NAN       code=ff NAN
 Float8E4M3FNUZ
   0.0        code=00 0.0
   -0.0       code=00 0.0
@@ -162,7 +162,7 @@ Float8E4M3FNUZ
   INF        code=80 NAN
   -INF       code=80 NAN
   NAN        code=80 NAN
-  NAN        code=80 NAN
+  -NAN       code=80 NAN
 Float8E5M2
   0.0        code=00 0.0
   -0.0       code=80 -0
@@ -188,7 +188,7 @@ Float8E5M2
   INF        code=7c INF
   -INF       code=fc -INF
   NAN        code=7e NAN
-  NAN        code=fe NAN
+  -NAN       code=fe NAN
 Float8E5M2FNUZ
   0.0        code=00 0.0
   -0.0       code=00 0.0
@@ -214,7 +214,7 @@ Float8E5M2FNUZ
   INF        code=80 NAN
   -INF       code=80 NAN
   NAN        code=80 NAN
-  NAN        code=80 NAN
+  -NAN       code=80 NAN
 Float8E8M0FNU
   0.0        code=ff NAN
   -0.0       code=ff NAN
@@ -240,7 +240,7 @@ Float8E8M0FNU
   INF        code=ff NAN
   -INF       code=ff NAN
   NAN        code=ff NAN
-  NAN        code=ff NAN
+  -NAN       code=ff NAN
 Float6E2M3FN
   0.0        code=00 0.0
   -0.0       code=20 -0
@@ -266,7 +266,7 @@ Float6E2M3FN
   INF        code=1f 7.5
   -INF       code=3f -7.5
   NAN        code=20 -0
-  NAN        code=00 0.0
+  -NAN       code=00 0.0
 Float6E3M2FN
   0.0        code=00 0.0
   -0.0       code=20 -0
@@ -292,7 +292,7 @@ Float6E3M2FN
   INF        code=1f 28.0
   -INF       code=3f -28.0
   NAN        code=20 -0
-  NAN        code=00 0.0
+  -NAN       code=00 0.0
 Float4E2M1FN
   0.0        code=00 0.0
   -0.0       code=08 -0
@@ -318,7 +318,7 @@ Float4E2M1FN
   INF        code=07 6.0
   -INF       code=0f -6.0
   NAN        code=08 -0
-  NAN        code=00 0.0
+  -NAN       code=00 0.0
 decode every code
 Float8E3M4           256 codes, md5 29022d0b44a1cb48af09c56301801f87
 Float8E4M3           256 codes, md5 b12935c48a7565a05fe17c4378e2bd7f

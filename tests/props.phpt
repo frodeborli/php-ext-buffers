@@ -27,7 +27,7 @@ try { unset($v->ndim); echo "unset ok\n"; } catch (Error $e) { echo get_class($e
 try { $v->shape[] = 1; } catch (Error $e) { echo get_class($e), ': ', $e->getMessage(), "\n"; }
 try { $v->strides[0] = 99; echo "array copy modified: ", json_encode($v->strides), "\n"; } catch (Error $e) { echo get_class($e), ': ', $e->getMessage(), "\n"; }
 try { $v->nope = 1; } catch (Error $e) { echo get_class($e), ': ', $e->getMessage(), "\n"; }
-try { $x = $v->nope; } catch (Error $e) { echo get_class($e), ': ', $e->getMessage(), "\n"; }
+var_dump(@$v->nope);
 
 echo "isset, property_exists, enumeration\n";
 var_dump(isset($v->ndim), isset($v->nope), property_exists($v, 'shape'), property_exists(BufferView::class, 'offset'));
@@ -104,8 +104,7 @@ Error: Cannot unset hooked property Buffers\BufferView::$ndim
 Error: Cannot modify a Shape: it is immutable
 Error: Indirect modification of Buffers\BufferView::$strides is not allowed
 Error: Cannot create dynamic property Buffers\BufferView::$nope
-
-Warning: Undefined property: Buffers\BufferView::$nope in /tmp/claude-1000/-home-frode/ef688df8-4de0-41db-a1cf-1d0800d75848/scratchpad/b84/tests/props.php on line 25
+NULL
 isset, property_exists, enumeration
 bool(true)
 bool(false)

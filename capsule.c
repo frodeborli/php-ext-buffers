@@ -159,6 +159,9 @@ zend_object *buf_view_import(DLManagedTensorVersioned *t)
 	if (dt < 0) {
 		IMPORT_FAIL("Unsupported DLPack dtype (code %u, %u bits)", (unsigned)d->dtype.code, (unsigned)d->dtype.bits);
 	}
+	if (!buf_dtype_fits_php_int(dt)) {
+		IMPORT_FAIL("The dtype %s is not supported on 32-bit PHP: its values do not fit a PHP int", buf_dtypes[dt].name);
+	}
 	packed = buf_is_packed(dt);
 	size = buf_dtypes[dt].size;
 	bits = buf_dtypes[dt].bits;

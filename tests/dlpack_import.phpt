@@ -1,7 +1,7 @@
 --TEST--
 DLPack import of foreign tensors; the deleter runs exactly once
 --SKIPIF--
-<?php if (!extension_loaded('buffers') || !function_exists('buffers_test_make')) die('skip needs a build with --enable-buffers-testing'); ?>
+<?php if (!extension_loaded('buffers') || !function_exists('buffers_test_make')) die('skip needs a build with --enable-buffers-testing'); if (PHP_INT_SIZE !== 8) die('skip 64-bit PHP only: imports Int64, UInt64 and UInt32 tensors (tests/bits32.phpt covers 32-bit)'); ?>
 --FILE--
 <?php
 use Buffers\{DType, BufferView, BufferInterface, DLPackBuffer, DLPackCapsule, Tensor};

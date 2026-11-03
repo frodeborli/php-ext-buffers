@@ -1,7 +1,7 @@
 --TEST--
 Integer dtypes: wrapping, float conversion, type errors
 --SKIPIF--
-<?php if (!extension_loaded('buffers')) die('skip buffers extension not loaded'); ?>
+<?php if (!extension_loaded('buffers')) die('skip buffers extension not loaded'); if (PHP_INT_SIZE !== 8) die('skip 64-bit PHP only: tests Int64, UInt64 and UInt32'); ?>
 --FILE--
 <?php
 use Buffers\{DType, ArrayBuffer, BufferView};

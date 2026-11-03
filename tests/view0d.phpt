@@ -66,7 +66,7 @@ var_dump($i->ndim, $i->shape->toArray(), $i->strides, $i->offset, $i->dtype, $i-
 $w[0] = 7;
 $p = BufferView::fromDLPack(buffers_test_make(2, 32, 1, []));          // float32 scalar from a foreign producer
 var_dump($p->ndim, $p->dtype, $p->buffer->byteLength());
-$p2 = BufferView::fromDLPack(buffers_test_make(0, 64, 1, [], null, 0, 1, 0, 1));   // DLPack 1.1: NULL strides, still a scalar
+$p2 = BufferView::fromDLPack(buffers_test_make(0, 32, 1, [], null, 0, 1, 0, 1));   // DLPack 1.1: NULL strides, still a scalar
 var_dump($p2->ndim, $p2->dtype);
 $c = buffers_test_counts(); unset($p, $p2, $i); $d = buffers_test_counts();
 echo $d["made"] - $d["deleted"], " live after release\n";
@@ -124,6 +124,6 @@ int(0)
 enum(Buffers\DType::Float32)
 int(4)
 int(0)
-enum(Buffers\DType::Int64)
+enum(Buffers\DType::Int32)
 0 live after release
 end

@@ -492,19 +492,19 @@ PHP_METHOD(BatTensor, __construct)
 	t->dtype = (int)dtype;
 }
 
-static void tensor_get_dtype(INTERNAL_FUNCTION_PARAMETERS)
+static ZEND_NAMED_FUNCTION(tensor_get_dtype)
 {
 	ZEND_PARSE_PARAMETERS_NONE();
 	buffers_dtype_to_zval(tensor_from(Z_OBJ_P(ZEND_THIS))->dtype, return_value);
 }
 
-static void tensor_get_ndim(INTERNAL_FUNCTION_PARAMETERS)
+static ZEND_NAMED_FUNCTION(tensor_get_ndim)
 {
 	ZEND_PARSE_PARAMETERS_NONE();
 	RETURN_LONG(tensor_from(Z_OBJ_P(ZEND_THIS))->ndim);
 }
 
-static void tensor_get_shape(INTERNAL_FUNCTION_PARAMETERS)
+static ZEND_NAMED_FUNCTION(tensor_get_shape)
 {
 	zend_long n = tensor_from(Z_OBJ_P(ZEND_THIS))->ndim;
 	zval *dims = safe_emalloc(n ? n : 1, sizeof(zval), 0);

@@ -1,7 +1,7 @@
 --TEST--
 NaN conversions: float16 keeps the payload like numpy, the other formats canonicalise like ml_dtypes
 --SKIPIF--
-<?php if (!extension_loaded('buffers')) die('skip buffers extension not loaded'); ?>
+<?php if (!extension_loaded('buffers')) die('skip buffers extension not loaded'); if (pack('S', 1) !== "\x01\x00") die('skip prints the bytes of elements: little-endian only'); ?>
 --FILE--
 <?php
 use Buffers\{DType, ArrayBuffer};
