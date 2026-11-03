@@ -9,6 +9,10 @@
 /* encode n consecutive float32 bit patterns starting at `start` (as doubles, exactly as PHP would) */
 int oracle_enc_f32(int fmt, uint32_t start, uint64_t n, uint16_t *out)
 {
+	if (fmt == 11) { /* float16: from the float32 bits directly - a float32 signalling NaN would be quietened by the conversion to double */
+		for (uint64_t k = 0; k < n; k++) out[k] = (uint16_t)dlp_enc((uint32_t)(start + k), 8, 23, 127, 5, 10, 15, DLP_K_HALF);
+		return 0;
+	}
 	switch (fmt) {
 #define X(i, id) case i: for (uint64_t k = 0; k < n; k++) { uint32_t u = (uint32_t)(start + k); float f; memcpy(&f, &u, 4); out[k] = dlp_enc_##id((double)f); } return 0;
 	FORMATS(X)

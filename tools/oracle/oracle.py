@@ -87,6 +87,9 @@ def doubles(which):
         extra = np.concatenate([mid, np.nextafter(mid, np.inf), np.nextafter(mid, -np.inf), v,
                                 np.nextafter(v, np.inf), np.nextafter(v, -np.inf),
                                 [0.0, -0.0, np.inf, -np.inf, np.nan, -np.nan, 5e-324, 1.7976931348623157e308]])
+        if i == 11:   # NaNs with random payloads and signs: numpy carries the payload into the half NaN
+            nan_bits = (rng.integers(1, 1 << 52, 200_000, dtype=np.uint64) | np.uint64(0x7FF0000000000000)) | (rng.integers(0, 2, 200_000, dtype=np.uint64) << np.uint64(63))
+            extra = np.concatenate([extra, nan_bits.view(np.float64)])
         x = np.concatenate([x, extra])
         out = np.empty(x.size, dtype=np.uint16)
         lib.oracle_enc_f64(i, x.ctypes.data_as(ctypes.c_void_p), ctypes.c_uint64(x.size), out.ctypes.data_as(ctypes.c_void_p))

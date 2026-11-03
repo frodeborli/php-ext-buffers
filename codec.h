@@ -16,7 +16,8 @@
 #define DLP_INLINE static inline __attribute__((always_inline))
 #endif
 
-enum { DLP_K_IEEE, DLP_K_FN, DLP_K_FNUZ, DLP_K_SAT };
+/* DLP_K_HALF is IEEE with numpy's float16 NaN rule: the payload is carried over, not canonicalised */
+enum { DLP_K_IEEE, DLP_K_FN, DLP_K_FNUZ, DLP_K_SAT, DLP_K_HALF };
 
 /* SMALL(id, exponent bits, mantissa bits, bias, kind) - all formats of at most 8 bits except e8m0 */
 #define DLP_SMALL(X) \
@@ -40,12 +41,17 @@ DLP_INLINE uint32_t dlp_enc(uint64_t u, int SE, int SM, int SB, int E, int M, in
 	uint64_t infbits = ((1ull << SE) - 1) << SM;
 	uint32_t sbit = 1u << (E + M), sgn = s ? sbit : 0;
 	uint32_t inf = ((1u << E) - 1) << M;
-	uint32_t maxc = kind == DLP_K_IEEE ? inf - 1 : kind == DLP_K_FN ? sbit - 2 : sbit - 1;
+	int ieee = kind == DLP_K_IEEE || kind == DLP_K_HALF;
+	uint32_t maxc = ieee ? inf - 1 : kind == DLP_K_FN ? sbit - 2 : sbit - 1;
 	uint64_t code;
 
 	if (a > infbits) { /* NaN */
 		if (kind == DLP_K_FNUZ) return sbit;
 		if (kind == DLP_K_SAT) return s ? 0 : sbit; /* ml_dtypes quirk: the sign is inverted */
+		if (kind == DLP_K_HALF) {
+			uint32_t r = inf + (uint32_t)((a & ((1ull << SM) - 1)) >> (SM - M));
+			return sgn | (r == inf ? r + 1 : r); /* a payload that would shift out still has to be a NaN */
+		}
 		return sgn | (kind == DLP_K_IEEE ? inf | (1u << (M - 1)) : sbit - 1);
 	}
 	if (a == infbits) {
@@ -68,7 +74,7 @@ DLP_INLINE uint32_t dlp_enc(uint64_t u, int SE, int SM, int SB, int E, int M, in
 		}
 	}
 	if (code > maxc) {
-		if (kind == DLP_K_IEEE) return sgn | inf;
+		if (ieee) return sgn | inf;
 		if (kind == DLP_K_FN) return sgn | (sbit - 1);
 		if (kind == DLP_K_FNUZ) return sbit;
 		return sgn | maxc;
@@ -94,7 +100,7 @@ DLP_INLINE uint16_t dlp_enc_FLOAT16(double d)
 {
 	uint64_t u;
 	memcpy(&u, &d, 8);
-	return (uint16_t)dlp_enc(u, 11, 52, 1023, 5, 10, 15, DLP_K_IEEE);
+	return (uint16_t)dlp_enc(u, 11, 52, 1023, 5, 10, 15, DLP_K_HALF);
 }
 
 DLP_INLINE uint16_t dlp_enc_BFLOAT16(double d)
