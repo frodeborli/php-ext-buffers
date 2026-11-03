@@ -107,32 +107,6 @@ CODEC_CPLX(COMPLEX128, 8, ld_f64(q), st_f64(q, x))
  * is assembled byte by byte, (b0 | b1 << 8) >> shift, on every host: the bit order inside packed data is defined
  * by the format, not by the byte order of the machine. Whole elements (int16, float32, ...) use the host's
  * native byte order, like NumPy, PyTorch, DLPack and JS typed arrays; they are loaded with memcpy. */
-static zend_always_inline unsigned pk_get(const uint8_t *row, zend_ulong i, unsigned bits)
-{
-	uint64_t bit = (uint64_t)i * bits;
-	const uint8_t *p = row + (bit >> 3);
-	unsigned sh = bit & 7, w = p[0];
-
-	if (sh + bits > 8) w |= (unsigned)p[1] << 8;
-	return (w >> sh) & ((1u << bits) - 1);
-}
-
-static zend_always_inline void pk_put(uint8_t *row, zend_ulong i, unsigned bits, unsigned code)
-{
-	uint64_t bit = (uint64_t)i * bits;
-	uint8_t *p = row + (bit >> 3);
-	unsigned sh = bit & 7, mask = ((1u << bits) - 1) << sh, w = p[0];
-
-	if (sh + bits > 8) {
-		w |= (unsigned)p[1] << 8;
-		w = (w & ~mask) | (code << sh);
-		p[0] = (uint8_t)w;
-		p[1] = (uint8_t)(w >> 8);
-	} else {
-		p[0] = (uint8_t)((w & ~mask) | (code << sh));
-	}
-}
-
 #define CODEC_PK(ID, E, M, B, K) \
 	static zend_always_inline void rdp_##ID(const uint8_t *row, zend_ulong i, zval *z) { \
 		ZVAL_DOUBLE(z, buf_tab[BUF_T_##ID - BUF_T_F8E3M4][pk_get(row, i, E + M + 1)]); } \

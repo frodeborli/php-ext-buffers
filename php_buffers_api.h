@@ -9,7 +9,7 @@
  * fails, unless stated otherwise. Objects are ordinary refcounted zend_objects; hold them with
  * GC_ADDREF / buffers_hold() and release them with OBJ_RELEASE / buffers_release().
  *
- * Version history: 1 = first version.
+ * Version history: 1 = first version; 2 = buffers_convert(), buffers_declare_virtual_props().
  */
 #ifndef PHP_BUFFERS_API_H
 #define PHP_BUFFERS_API_H
@@ -17,7 +17,7 @@
 #include "php.h"
 #include "dlpack.h"
 
-#define BUFFERS_API_VERSION 1
+#define BUFFERS_API_VERSION 2
 
 #if defined(BUFFERS_BUILDING) && defined(__GNUC__)
 # define BUFFERS_API __attribute__((visibility("default")))
@@ -67,6 +67,21 @@ BUFFERS_API int buffers_dtype_from_object(zend_object *dtype_case);
 /* the dtype for a DLPack type code and bit width (one lane), or -1 */
 BUFFERS_API int buffers_dtype_from_dlpack(int code, int bits);
 
+/* ---- element conversion ---------------------------------------------------------------- */
+
+/* Converts n elements of one dtype to another: element k is read at src + k * src_stride and written at dst + k * dst_stride
+ * (strides in elements; a packed sub-byte dtype ignores its stride: its elements are consecutive from bit 0 of the pointer, which
+ * must be the start of a row, i.e. byte aligned). Does not throw, and does not check the memory: the caller guarantees that every
+ * element lies inside readable and writable memory. Every pair of dtypes is supported. Rules: a decoded value is an int64
+ * (Bool, Int*), a uint64 (UInt*), a double (floats) or a pair of doubles (complex), converted to the class of the destination:
+ *  - to an integer dtype: integers wrap to the width (two's complement); a float is truncated toward zero first, a complex number
+ *    loses its imaginary part; out-of-range floats and NaN give an unspecified integer;
+ *  - to Bool: non-zero (a complex number: either part non-zero);
+ *  - to a float dtype: the value rounded to that format (ml_dtypes' rules, see the README); a complex number loses its imaginary part;
+ *  - to a complex dtype: real values get an imaginary part of 0; both parts are rounded to the component format. */
+BUFFERS_API void buffers_convert(int src_dtype, const uint8_t *src, int64_t src_stride,
+	int dst_dtype, uint8_t *dst, int64_t dst_stride, int64_t n);
+
 /* ---- classes --------------------------------------------------------------------------- */
 
 enum {
@@ -85,6 +100,19 @@ BUFFERS_API void buffers_implement_tensor_interface(zend_class_entry *ce,
 	zif_handler get_dtype,
 	zif_handler get_shape,
 	zif_handler get_ndim);
+
+/* Declares read-only virtual properties on an internal class (a class that implements Buffers\TensorInterface declares its
+ * three with buffers_implement_tensor_interface() instead). Like those, they are served by internal get hooks, functions called
+ * with the object as $this that return the value, so the object stores nothing for them; writes fail in the engine
+ * ("is read-only"). `arginfo` describes the hook: a zend_internal_arg_info array whose first entry carries the return type
+ * (ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX), `type` is the declared type of the property. Call from MINIT, before the class is used. */
+typedef struct {
+	const char *name;
+	zend_type type;
+	zif_handler get;
+	const zend_internal_arg_info *arginfo;
+} buffers_virtual_prop;
+BUFFERS_API void buffers_declare_virtual_props(zend_class_entry *ce, const buffers_virtual_prop *props, int n);
 
 /* ---- devices --------------------------------------------------------------------------- */
 

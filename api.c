@@ -30,6 +30,15 @@ zend_class_entry *buffers_get_class(int which)
 	return NULL;
 }
 
+void buffers_declare_virtual_props(zend_class_entry *ce, const buffers_virtual_prop *props, int n)
+{
+	for (int i = 0; i < n; i++) {
+		buf_prop_def d = { props[i].name, props[i].type, props[i].get, props[i].arginfo, 0, NULL, NULL };
+
+		buf_declare_hooked_props(ce, &d, 1);
+	}
+}
+
 /* ---- dtypes ---- */
 
 const buffers_dtype_desc *buffers_dtype_describe(int dtype)

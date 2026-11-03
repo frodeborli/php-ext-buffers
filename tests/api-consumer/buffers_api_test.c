@@ -785,6 +785,60 @@ static zend_result describing_handler(uint8_t opcode, zval *result, zval *op1, z
 	return SUCCESS;
 }
 
+/* ---- element conversion ------------------------------------------------------------------------- */
+
+/* bat_convert(DType $from, string $bytes, DType $to, int $n, int $srcStride = 1, int $dstStride = 1): string - the destination
+ * bytes (zero-filled first), n elements converted with buffers_convert(). The source is padded so that reading n elements is safe. */
+PHP_FUNCTION(bat_convert)
+{
+	zend_object *from, *to;
+	zend_string *bytes, *out;
+	zend_long n, ss = 1, ds = 1;
+	int sd, dd;
+	size_t slen, dlen;
+	uint8_t *src;
+
+	ZEND_PARSE_PARAMETERS_START(4, 6)
+		Z_PARAM_OBJ(from)
+		Z_PARAM_STR(bytes)
+		Z_PARAM_OBJ(to)
+		Z_PARAM_LONG(n)
+		Z_PARAM_OPTIONAL
+		Z_PARAM_LONG(ss)
+		Z_PARAM_LONG(ds)
+	ZEND_PARSE_PARAMETERS_END();
+
+	sd = buffers_dtype_from_object(from);
+	dd = buffers_dtype_from_object(to);
+	if (n < 0 || ss < 1 || ds < 1) {
+		zend_value_error("bad count or stride");
+		RETURN_THROWS();
+	}
+	slen = (size_t)(((n ? (n - 1) * ss + 1 : 0) * buffers_dtype_describe(sd)->bits + 7) / 8) + 16;
+	dlen = (size_t)(((n ? (n - 1) * ds + 1 : 0) * buffers_dtype_describe(dd)->bits + 7) / 8);
+	if (ZSTR_LEN(bytes) > slen) slen = ZSTR_LEN(bytes);
+	src = calloc(1, slen);
+	memcpy(src, ZSTR_VAL(bytes), ZSTR_LEN(bytes));
+	out = zend_string_alloc(dlen, 0);
+	memset(ZSTR_VAL(out), 0, dlen);
+	ZSTR_VAL(out)[dlen] = 0;
+	buffers_convert(sd, src, ss, dd, (uint8_t *)ZSTR_VAL(out), ds, n);
+	free(src);
+	RETURN_NEW_STR(out);
+}
+
+/* ---- virtual properties ------------------------------------------------------------------------- */
+
+static zend_class_entry *ce_props;
+
+static ZEND_NAMED_FUNCTION(props_get_answer) { ZEND_PARSE_PARAMETERS_NONE(); RETURN_LONG(42); }
+static ZEND_NAMED_FUNCTION(props_get_label) { ZEND_PARSE_PARAMETERS_NONE(); RETURN_STRING("label"); }
+
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(ai_props_int, 0, 0, IS_LONG, 0)
+ZEND_END_ARG_INFO()
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(ai_props_str, 0, 0, IS_STRING, 1)
+ZEND_END_ARG_INFO()
+
 /* ---- module ---------------------------------------------------------------------------------------- */
 
 /* arginfo that matches each function's ZEND_PARSE_PARAMETERS (debug builds check it) */
@@ -858,6 +912,14 @@ ZEND_END_ARG_INFO()
 ZEND_BEGIN_ARG_INFO_EX(ai_bat_shape_dims, 0, 0, 1)
 	ZEND_ARG_INFO(0, a0)
 ZEND_END_ARG_INFO()
+ZEND_BEGIN_ARG_INFO_EX(ai_bat_convert, 0, 0, 4)
+	ZEND_ARG_INFO(0, a0)
+	ZEND_ARG_INFO(0, a1)
+	ZEND_ARG_INFO(0, a2)
+	ZEND_ARG_INFO(0, a3)
+	ZEND_ARG_INFO(0, a4)
+	ZEND_ARG_INFO(0, a5)
+ZEND_END_ARG_INFO()
 
 static const zend_function_entry functions[] = {
 	PHP_FE(bat_import, ai_bat_import)
@@ -877,6 +939,7 @@ static const zend_function_entry functions[] = {
 	PHP_FE(bat_roundtrip, ai_bat_roundtrip)
 	PHP_FE(bat_shape, ai_bat_shape)
 	PHP_FE(bat_shape_dims, ai_bat_shape_dims)
+	PHP_FE(bat_convert, ai_bat_convert)
 	PHP_FE_END
 };
 
@@ -924,6 +987,17 @@ static PHP_MINIT_FUNCTION(buffers_api_test)
 	tensor_handlers.offset = XtOffsetOf(bat_tensor, std);
 	tensor_handlers.clone_obj = NULL;
 	buffers_implement_tensor_interface(ce_tensor, tensor_get_dtype, tensor_get_shape, tensor_get_ndim);
+
+	{
+		const buffers_virtual_prop props[] = {
+			{ "answer", (zend_type) ZEND_TYPE_INIT_MASK(MAY_BE_LONG), props_get_answer, ai_props_int },
+			{ "label", (zend_type) ZEND_TYPE_INIT_MASK(MAY_BE_STRING | MAY_BE_NULL), props_get_label, ai_props_str },
+		};
+		INIT_CLASS_ENTRY(ce, "BatProps", NULL);
+		ce_props = zend_register_internal_class_ex(&ce, NULL);
+		ce_props->ce_flags |= ZEND_ACC_FINAL | ZEND_ACC_NOT_SERIALIZABLE;
+		buffers_declare_virtual_props(ce_props, props, 2);
+	}
 
 	INIT_CLASS_ENTRY(ce, "BatDevice", NULL);
 	ce_device = zend_register_internal_class_ex(&ce, NULL);

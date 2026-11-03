@@ -379,7 +379,7 @@ and `buffers_device_dlpack()`).
 
 ## C API
 
-`php_buffers_api.h` (installed to `ext/buffers/`, `BUFFERS_API_VERSION` 1, `buffers_api_version()` at run time) is the
+`php_buffers_api.h` (installed to `ext/buffers/`, `BUFFERS_API_VERSION` 2, `buffers_api_version()` at run time) is the
 only thing another extension needs; it never sees the layout of buffers or tensors. The symbols are exported from
 `buffers.so` (also in the release binaries, which hide everything else), so load order matters:
 declare `ZEND_MOD_REQUIRED("buffers")`. `tests/api-consumer/` is a complete small extension that uses nothing else
@@ -392,6 +392,8 @@ and has phpt tests; read it as the example.
 | tensors | `buffers_is_tensor()`, `buffers_tensor_get_info()` (data pointer, dtype, ndim, shape, strides in elements, byte offset, buffer object, writable), `buffers_tensor_create()` (validated exactly like `view()`) |
 | buffers | `buffers_is_buffer()`, `buffers_buffer_get_info()` (base, length, writable, host accessible, device), `buffers_buffer_create_foreign()` (memory + deleter + device), `buffers_buffer_create_owned()` (memory kept alive by a PHP object: holds a reference to the owner and releases it on free, no deleter), `buffers_hold()`, `buffers_release()` |
 | shapes, tensors | `buffers_shape_create()`, `buffers_shape_dims()`, `buffers_implement_tensor_interface()` (declare the virtual properties of `TensorInterface` with three get hooks) |
+| elements | `buffers_convert()` (n elements between any two dtypes, strided, every format: integers wrap, floats round like `ml_dtypes`; for extensions that compute on elements) |
+| properties | `buffers_declare_virtual_props()` (read-only virtual properties with get hooks, for any internal class) |
 | DLPack | `buffers_dlpack_export()`, `buffers_dlpack_import()` (see above) |
 | hooks | `buffers_set_operator_handler()`, `buffers_buffer_set_ready_callback()`, `buffers_buffer_set_pending()`, `buffers_buffer_ensure_ready()` |
 
