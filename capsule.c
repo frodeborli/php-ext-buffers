@@ -245,7 +245,7 @@ void dlp_capsule_minit(void)
  * with a deleter that is counted, so the suite can prove the deleter runs exactly once. */
 typedef struct {
 	DLManagedTensorVersioned t;
-	int64_t shape[DLP_MAX_NDIM], strides[DLP_MAX_NDIM];
+	int64_t shape[16], strides[16]; /* more than DLP_MAX_NDIM, so tests can ask for 9 dimensions */
 	void *mem;
 } test_ctx;
 static zend_long test_made, test_deleted;
@@ -292,6 +292,10 @@ PHP_FUNCTION(dlpack_test_make)
 		Z_PARAM_ARRAY_HT_OR_NULL(strides) Z_PARAM_LONG(flags) Z_PARAM_LONG(device) Z_PARAM_LONG(byte_offset) Z_PARAM_LONG(minor) Z_PARAM_LONG(major)
 	ZEND_PARSE_PARAMETERS_END();
 
+	if (zend_hash_num_elements(shape) > 16 || (strides && zend_hash_num_elements(strides) > 16)) {
+		zend_argument_value_error(4, "has too many dimensions for the test helper");
+		RETURN_THROWS();
+	}
 	c = calloc(1, sizeof *c);
 	ZEND_HASH_FOREACH_VAL(shape, z) { c->shape[n++] = zval_get_long(z); } ZEND_HASH_FOREACH_END();
 	esize = (bits * lanes + 7) / 8;
