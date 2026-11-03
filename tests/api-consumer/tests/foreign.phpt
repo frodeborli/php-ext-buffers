@@ -4,11 +4,11 @@ C API: a buffer over foreign memory with a counting deleter; view info; view cre
 <?php if (!extension_loaded('buffers_api_test')) die('skip needs the buffers_api_test extension'); ?>
 --FILE--
 <?php
-use Buffers\{DType, BufferView, BufferInterface, DLPackBuffer};
+use Buffers\{DType, BufferView, Buffer};
 function live() { $c = bat_counts(); return $c['made'] - $c['deleted']; }
 
 $b = bat_make_buffer(24);
-var_dump($b instanceof DLPackBuffer, $b instanceof BufferInterface, $b->byteLength(), $b->isWritable(), $b->device() === Buffers\CpuDevice::get(), bat_is($b), bat_is($b->view(DType::UInt8)), bat_is(1));
+var_dump($b instanceof Buffer, $b instanceof Buffer, $b->byteLength(), $b->isWritable(), $b->device() === Buffers\CpuDevice::get(), bat_is($b), bat_is($b->view(DType::UInt8)), bat_is(1));
 $v = $b->view(DType::UInt8);
 var_dump($v[0], $v[23]);
 $v[3] = 99; var_dump(bat_peek($b, 3));
@@ -50,14 +50,11 @@ echo "lifetime: the deleter runs once, when the last view and buffer are gone\n"
 $base = live();
 $x = bat_make_buffer(8);
 $y = $x->view(DType::UInt8, 4);
-$z = $y->toDLPack();
+$q = bat_roundtrip($y);          // exported, then imported: the tensor holds the buffer
 unset($x);
 echo live() - $base, " live\n";
 unset($y);
-echo live() - $base, " live (capsule holds the buffer)\n";
-$q = BufferView::fromDLPack($z);
-unset($z);
-echo live() - $base, " live (imported view holds it)\n";
+echo live() - $base, " live (the imported view holds it)\n";
 unset($q, $e, $cases, $w, $v, $b, $x, $r, $ro);
 echo live(), " live at the end\n";
 $c = bat_counts();
@@ -67,7 +64,7 @@ echo "dtypes\n";
 for ($i = 0; $i < 32; $i++) {
     $d = bat_dtype_info($i);
     $c = Buffers\DType::cases()[$i];
-    if ($d['name'] !== $c->name || $d['value'] !== $c->value || $d['bits'] !== $c->bits() || $d['size'] !== ($c->byteSize() ?? 0) || $d['roundtrip'] !== $i || $d['dlpack_code'] !== $c->dlpack()['code']) echo "MISMATCH $i\n";
+    if ($d['name'] !== $c->name || $d['value'] !== $c->value || $d['bits'] !== $c->bits() || $d['size'] !== ($c->byteSize() ?? 0) || $d['roundtrip'] !== $i || $d['dlpack_roundtrip'] !== $i) echo "MISMATCH $i\n";
 }
 var_dump(bat_dtype_info(32), bat_dtype_info(-1));
 echo "end\n";
@@ -211,7 +208,7 @@ misaligned      ValueError: must be a multiple of the element size (2 bytes)
 neg dim         ValueError: must contain only non-negative values
 zero stride     ValueError: must contain only values of at least 1
 packed stride   ValueError: axis 0 of a packed Float6E3M2FN view has a stride of 3 elements = 18 bits, which is not a whole number of bytes; pass explicit strides that are multiples of 4 elements
-not a buffer    TypeError: Expected an ArrayBuffer or DLPackBuffer
+not a buffer    TypeError: Expected a Buffer
 enum(Buffers\DType::Int16)
 read-only memory
 bool(false)
@@ -220,8 +217,7 @@ Cannot write to a read-only BufferView
 Cannot write to a read-only BufferView
 lifetime: the deleter runs once, when the last view and buffer are gone
 1 live
-1 live (capsule holds the buffer)
-1 live (imported view holds it)
+1 live (the imported view holds it)
 0 live at the end
 deleters ran exactly once
 dtypes

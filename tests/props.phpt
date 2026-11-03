@@ -4,8 +4,8 @@ BufferView properties: read-only, computed when read, no storage per view
 <?php if (!extension_loaded('buffers')) die('skip buffers extension not loaded'); ?>
 --FILE--
 <?php
-use Buffers\{ArrayBuffer, DType, BufferView, Tensor, Shape, BufferInterface};
-$b = new ArrayBuffer(96);
+use Buffers\{Buffer, DType, BufferView, Tensor, Shape};
+$b = new Buffer(96);
 $v = $b->view(DType::Int16, [3, 4], [8, 2], 6);
 var_dump($v->dtype, $v->shape instanceof Shape, $v->shape->toArray(), $v->ndim, $v->strides, $v->offset, $v->buffer === $b);
 var_dump($v instanceof Tensor, $v instanceof BufferView);
@@ -133,7 +133,7 @@ shape    Buffers\Shape virtual=1 public=1 hooks=["get"]
 ndim     int virtual=1 public=1 hooks=["get"]
 strides  array virtual=1 public=1 hooks=["get"]
 offset   int virtual=1 public=1 hooks=["get"]
-buffer   Buffers\BufferInterface virtual=1 public=1 hooks=["get"]
+buffer   Buffers\Buffer virtual=1 public=1 hooks=["get"]
 value    mixed virtual=1 public=1 hooks=["get","set"]
 Tensor::$dtype ?Buffers\DType abstract=1
 Tensor::$shape Buffers\Shape abstract=1

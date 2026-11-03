@@ -4,8 +4,8 @@ Float16, BFloat16, Float32, Float64 element codecs
 <?php if (!extension_loaded('buffers')) die('skip buffers extension not loaded'); if (pack('S', 1) !== "\x01\x00") die('skip prints the bytes of elements: little-endian only'); if (PHP_INT_SIZE !== 8) die('skip 64-bit PHP only: 64-bit integer inputs'); ?>
 --FILE--
 <?php
-use Buffers\{DType, ArrayBuffer, BufferView};
-$b = new ArrayBuffer(64);
+use Buffers\{DType, Buffer, BufferView};
+$b = new Buffer(64);
 foreach (['Float16', 'BFloat16', 'Float32', 'Float64'] as $name) {
     $v = $b->view(constant("Buffers\\DType::$name"), 4);
     echo $name, "\n";

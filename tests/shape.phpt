@@ -4,7 +4,7 @@ Shape: validation, negative indices, immutability, iteration, size
 <?php if (!extension_loaded('buffers')) die('skip buffers extension not loaded'); ?>
 --FILE--
 <?php
-use Buffers\{Shape, ArrayBuffer, DType, Tensor};
+use Buffers\{Shape, Buffer, DType, Tensor};
 $s = new Shape([2, 3, 4]);
 var_dump(count($s), $s[0], $s[2], $s[-1], $s[-3], $s->toArray(), $s->isConcrete(), $s->size());
 var_dump(isset($s[0]), isset($s[-3]), isset($s[3]), isset($s[-4]), isset($s['x']), $s->offsetExists(1));
@@ -55,7 +55,7 @@ var_dump($s == new Shape([2, 3, 4]), $s == new Shape([2, 3]), $s == new Shape([2
 var_dump($s != new Shape([2, 3, 4]));
 
 echo "views have concrete shapes\n";
-$b = new ArrayBuffer(48);
+$b = new Buffer(48);
 $sh = $b->view(DType::Int16, [2, 3, 4])->shape;
 var_dump($sh->toArray(), $sh->isConcrete(), $sh->size(), $sh->offsetGet(-2));
 var_dump($b->view(DType::Int16, [])->shape->size());

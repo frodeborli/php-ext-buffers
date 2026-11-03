@@ -89,11 +89,21 @@ static inline bool buf_dtype_fits_php_int(int dt)
 #endif
 }
 
-/* Memory owner: ArrayBuffer (alloc != NULL) or DLPackBuffer (foreign memory or memory kept alive by an owner). */
+/* device types that are not DLPack's */
+#define BUF_DEV_FILE (-1)                /* FileDevice */
+#define BUF_DEV_OTHER (-2)               /* a Device of another extension that has no DLPack type */
+
+/* Buffer: bytes on some device. The memory is ext-buffers' own allocation (alloc), foreign memory with a deleter,
+ * memory kept alive by a PHP object (owner), or a file: mapped (map_base; host accessible) or only opened (file;
+ * storage, read by BufferView::to()). */
 typedef struct {
 	uint8_t *base;
-	size_t len;
-	void *alloc;                         /* emalloc'd block behind an ArrayBuffer */
+	uint64_t len;                        /* 64 bits: an unmapped file can be larger than the address space of 32-bit PHP */
+	void *alloc;                         /* emalloc'd block of a Buffer made by the constructor or fromString() */
+	void *map_base;                      /* mapping of a file (base lies inside it) */
+	size_t map_len;
+	intptr_t file;                       /* file descriptor (HANDLE on Windows) of an unmapped file buffer, -1 if none */
+	uint64_t file_off;                   /* where byte 0 of the buffer is in the file */
 	void (*deleter)(void *ctx);          /* foreign memory: runs once when the buffer is freed */
 	void *deleter_ctx;
 	zend_object *owner;                  /* held until the buffer is freed */
@@ -102,7 +112,7 @@ typedef struct {
 	void *ready_ctx;
 	void (*ready_dtor)(void *ctx);
 	int32_t dev_type, dev_id;
-	bool writable, host, pending;
+	bool writable, host, pending, inited;
 	bool slow;                           /* element access needs a check: !host || ready != NULL */
 	zend_object std;
 } buf_buffer;
@@ -117,11 +127,6 @@ typedef struct {
 	uint8_t dt, ndim, writable, slow;
 	zend_object std;
 } buf_view;
-
-typedef struct {
-	DLManagedTensorVersioned *t;
-	zend_object std;
-} buf_capsule;
 
 /* Shape: n dimensions, each an int or a 0-d Tensor object */
 typedef struct {
@@ -141,6 +146,7 @@ ZEND_BEGIN_MODULE_GLOBALS(buffers)
 	int npool;
 	bool request_active;
 	zend_object *cpu_device;
+	zend_object *file_device;
 ZEND_END_MODULE_GLOBALS(buffers)
 
 ZEND_EXTERN_MODULE_GLOBALS(buffers)
@@ -150,13 +156,12 @@ ZEND_EXTERN_MODULE_GLOBALS(buffers)
 #define BUFG(v) (buffers_globals.v)
 #endif
 
-extern zend_class_entry *buf_ce_dtype, *buf_ce_buffer_if, *buf_ce_arraybuffer, *buf_ce_dlpackbuffer,
-	*buf_ce_view, *buf_ce_capsule, *buf_ce_tensor, *buf_ce_shape, *buf_ce_device_if, *buf_ce_cpudevice,
+extern zend_class_entry *buf_ce_dtype, *buf_ce_buffer, *buf_ce_filedevice,
+	*buf_ce_view, *buf_ce_tensor, *buf_ce_shape, *buf_ce_device_if, *buf_ce_cpudevice,
 	*buf_ce_foreigndevice;
 
 static inline buf_buffer *buf_buffer_from(zend_object *o) { return (buf_buffer *)((char *)o - XtOffsetOf(buf_buffer, std)); }
 static inline buf_view *buf_view_from(zend_object *o) { return (buf_view *)((char *)o - XtOffsetOf(buf_view, std)); }
-static inline buf_capsule *buf_capsule_from(zend_object *o) { return (buf_capsule *)((char *)o - XtOffsetOf(buf_capsule, std)); }
 static inline buf_shape *buf_shape_from(zend_object *o) { return (buf_shape *)((char *)o - XtOffsetOf(buf_shape, std)); }
 static inline buf_device *buf_device_from(zend_object *o) { return (buf_device *)((char *)o - XtOffsetOf(buf_device, std)); }
 
@@ -191,7 +196,8 @@ void buf_dtype_to_zval(int dt, zval *rv);
 /* buffer.c */
 void buf_buffer_minit(void);
 zend_result buf_buffer_make_ready(buf_buffer *b);   /* runs the readiness hook if pending */
-/* a DLPackBuffer over foreign memory; `device` (held, may be NULL) as in the C API */
+zend_object *buf_buffer_new_host(uint64_t bytes);
+/* a Buffer over foreign memory; `device` (held, may be NULL) as in the C API */
 zend_object *buf_foreign_buffer_new(uint8_t *base, size_t len, bool writable, zend_object *device,
 	void (*deleter)(void *), void *ctx, zend_object *owner);
 
@@ -200,16 +206,25 @@ void buf_view_minit(void);
 void buf_view_rshutdown(void);
 zend_object *buf_view_new(zend_object *buf, int dt, int ndim, const int64_t *shape, const int64_t *sbytes, uint8_t *data, bool writable, bool slow);
 /* strides in elements or NULL (C-contiguous). On failure returns NULL with a message in err and the
- * number of the offending argument of BufferInterface::view() in *arg (2 shape, 3 strides, 4 offset). */
+ * number of the offending argument of Buffer::view() in *arg (2 shape, 3 strides, 4 offset). */
 zend_object *buf_view_make(zend_object *buf, int dt, int ndim, const int64_t *shape, const int64_t *strides,
 	int64_t offset, char *err, size_t errlen, int *arg);
 void buf_buffer_view_impl(zend_object *buf, INTERNAL_FUNCTION_PARAMETERS);
 void buf_view_strides_elements(const buf_view *v, int64_t *out);
+/* byte range of the buffer that the view touches: from *first, *len bytes (0 for an empty view) */
+void buf_view_extent(const buf_view *v, uint64_t *first, uint64_t *len);
+/* a C-contiguous copy (packed dtypes: rows padded to whole bytes) in a new host Buffer, from `src` = the address of the view's first
+ * element in readable memory; NULL after throwing */
+zend_object *buf_view_copy_host(const buf_view *v, const uint8_t *src);
 
-/* capsule.c */
-void buf_capsule_minit(void);
+/* capsule.c: DLPack for the C API */
 zend_result buf_view_export(zend_object *view, DLManagedTensorVersioned **out);
 zend_object *buf_view_import(DLManagedTensorVersioned *t);
+
+/* transfer.c */
+zend_object *buf_view_to(zend_object *view, zend_object *device);
+bool buf_buffer_on_device(buf_buffer *b, zend_object *device);
+zend_result buf_buffer_read_file(buf_buffer *b, uint64_t offset, void *dst, size_t n);
 
 /* shape.c */
 void buf_shape_minit(void);
@@ -223,6 +238,7 @@ zend_object *buf_foreign_device_new(int32_t type, int32_t id);
 bool buf_device_query(zend_object *dev, int32_t *type, int32_t *id, bool *host);
 const char *buf_device_type_name(int32_t type);
 zend_string *buf_device_name(int32_t type, int32_t id);
+zend_object *buf_file_device(void);
 
 /* props.c: virtual properties backed by internal get hooks */
 typedef struct {
@@ -239,9 +255,5 @@ void buf_props_mshutdown(void);
 
 /* api.c */
 extern buffers_operator_fn buf_operator_handler;
-
-#ifdef BUFFERS_TESTING
-void buf_testing_register(void);
-#endif
 
 #endif

@@ -24,7 +24,6 @@ $kinds = [
     'foreach'   => function ($v) { $n = 0; foreach ($v as $x) $n += $x; return $n; },
     'empty'     => fn($v) => empty($v[0]),
     'coalesce'  => fn($v) => $v[0] ?? 'null',
-    'toDLPack'  => fn($v) => get_class($v->toDLPack()),
     'roundtrip' => fn($v) => bat_roundtrip($v)->shape->toArray(),
     'bat_export'=> fn($v) => bat_export($v)['ndim'],
     'peek'      => null,
@@ -92,10 +91,10 @@ foreach ([fn() => $z->value, fn() => $z->value] as $f) {
 }
 
 echo "the callback can only be set while the caller holds the only reference\n";
-var_dump(bat_set_ready_late(new Buffers\ArrayBuffer(4)));
-$b = new Buffers\ArrayBuffer(4);
+var_dump(bat_set_ready_late(new Buffers\Buffer(4)));
+$b = new Buffers\Buffer(4);
 var_dump(bat_set_ready_late($b));   // the argument is a second reference
-echo "an ArrayBuffer can wait too\n";
+echo "an Buffer can wait too\n";
 $a = bat_make_pending_arraybuffer(5, 66);
 $av = $a->view(DType::UInt8);
 $before = calls();
@@ -136,7 +135,6 @@ write      calls=1 result=5
 foreach    calls=1 result=36
 empty      calls=1 result=false
 coalesce   calls=1 result=9
-toDLPack   calls=1 result="Buffers\\DLPackCapsule"
 roundtrip  calls=1 result=[4]
 bat_export calls=1 result=1
 peek       calls=1 result=9
@@ -167,7 +165,7 @@ int(9)
 the callback can only be set while the caller holds the only reference
 bool(true)
 bool(false)
-an ArrayBuffer can wait too
+an Buffer can wait too
 string(10) "4242424242"
 int(1)
 string(10) "4242424242"

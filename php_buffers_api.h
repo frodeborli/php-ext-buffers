@@ -64,12 +64,14 @@ BUFFERS_API const buffers_dtype_desc *buffers_dtype_describe(int dtype);
 BUFFERS_API void buffers_dtype_to_zval(int dtype, zval *rv);
 /* index of a Buffers\DType case object */
 BUFFERS_API int buffers_dtype_from_object(zend_object *dtype_case);
+/* the dtype for a DLPack type code and bit width (one lane), or -1 */
+BUFFERS_API int buffers_dtype_from_dlpack(int code, int bits);
 
 /* ---- classes --------------------------------------------------------------------------- */
 
 enum {
-	BUFFERS_CE_DTYPE, BUFFERS_CE_BUFFER_INTERFACE, BUFFERS_CE_ARRAY_BUFFER, BUFFERS_CE_DLPACK_BUFFER,
-	BUFFERS_CE_VIEW, BUFFERS_CE_TENSOR, BUFFERS_CE_SHAPE, BUFFERS_CE_DEVICE, BUFFERS_CE_CPU_DEVICE
+	BUFFERS_CE_DTYPE, BUFFERS_CE_BUFFER, BUFFERS_CE_VIEW, BUFFERS_CE_TENSOR, BUFFERS_CE_SHAPE,
+	BUFFERS_CE_DEVICE, BUFFERS_CE_CPU_DEVICE, BUFFERS_CE_FILE_DEVICE
 };
 /* The class entries, for extensions that implement Device or Tensor (usable from MINIT on). NULL if which is invalid. */
 BUFFERS_API zend_class_entry *buffers_get_class(int which);
@@ -86,8 +88,16 @@ BUFFERS_API void buffers_implement_tensor(zend_class_entry *ce,
 
 /* ---- devices --------------------------------------------------------------------------- */
 
-/* The CpuDevice singleton of this request (borrowed: not owned by the caller) */
+/* The CpuDevice and FileDevice singletons of this request (borrowed: not owned by the caller) */
 BUFFERS_API zend_object *buffers_cpu_device(void);
+BUFFERS_API zend_object *buffers_file_device(void);
+
+/* DLPack device codes. Core devices: CpuDevice is kDLCPU/0, an imported tensor's ForeignDevice is its own type and id, FileDevice has none
+ * (a mapped file buffer is exported as host memory, an unmapped one cannot be exported). The Device class of another extension says
+ * which DLPack device type its instances are by registering it, from MINIT (the id comes from Device::id()). */
+BUFFERS_API zend_result buffers_register_device_type(zend_class_entry *device_ce, int dlpack_type);
+/* The DLPack device type and id of a Device object (NULL: the CPU); FAILURE, without an exception, if it has none. */
+BUFFERS_API zend_result buffers_device_dlpack(zend_object *device, int *type, int *id);
 
 /* ---- buffers --------------------------------------------------------------------------- */
 
@@ -98,21 +108,21 @@ typedef struct {
 	bool host_accessible;
 	bool pending;            /* work that produces the contents is not finished */
 	zend_object *device;     /* borrowed; NULL means the CPU */
-	int device_type;         /* DLPack device type and id */
+	int device_type;         /* DLPack device type and id; -1 for FileDevice, -2 for a device that has no DLPack type */
 	int device_id;
 } buffers_buffer_info;
 
-/* true for ArrayBuffer and DLPackBuffer objects (the only objects the functions below accept) */
+/* true for Buffer objects (the only objects the functions below accept) */
 BUFFERS_API bool buffers_is_buffer(const zend_object *o);
 BUFFERS_API zend_result buffers_buffer_get_info(zend_object *buffer, buffers_buffer_info *out);
 
-/* A DLPackBuffer over memory the extension owns. `deleter(ctx)` runs exactly once, when the buffer is
+/* A Buffer over memory the extension owns. `deleter(ctx)` runs exactly once, when the buffer is
  * freed (never earlier), possibly during request shutdown. `device` is a Buffers\Device object or NULL
  * for the CPU; it is held until the buffer is freed. Returns a new reference. */
 BUFFERS_API zend_object *buffers_buffer_create_foreign(void *data, size_t length, bool writable,
 	zend_object *device, void (*deleter)(void *ctx), void *ctx);
 
-/* A DLPackBuffer over memory owned by a PHP object (for example a Matrix that keeps its data in C):
+/* A Buffer over memory owned by a PHP object (for example a Matrix that keeps its data in C):
  * the buffer holds a reference to `owner` (GC_ADDREF) and releases it (OBJ_RELEASE) when it is freed,
  * so the memory lives at least as long as any view of it. No deleter is needed. */
 BUFFERS_API zend_object *buffers_buffer_create_owned(void *data, size_t length, bool writable,
@@ -152,7 +162,7 @@ BUFFERS_API bool buffers_is_view(const zend_object *o);
 /* Does not wait for readiness: call buffers_buffer_ensure_ready(info.buffer) before reading the data. */
 BUFFERS_API zend_result buffers_view_get_info(zend_object *view, buffers_view_info *out);
 
-/* A BufferView over `buffer`, validated exactly like BufferInterface::view(): `strides` in elements
+/* A BufferView over `buffer`, validated exactly like Buffer::view(): `strides` in elements
  * (NULL = C-contiguous), `byte_offset` in bytes, ndim 0 gives a 0-d view. Returns a new reference. */
 BUFFERS_API zend_object *buffers_view_create(zend_object *buffer, int dtype, int ndim, const int64_t *shape,
 	const int64_t *strides, int64_t byte_offset);
@@ -164,12 +174,24 @@ BUFFERS_API zend_object *buffers_shape_create(uint32_t n, const zval *dims);
 /* The dimensions of a Shape (borrowed) */
 BUFFERS_API const zval *buffers_shape_dims(zend_object *shape, uint32_t *n);
 
+/* ---- transfers ------------------------------------------------------------------------- */
+
+/* BufferView::to($device) returns the view itself if its buffer is on that device; otherwise a C-contiguous copy in a new
+ * Buffer on the device. The core can copy host-accessible buffers to CpuDevice and read unmapped file buffers; for any other
+ * transfer an extension registers a function for its Device class (and its subclasses). It is called with the view and
+ * the target device when either the target or the source device is an instance of that class, and returns a new reference to the
+ * resulting BufferView, or NULL after throwing. Register from MINIT; one per class; FAILURE if the table is full or the class has one. */
+typedef zend_object *(*buffers_transfer_fn)(zend_object *view, zend_object *device);
+BUFFERS_API zend_result buffers_register_transfer(zend_class_entry *device_ce, buffers_transfer_fn fn);
+/* the same as BufferView::to(); a new reference, or NULL after throwing */
+BUFFERS_API zend_object *buffers_view_to(zend_object *view, zend_object *device);
+
 /* ---- DLPack ---------------------------------------------------------------------------- */
 
 /* Exports a view. The tensor is malloc'd; whoever ends up owning it calls its deleter exactly once.
  * Waits for readiness first. The view's buffer is held until the deleter runs. */
 BUFFERS_API zend_result buffers_dlpack_export(zend_object *view, DLManagedTensorVersioned **out);
-/* Imports a tensor of any device. On success the tensor is owned by the returned DLPackBuffer (its
+/* Imports a tensor of any device. On success the tensor is owned by the returned view's Buffer (its
  * deleter runs when that buffer is freed) and a new BufferView reference is returned; on failure an
  * exception is thrown, NULL is returned and the caller still owns the tensor. */
 BUFFERS_API zend_object *buffers_dlpack_import(DLManagedTensorVersioned *tensor);

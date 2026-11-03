@@ -1,11 +1,11 @@
 --TEST--
 BufferView::$value: the element of a 0-d view, readable and writable
 --SKIPIF--
-<?php if (!extension_loaded('buffers') || !function_exists('buffers_test_make')) die('skip needs a build with --enable-buffers-testing'); ?>
+<?php if (!extension_loaded('buffers')) die('skip buffers extension not loaded'); ?>
 --FILE--
 <?php
-use Buffers\{ArrayBuffer, DType, BufferView};
-$b = new ArrayBuffer(32);
+use Buffers\{Buffer, DType, BufferView};
+$b = new Buffer(32);
 foreach (DType::cases() as $t) {
     if (in_array($t, [DType::Int64, DType::UInt64, DType::UInt32])) continue;   // not viewable on 32-bit PHP: checked below on 64-bit
     $v = $b->view($t, [], null, $t->byteSize() === null ? 1 : 0);
@@ -45,16 +45,18 @@ var_dump(array_key_exists('value', get_object_vars($m)));
 try { $r = &$s->value; $r = 1; echo "reference ok\n"; } catch (Error $e) { echo get_class($e), ': ', $e->getMessage(), "\n"; }
 try { $s->value++; var_dump($s->value); } catch (Error $e) { echo get_class($e), ': ', $e->getMessage(), "\n"; }
 try { $s->value .= 'x'; } catch (Throwable $e) { echo get_class($e), ': ', $e->getMessage(), "\n"; }
-echo "read-only memory and device memory\n";
-$ro = BufferView::fromDLPack(buffers_test_make(1, 8, 1, [4], [1], 1));      // read-only
-$z = $ro->buffer->view(DType::UInt8, [], null, 2);
+echo "read-only memory and memory the host cannot touch (files)\n";
+$file = tempnam(sys_get_temp_dir(), 'buf'); file_put_contents($file, "\x01\x02\x03\x04");
+$ro = Buffer::fromFile($file);                       // mapped: host accessible, read-only
+$z = $ro->view(DType::UInt8, [], null, 2);
 var_dump($z->value);
 try { $z->value = 1; } catch (Error $e) { echo get_class($e), ': ', $e->getMessage(), "\n"; }
-$d = BufferView::fromDLPack(buffers_test_make(1, 8, 1, [4], [1], 0, 2));    // cuda
-$z = $d->buffer->view(DType::UInt8, []);
+$d = Buffer::fromFile($file, 0, null, false);        // storage only
+$z = $d->view(DType::UInt8, []);
 foreach ([fn() => $z->value, fn() => $z->value = 1] as $f) {
     try { $f(); } catch (Error $e) { echo get_class($e), ': ', $e->getMessage(), "\n"; }
 }
+unlink($file);
 echo "end\n";
 --EXPECT--
 Bool               true
@@ -129,9 +131,9 @@ bool(false)
 Error: Indirect modification of Buffers\BufferView::$value is not allowed
 int(10)
 TypeError: Cannot write string to a BufferView of dtype Int32
-read-only memory and device memory
-int(2)
+read-only memory and memory the host cannot touch (files)
+int(3)
 Error: Cannot write to a read-only BufferView
-Error: Cannot access the elements of a tensor on device cuda:0: its memory is not host accessible
-Error: Cannot access the elements of a tensor on device cuda:0: its memory is not host accessible
+Error: Cannot access the elements of a tensor on device file: its memory is not host accessible; transfer to the host first with to()
+Error: Cannot write to a read-only BufferView
 end

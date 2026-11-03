@@ -4,8 +4,8 @@ Small float formats: values, specials and overflow follow ml_dtypes
 <?php if (!extension_loaded('buffers')) die('skip buffers extension not loaded'); ?>
 --FILE--
 <?php
-use Buffers\{DType, ArrayBuffer};
-$b = new ArrayBuffer(16);
+use Buffers\{DType, Buffer};
+$b = new Buffer(16);
 $negnan = unpack('d', pack('H*', '000000000000f8ff'))[1];   // NaN with the sign bit set
 $inputs = [0.0, -0.0, 1.0, -1.0, 0.1, 1.5, 3.0, 6.0, 7.0, 100.0, 448.0, 464.0, 465.0, 480.0, 1000.0, 57344.0, 61440.0, 1e6, 1e-3, 1e-6, 1e-10, INF, -INF, NAN, $negnan];
 foreach (DType::cases() as $c) {

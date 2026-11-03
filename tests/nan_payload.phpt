@@ -4,9 +4,9 @@ NaN conversions: float16 keeps the payload like numpy, the other formats canonic
 <?php if (!extension_loaded('buffers')) die('skip buffers extension not loaded'); if (pack('S', 1) !== "\x01\x00") die('skip prints the bytes of elements: little-endian only'); ?>
 --FILE--
 <?php
-use Buffers\{DType, ArrayBuffer};
+use Buffers\{DType, Buffer};
 $nan = fn(string $hex) => unpack('E', hex2bin($hex))[1];   // big-endian double bits
-$b = new ArrayBuffer(8);
+$b = new Buffer(8);
 $raw = $b->view(DType::UInt8);
 $show = function (DType $t, string $hex) use ($b, $nan, $raw) {
     for ($i = 0; $i < 8; $i++) $raw[$i] = 0;

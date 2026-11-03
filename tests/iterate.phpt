@@ -4,8 +4,8 @@ count, foreach, iterators, ArrayAccess and Countable interfaces
 <?php if (!extension_loaded('buffers')) die('skip buffers extension not loaded'); ?>
 --FILE--
 <?php
-use Buffers\{DType, ArrayBuffer, BufferView};
-$b = new ArrayBuffer(24);
+use Buffers\{DType, Buffer, BufferView};
+$b = new Buffer(24);
 $raw = $b->view(DType::UInt8);
 for ($i = 0; $i < 24; $i++) $raw[$i] = $i;
 $m = $b->view(DType::UInt8, [2, 3, 4]);

@@ -4,8 +4,8 @@ Views of the same buffer in different dtypes, writes through any alias
 <?php if (!extension_loaded('buffers')) die('skip buffers extension not loaded'); if (PHP_INT_SIZE !== 8) die('skip 64-bit PHP only: uses UInt32'); ?>
 --FILE--
 <?php
-use Buffers\{DType, ArrayBuffer};
-$b = new ArrayBuffer(16);
+use Buffers\{DType, Buffer};
+$b = new Buffer(16);
 $bytes = $b->view(DType::UInt8);
 $words = $b->view(DType::UInt32, 4);
 $f = $b->view(DType::Float32, 4);

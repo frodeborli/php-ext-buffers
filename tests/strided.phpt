@@ -4,8 +4,8 @@ Strided and offset views, transposes, empty views
 <?php if (!extension_loaded('buffers')) die('skip buffers extension not loaded'); ?>
 --FILE--
 <?php
-use Buffers\{DType, ArrayBuffer};
-$b = new ArrayBuffer(48);
+use Buffers\{DType, Buffer};
+$b = new Buffer(48);
 $raw = $b->view(DType::UInt8);
 for ($i = 0; $i < 48; $i++) $raw[$i] = $i;
 $m = $b->view(DType::UInt8, [4, 6]);
@@ -28,7 +28,7 @@ $col = $b->view(DType::UInt8, 4, [6], 2);
 var_dump(iterator_to_array($col));
 // negative-stride style reversal is not available: strides must be >= 1
 // 8 dimensions
-$big = new ArrayBuffer(256);
+$big = new Buffer(256);
 $d8 = $big->view(DType::UInt8, [2,2,2,2,2,2,2,2]);
 $d8[1][1][1][1][1][1][1][1] = 5;
 var_dump($d8->ndim, $big->toString()[255] === "\5", $d8[1][1][1][1][1][1][1]->ndim, $d8->strides);

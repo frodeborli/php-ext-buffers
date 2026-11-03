@@ -52,21 +52,17 @@ enum DType: string
     /** True for all Float* cases and BFloat16. */
     public function isFloatingPoint(): bool {}
     public function isComplex(): bool {}
-    /** @return array{code: int, bits: int, lanes: int} The DLPack type code and width. */
-    public function dlpack(): array {}
 }
 
 /**
- * Where a buffer's memory lives. Implemented by CpuDevice and by the devices of imported DLPack
- * tensors; other extensions may implement it from C.
+ * Where a buffer's memory lives, identified by name and id. Implemented by CpuDevice, FileDevice and by the
+ * devices of tensors imported through the C API's DLPack functions; other extensions implement it from C.
  */
 interface Device
 {
     /** A human readable name such as "cpu" or "cuda:0". */
     public function name(): string;
-    /** The DLPack device type (DLDeviceType): 1 for the CPU. */
-    public function dlpackType(): int;
-    /** The DLPack device id. */
+    /** The device number: 0 for the CPU and for files. */
     public function id(): int;
     /** Whether element access from PHP is possible: true only for memory the CPU can address. */
     public function isHostAccessible(): bool;
@@ -78,20 +74,28 @@ final class CpuDevice implements Device
     private function __construct() {}
     public static function get(): CpuDevice {}
     public function name(): string {}
-    public function dlpackType(): int {}
+    public function id(): int {}
+    public function isHostAccessible(): bool {}
+}
+
+/** Files: the device of Buffer::fromFile() buffers. Storage; its buffers are host accessible only when mapped. */
+final class FileDevice implements Device
+{
+    private function __construct() {}
+    public static function get(): FileDevice {}
+    public function name(): string {}
     public function id(): int {}
     public function isHostAccessible(): bool {}
 }
 
 /**
- * The device of a DLPack tensor that is not on the CPU. Created by BufferView::fromDLPack(); cannot
- * be instantiated.
+ * The device of a DLPack tensor that is not on the CPU, as imported through the C API (names such as "cuda:0").
+ * Cannot be instantiated.
  * @internal
  */
 final class ForeignDevice implements Device
 {
     public function name(): string {}
-    public function dlpackType(): int {}
     public function id(): int {}
     public function isHostAccessible(): bool {}
 }
@@ -141,50 +145,39 @@ interface Tensor
 {
 }
 
-/** Memory that views are made over. */
-interface BufferInterface
+/**
+ * Bytes on some device: a pointer, a length, a device, a writable flag, an owner (ext-buffers' own allocation, a C
+ * deleter, a PHP object that is kept alive, or a file mapping) and optionally a readiness callback. Views are made
+ * over it. Buffers come from the constructor, fromString(), fromFile() and other extensions through the
+ * C API (foreign memory, memory owned by a PHP object, DLPack import).
+ */
+final class Buffer
 {
-    public function byteLength(): int;
-    public function isWritable(): bool;
-    public function device(): Device;
+    /** Zero-filled, 64-byte aligned host memory that counts toward memory_limit. */
+    public function __construct(int $byteLength) {}
+    public static function fromString(string $data): Buffer {}
+    /**
+     * A read-only buffer on FileDevice over bytes $offset .. $offset + $length of a file ($length null: to the end).
+     * With $map true the range is memory-mapped: the buffer is host accessible and pages load on first touch (truncating
+     * the file from another process while it is mapped crashes the process with SIGBUS on Linux and macOS). With $map
+     * false, or when the range cannot be mapped (larger than the address space of 32-bit PHP, for example), the buffer
+     * is storage only: isHostAccessible() is false and BufferView::to(CpuDevice::get()) reads it. The range is checked
+     * against the file size when the file is opened.
+     */
+    public static function fromFile(string $path, int $offset = 0, ?int $length = null, bool $map = true): Buffer {}
+    public function byteLength(): int {}
+    public function isWritable(): bool {}
+    public function device(): Device {}
+    /** Whether the bytes can be read and written from PHP: authoritative for this buffer (a mapped file is, its device is not). */
+    public function isHostAccessible(): bool {}
     /**
      * $shape: null is 1-D over the rest of the buffer, an int is 1-D of that length, an array has 0 to 8
      * dimensions ([] makes a 0-d view of one element). $strides are in elements, each at least 1 (null is
      * C-contiguous). $offset is in bytes. Packed sub-byte dtypes have extra rules, see the README.
      */
-    public function view(DType $type, int|array|null $shape = null, ?array $strides = null, int $offset = 0): BufferView;
-}
-
-/** Zero-filled, 64-byte aligned memory that counts toward memory_limit. */
-final class ArrayBuffer implements BufferInterface
-{
-    public function __construct(int $byteLength) {}
-    public function byteLength(): int {}
-    public function isWritable(): bool {}
-    public function device(): Device {}
     public function view(DType $type, int|array|null $shape = null, ?array $strides = null, int $offset = 0): BufferView {}
-    public static function fromString(string $data): ArrayBuffer {}
-    /** A copy of the bytes. */
+    /** A copy of the bytes. Throws Error unless the buffer is host accessible. */
     public function toString(): string {}
-}
-
-/**
- * Memory owned by someone else: a foreign DLPack tensor, or memory another extension keeps alive.
- * Created by BufferView::fromDLPack() and by other extensions through the C API; cannot be
- * instantiated. May live on a device other than the CPU.
- * @internal
- */
-final class DLPackBuffer implements BufferInterface
-{
-    public function byteLength(): int {}
-    public function isWritable(): bool {}
-    public function device(): Device {}
-    public function view(DType $type, int|array|null $shape = null, ?array $strides = null, int $offset = 0): BufferView {}
-}
-
-/** An exported DLPack tensor; opaque and consumed once by BufferView::fromDLPack(). */
-final class DLPackCapsule
-{
 }
 
 /**
@@ -197,7 +190,7 @@ final class DLPackCapsule
  * @property-read int $ndim
  * @property-read list<int> $strides in elements; 1 for the last axis of a packed dtype
  * @property-read int $offset bytes from the start of the buffer to element 0
- * @property-read BufferInterface $buffer
+ * @property-read Buffer $buffer
  * @property mixed $value the single element of a 0-d view, readable and writable; Error on views with axes
  *
  * @implements \ArrayAccess<int, mixed>
@@ -212,8 +205,12 @@ final class BufferView implements Tensor, \Countable, \ArrayAccess, \IteratorAgg
     public function offsetSet(mixed $offset, mixed $value): void {}
     public function offsetUnset(mixed $offset): void {}
     public function getIterator(): \Iterator {}
-    public function toDLPack(): DLPackCapsule {}
-    public static function fromDLPack(DLPackCapsule $capsule): BufferView {}
+    /**
+     * This view if its buffer is already on $device; otherwise a C-contiguous copy (packed sub-byte dtypes: rows padded to
+     * whole bytes) in a new Buffer on $device. The core copies host-accessible buffers to CpuDevice and reads unmapped file
+     * buffers; any other transfer needs an extension that registered it (buffers_register_transfer()), else Error.
+     */
+    public function to(Device $device): BufferView {}
     /**
      * The whole contents as nested arrays (a 0-d view: the scalar; complex elements: [re, im]), for json_encode().
      * json_encode() fails for NaN and INF, as for any PHP value. Throws Error for memory that is not host accessible.

@@ -1,11 +1,11 @@
 --TEST--
 var_dump, print_r and var_export of BufferView, Shape and friends
 --SKIPIF--
-<?php if (!extension_loaded('buffers') || !function_exists('buffers_test_make')) die('skip needs a build with --enable-buffers-testing'); ?>
+<?php if (!extension_loaded('buffers')) die('skip buffers extension not loaded'); ?>
 --FILE--
 <?php
-use Buffers\{ArrayBuffer, DType, BufferView, Shape};
-$b = new ArrayBuffer(64);
+use Buffers\{Buffer, DType, BufferView, Shape};
+$b = new Buffer(64);
 $raw = $b->view(DType::UInt8); for ($i = 0; $i < 64; $i++) $raw[$i] = $i;
 $v = $b->view(DType::Int16, [2, 3], [4, 1], 2);
 for ($i = 0; $i < 2; $i++) for ($j = 0; $j < 3; $j++) $v[$i][$j] = ($i + 1) * 100 + $j;
@@ -18,23 +18,23 @@ echo "packed\n";
 var_dump($b->view(DType::Float4E2M1FN, [2, 4]));
 var_dump($b->view(DType::Int4, 6));
 echo "complex\n";
-$c = (new ArrayBuffer(16))->view(DType::Complex64, 2); $c[0] = [1.5, -2]; $c[1] = 3;
+$c = (new Buffer(16))->view(DType::Complex64, 2); $c[0] = [1.5, -2]; $c[1] = 3;
 var_dump($c);
 echo "empty\n";
 var_dump($b->view(DType::UInt8, [0, 3]));
 echo "boundary: 1000 elements are shown, 1001 are not\n";
-$big = (new ArrayBuffer(2000))->view(DType::UInt8, 1000);
+$big = (new Buffer(2000))->view(DType::UInt8, 1000);
 var_dump(count($big), is_array(array_values((array)$big)));
 ob_start(); var_dump($big); $out = ob_get_clean(); echo strlen($out) > 5000 ? "1000 shown\n" : "NOT SHOWN\n";
-var_dump((new ArrayBuffer(2000))->view(DType::UInt8, 1001));
-var_dump((new ArrayBuffer(2000))->view(DType::UInt8, [10, 100]) instanceof BufferView);
-ob_start(); var_dump((new ArrayBuffer(1100))->view(DType::UInt8, [10, 100])); $o2 = ob_get_clean(); echo substr_count($o2, 'int('), " ints in the output of 1000 elements\n";
-echo "read-only and a sub-view\n";
-$ro = BufferView::fromDLPack(buffers_test_make(1, 8, 1, [2, 2], [2, 1], 1));
+var_dump((new Buffer(2000))->view(DType::UInt8, 1001));
+var_dump((new Buffer(2000))->view(DType::UInt8, [10, 100]) instanceof BufferView);
+ob_start(); var_dump((new Buffer(1100))->view(DType::UInt8, [10, 100])); $o2 = ob_get_clean(); echo substr_count($o2, 'int('), " ints in the output of 1000 elements\n";
+echo "read-only, files: mapped (host memory) and storage only\n";
+$file = tempnam(sys_get_temp_dir(), 'buf'); file_put_contents($file, "\x00\x01\x02\x03");
+$ro = Buffer::fromFile($file)->view(DType::UInt8, [2, 2]);
 var_dump($ro[1]);
-echo "device memory\n";
-var_dump(BufferView::fromDLPack(buffers_test_make(1, 8, 1, [4], [1], 0, 2, 0, 3, 1, 3)));
-var_dump(BufferView::fromDLPack(buffers_test_make(1, 8, 1, [4], [1], 0, 99, 0, 3, 1, 3)));
+var_dump(Buffer::fromFile($file, 0, null, false)->view(DType::UInt8, 4));
+unlink($file);
 echo "Shape\n";
 var_dump(new Shape([2, 3]));
 print_r(new Shape([4])); echo "\n";
@@ -151,7 +151,7 @@ Buffers\BufferView Object
   ),
    'offset' => 2,
    'buffer' => 
-  \Buffers\ArrayBuffer::__set_state(array(
+  \Buffers\Buffer::__set_state(array(
   )),
 ))
 0-d
@@ -352,7 +352,7 @@ object(Buffers\BufferView)#%d (7) {
 }
 bool(true)
 1005 ints in the output of 1000 elements
-read-only and a sub-view
+read-only, files: mapped (host memory) and storage only
 object(Buffers\BufferView)#%d (7) {
   ["dtype"]=>
   enum(Buffers\DType::UInt8)
@@ -369,7 +369,7 @@ object(Buffers\BufferView)#%d (7) {
   ["offset"]=>
   int(2)
   ["device"]=>
-  string(3) "cpu"
+  string(4) "file"
   ["writable"]=>
   bool(false)
   ["data"]=>
@@ -380,7 +380,6 @@ object(Buffers\BufferView)#%d (7) {
     int(3)
   }
 }
-device memory
 object(Buffers\BufferView)#%d (7) {
   ["dtype"]=>
   enum(Buffers\DType::UInt8)
@@ -397,31 +396,9 @@ object(Buffers\BufferView)#%d (7) {
   ["offset"]=>
   int(0)
   ["device"]=>
-  string(6) "cuda:3"
+  string(4) "file"
   ["writable"]=>
-  bool(true)
-  ["data"]=>
-  string(21) "(not host-accessible)"
-}
-object(Buffers\BufferView)#%d (7) {
-  ["dtype"]=>
-  enum(Buffers\DType::UInt8)
-  ["shape"]=>
-  array(1) {
-    [0]=>
-    int(4)
-  }
-  ["strides"]=>
-  array(1) {
-    [0]=>
-    int(1)
-  }
-  ["offset"]=>
-  int(0)
-  ["device"]=>
-  string(10) "device99:3"
-  ["writable"]=>
-  bool(true)
+  bool(false)
   ["data"]=>
   string(21) "(not host-accessible)"
 }

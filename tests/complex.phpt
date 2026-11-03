@@ -4,8 +4,8 @@ Complex dtypes
 <?php if (!extension_loaded('buffers')) die('skip buffers extension not loaded'); ?>
 --FILE--
 <?php
-use Buffers\{DType, ArrayBuffer, BufferView};
-$b = new ArrayBuffer(64);
+use Buffers\{DType, Buffer, BufferView};
+$b = new Buffer(64);
 foreach (['Complex32', 'BComplex32', 'Complex64', 'Complex128'] as $name) {
     $v = $b->view(constant("Buffers\\DType::$name"), 3);
     echo $name, " ", $v->dtype->byteSize(), " bytes/element\n";

@@ -4,9 +4,9 @@ Arithmetic and bitwise operators on a BufferView are a TypeError when no extensi
 <?php if (!extension_loaded('buffers')) die('skip buffers extension not loaded'); if (function_exists('bat_counts')) die('skip the API consumer registers an operator handler'); ?>
 --FILE--
 <?php
-use Buffers\{ArrayBuffer, DType};
-$v = (new ArrayBuffer(8))->view(DType::Int16, 4);
-$w = (new ArrayBuffer(8))->view(DType::Int16, 4);
+use Buffers\{Buffer, DType};
+$v = (new Buffer(8))->view(DType::Int16, 4);
+$w = (new Buffer(8))->view(DType::Int16, 4);
 $ops = [
     '+'  => fn() => $v + 1,
     '1+' => fn() => 1 + $v,

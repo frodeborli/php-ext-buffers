@@ -4,8 +4,8 @@ view(): argument validation
 <?php if (!extension_loaded('buffers')) die('skip buffers extension not loaded'); ?>
 --FILE--
 <?php
-use Buffers\{DType, ArrayBuffer};
-$b = new ArrayBuffer(24);
+use Buffers\{DType, Buffer};
+$b = new Buffer(24);
 $cases = [
   'default 1-D'            => [DType::UInt8],
   'int16 default'          => [DType::Int16],
@@ -65,27 +65,27 @@ float64 3 elements     ok shape=[3] strides=[1] off=0 dtype=Float64
 int32 x 6              ok shape=[6] strides=[1] off=0 dtype=Int32
 zero dim in shape      ok shape=[0,5] strides=[5,1] off=0 dtype=Int16
 zero dim wide strides  ok shape=[4,0] strides=[100,1] off=0 dtype=Int16
-complex128             ValueError: Buffers\ArrayBuffer::view(): Argument #2 ($shape) is required: the buffer length minus the offset is not a multiple of the element size (16 bytes)
-too big                ValueError: Buffers\ArrayBuffer::view(): Argument #2 ($shape) with the given strides and offset extends beyond the end of the buffer (24 bytes)
-too big 2d             ValueError: Buffers\ArrayBuffer::view(): Argument #2 ($shape) with the given strides and offset extends beyond the end of the buffer (24 bytes)
-strides overreach      ValueError: Buffers\ArrayBuffer::view(): Argument #2 ($shape) with the given strides and offset extends beyond the end of the buffer (24 bytes)
-offset beyond          ValueError: Buffers\ArrayBuffer::view(): Argument #4 ($offset) must be between 0 and the byte length of the buffer
-negative offset        ValueError: Buffers\ArrayBuffer::view(): Argument #4 ($offset) must be between 0 and the byte length of the buffer
-misaligned offset      ValueError: Buffers\ArrayBuffer::view(): Argument #4 ($offset) must be a multiple of the element size (2 bytes)
-uneven default shape   ValueError: Buffers\ArrayBuffer::view(): Argument #4 ($offset) must be a multiple of the element size (4 bytes)
-negative dim           ValueError: Buffers\ArrayBuffer::view(): Argument #2 ($shape) must contain only non-negative values
-negative int shape     ValueError: Buffers\ArrayBuffer::view(): Argument #2 ($shape) must be non-negative
+complex128             ValueError: Buffers\Buffer::view(): Argument #2 ($shape) is required: the buffer length minus the offset is not a multiple of the element size (16 bytes)
+too big                ValueError: Buffers\Buffer::view(): Argument #2 ($shape) with the given strides and offset extends beyond the end of the buffer (24 bytes)
+too big 2d             ValueError: Buffers\Buffer::view(): Argument #2 ($shape) with the given strides and offset extends beyond the end of the buffer (24 bytes)
+strides overreach      ValueError: Buffers\Buffer::view(): Argument #2 ($shape) with the given strides and offset extends beyond the end of the buffer (24 bytes)
+offset beyond          ValueError: Buffers\Buffer::view(): Argument #4 ($offset) must be between 0 and the byte length of the buffer
+negative offset        ValueError: Buffers\Buffer::view(): Argument #4 ($offset) must be between 0 and the byte length of the buffer
+misaligned offset      ValueError: Buffers\Buffer::view(): Argument #4 ($offset) must be a multiple of the element size (2 bytes)
+uneven default shape   ValueError: Buffers\Buffer::view(): Argument #4 ($offset) must be a multiple of the element size (4 bytes)
+negative dim           ValueError: Buffers\Buffer::view(): Argument #2 ($shape) must contain only non-negative values
+negative int shape     ValueError: Buffers\Buffer::view(): Argument #2 ($shape) must be non-negative
 empty shape            ok shape=[] strides=[] off=0 dtype=UInt8
-9 dims                 ValueError: Buffers\ArrayBuffer::view(): Argument #2 ($shape) must have at most 8 elements
+9 dims                 ValueError: Buffers\Buffer::view(): Argument #2 ($shape) must have at most 8 elements
 8 dims                 ok shape=[1,1,1,1,1,1,1,1] strides=[1,1,1,1,1,1,1,1] off=0 dtype=UInt8
-string in shape        TypeError: Buffers\ArrayBuffer::view(): Argument #2 ($shape) must contain only integers, string given
-float in shape         TypeError: Buffers\ArrayBuffer::view(): Argument #2 ($shape) must contain only integers, float given
-string shape           TypeError: Buffers\ArrayBuffer::view(): Argument #2 ($shape) must be of type array|int|null, string given
-strides wrong count    ValueError: Buffers\ArrayBuffer::view(): Argument #3 ($strides) must have one entry per dimension (2)
-zero stride            ValueError: Buffers\ArrayBuffer::view(): Argument #3 ($strides) must contain only values of at least 1
-negative stride        ValueError: Buffers\ArrayBuffer::view(): Argument #3 ($strides) must contain only values of at least 1
+string in shape        TypeError: Buffers\Buffer::view(): Argument #2 ($shape) must contain only integers, string given
+float in shape         TypeError: Buffers\Buffer::view(): Argument #2 ($shape) must contain only integers, float given
+string shape           TypeError: Buffers\Buffer::view(): Argument #2 ($shape) must be of type array|int|null, string given
+strides wrong count    ValueError: Buffers\Buffer::view(): Argument #3 ($strides) must have one entry per dimension (2)
+zero stride            ValueError: Buffers\Buffer::view(): Argument #3 ($strides) must contain only values of at least 1
+negative stride        ValueError: Buffers\Buffer::view(): Argument #3 ($strides) must contain only values of at least 1
 huge shape             ValueError: (too large)
 huge stride            ValueError: (too large)
 overflow product       ValueError: (too large)
-huge offset            ValueError: Buffers\ArrayBuffer::view(): Argument #4 ($offset) must be between 0 and the byte length of the buffer
-non-enum type          TypeError: Buffers\ArrayBuffer::view(): Argument #1 ($type) must be of type Buffers\DType, string given
+huge offset            ValueError: Buffers\Buffer::view(): Argument #4 ($offset) must be between 0 and the byte length of the buffer
+non-enum type          TypeError: Buffers\Buffer::view(): Argument #1 ($type) must be of type Buffers\DType, string given

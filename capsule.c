@@ -1,45 +1,7 @@
-/* DLPack interop: BufferView::toDLPack() / fromDLPack() and the opaque DLPackCapsule. */
+/* DLPack interop for the C API: buffers_dlpack_export() and buffers_dlpack_import(). There is no PHP-level DLPack. */
 #include "php_buffers.h"
 #include "zend_exceptions.h"
 #include "buffers_arginfo.h"
-
-zend_class_entry *buf_ce_capsule;
-static zend_object_handlers capsule_handlers;
-
-static zend_object *capsule_create(zend_class_entry *ce)
-{
-	buf_capsule *c = zend_object_alloc(sizeof(buf_capsule), ce);
-
-	zend_object_std_init(&c->std, ce);
-	c->std.handlers = &capsule_handlers;
-	c->t = NULL;
-	return &c->std;
-}
-
-static zend_function *capsule_no_constructor(zend_object *o)
-{
-	zend_throw_error(NULL, "DLPackCapsule cannot be instantiated; use BufferView::toDLPack()");
-	return NULL;
-}
-
-/* An unconsumed capsule that is dropped releases its tensor. */
-static void capsule_free(zend_object *o)
-{
-	buf_capsule *c = buf_capsule_from(o);
-
-	if (c->t && c->t->deleter) {
-		c->t->deleter(c->t);
-	}
-	zend_object_std_dtor(o);
-}
-
-static zend_object *capsule_new(DLManagedTensorVersioned *t)
-{
-	zend_object *o = capsule_create(buf_ce_capsule);
-
-	buf_capsule_from(o)->t = t;
-	return o;
-}
 
 /* ---- export --------------------------------------------------------------------------- */
 
@@ -70,6 +32,14 @@ zend_result buf_view_export(zend_object *vo, DLManagedTensorVersioned **out)
 	if (UNEXPECTED(b->pending) && buf_buffer_make_ready(b) == FAILURE) {
 		return FAILURE;
 	}
+	if (b->dev_type < 0) {
+		if (b->dev_type == BUF_DEV_FILE && !b->host) {
+			zend_throw_error(NULL, "Cannot export a view of an unmapped file as a DLPack tensor: transfer to the host first with to()");
+		} else if (b->dev_type != BUF_DEV_FILE) {
+			zend_throw_error(NULL, "Cannot export a view on a device that has no DLPack device type");
+		}
+		if (EG(exception)) return FAILURE;
+	}
 	c = malloc(sizeof(export_ctx));
 	if (!c) {
 		zend_throw_error(NULL, "Out of memory");
@@ -82,8 +52,8 @@ zend_result buf_view_export(zend_object *vo, DLManagedTensorVersioned **out)
 	c->t.flags = v->writable ? 0 : DLPACK_FLAG_BITMASK_READ_ONLY; /* packed sub-byte data is DLPack's default: no PADDED flag */
 	d = &c->t.dl_tensor;
 	d->data = b->base;
-	d->device.device_type = (DLDeviceType)b->dev_type;
-	d->device.device_id = b->dev_id;
+	d->device.device_type = b->dev_type == BUF_DEV_FILE ? kDLCPU : (DLDeviceType)b->dev_type;   /* a mapped file is host memory */
+	d->device.device_id = b->dev_type == BUF_DEV_FILE ? 0 : b->dev_id;
 	d->ndim = v->ndim;
 	d->dtype.code = info->dlpack_code;
 	d->dtype.bits = info->bits;
@@ -104,17 +74,6 @@ zend_result buf_view_export(zend_object *vo, DLManagedTensorVersioned **out)
 zend_result buffers_dlpack_export(zend_object *view, DLManagedTensorVersioned **out)
 {
 	return buf_view_export(view, out);
-}
-
-PHP_METHOD(Buffers_BufferView, toDLPack)
-{
-	DLManagedTensorVersioned *t;
-
-	ZEND_PARSE_PARAMETERS_NONE();
-	if (buf_view_export(Z_OBJ_P(ZEND_THIS), &t) == FAILURE) {
-		RETURN_THROWS();
-	}
-	RETURN_OBJ(capsule_new(t));
 }
 
 /* ---- import --------------------------------------------------------------------------- */
@@ -291,152 +250,3 @@ zend_object *buffers_dlpack_import(DLManagedTensorVersioned *t)
 {
 	return buf_view_import(t);
 }
-
-PHP_METHOD(Buffers_BufferView, fromDLPack)
-{
-	zend_object *co, *view;
-	buf_capsule *cap;
-
-	ZEND_PARSE_PARAMETERS_START(1, 1)
-		Z_PARAM_OBJ_OF_CLASS(co, buf_ce_capsule)
-	ZEND_PARSE_PARAMETERS_END();
-
-	cap = buf_capsule_from(co);
-	if (!cap->t) {
-		zend_throw_error(NULL, "The DLPackCapsule has already been consumed");
-		RETURN_THROWS();
-	}
-	view = buf_view_import(cap->t);
-	if (!view) {
-		RETURN_THROWS(); /* a rejected capsule is not consumed: its deleter still runs, once, when it is freed */
-	}
-	cap->t = NULL;
-	RETURN_OBJ(view);
-}
-
-void buf_capsule_minit(void)
-{
-	zend_class_entry ce;
-
-	INIT_CLASS_ENTRY(ce, "Buffers\\DLPackCapsule", NULL);
-	buf_ce_capsule = zend_register_internal_class_ex(&ce, NULL);
-	buf_ce_capsule->ce_flags |= ZEND_ACC_FINAL | ZEND_ACC_NO_DYNAMIC_PROPERTIES | ZEND_ACC_NOT_SERIALIZABLE;
-	buf_ce_capsule->create_object = capsule_create;
-	memcpy(&capsule_handlers, &std_object_handlers, sizeof capsule_handlers);
-	capsule_handlers.offset = XtOffsetOf(buf_capsule, std);
-	capsule_handlers.free_obj = capsule_free;
-	capsule_handlers.clone_obj = NULL;
-	capsule_handlers.compare = buf_compare_identity;
-	capsule_handlers.get_constructor = capsule_no_constructor;
-}
-
-#ifdef BUFFERS_TESTING
-/* Test-only (configure --enable-buffers-testing): produces tensors as a foreign framework would,
- * with a deleter that is counted, so the suite can prove the deleter runs exactly once. */
-typedef struct {
-	DLManagedTensorVersioned t;
-	int64_t shape[16], strides[16]; /* more than BUF_MAX_NDIM, so tests can ask for 9 dimensions */
-	void *mem;
-} test_ctx;
-static zend_long test_made, test_deleted;
-
-static void test_deleter(DLManagedTensorVersioned *t)
-{
-	test_ctx *c = (test_ctx *)t;
-
-	free(c->mem);
-	free(c);
-	test_deleted++;
-}
-
-ZEND_BEGIN_ARG_INFO_EX(arginfo_buffers_test_make, 0, 0, 4)
-	ZEND_ARG_TYPE_INFO(0, code, IS_LONG, 0)
-	ZEND_ARG_TYPE_INFO(0, bits, IS_LONG, 0)
-	ZEND_ARG_TYPE_INFO(0, lanes, IS_LONG, 0)
-	ZEND_ARG_TYPE_INFO(0, shape, IS_ARRAY, 0)
-	ZEND_ARG_TYPE_INFO(0, strides, IS_ARRAY, 1)
-	ZEND_ARG_TYPE_INFO(0, flags, IS_LONG, 0)
-	ZEND_ARG_TYPE_INFO(0, device, IS_LONG, 0)
-	ZEND_ARG_TYPE_INFO(0, byteOffset, IS_LONG, 0)
-	ZEND_ARG_TYPE_INFO(0, minor, IS_LONG, 0)
-	ZEND_ARG_TYPE_INFO(0, major, IS_LONG, 0)
-	ZEND_ARG_TYPE_INFO(0, deviceId, IS_LONG, 0)
-ZEND_END_ARG_INFO()
-ZEND_BEGIN_ARG_INFO_EX(arginfo_buffers_test_counts, 0, 0, 0)
-ZEND_END_ARG_INFO()
-
-/* buffers_test_make(code, bits, lanes, shape, ?strides = null, flags = 0, device = 1, byteOffset = 0, minor = 3, major = 1, deviceId = 0)
- * The memory holds the byte pattern i & 0xff, so tests can check what a view reads. */
-PHP_FUNCTION(buffers_test_make)
-{
-	zend_long code, bits, lanes, flags = 0, device = 1, device_id = 0, byte_offset = 0, minor = DLPACK_MINOR_VERSION, major = DLPACK_MAJOR_VERSION;
-	HashTable *shape, *strides = NULL;
-	test_ctx *c;
-	zval *z;
-	int n = 0;
-	int64_t extent = 1, esize, acc = 1;
-	size_t total;
-
-	ZEND_PARSE_PARAMETERS_START(4, 11)
-		Z_PARAM_LONG(code) Z_PARAM_LONG(bits) Z_PARAM_LONG(lanes) Z_PARAM_ARRAY_HT(shape)
-		Z_PARAM_OPTIONAL
-		Z_PARAM_ARRAY_HT_OR_NULL(strides) Z_PARAM_LONG(flags) Z_PARAM_LONG(device) Z_PARAM_LONG(byte_offset) Z_PARAM_LONG(minor) Z_PARAM_LONG(major) Z_PARAM_LONG(device_id)
-	ZEND_PARSE_PARAMETERS_END();
-
-	if (zend_hash_num_elements(shape) > 16 || (strides && zend_hash_num_elements(strides) > 16)) {
-		zend_argument_value_error(4, "has too many dimensions for the test helper");
-		RETURN_THROWS();
-	}
-	c = calloc(1, sizeof *c);
-	ZEND_HASH_FOREACH_VAL(shape, z) { c->shape[n++] = zval_get_long(z); } ZEND_HASH_FOREACH_END();
-	esize = (bits * lanes + 7) / 8;
-	if (esize < 1) esize = 1;
-	if (strides) {
-		int m = 0;
-		ZEND_HASH_FOREACH_VAL(strides, z) { c->strides[m++] = zval_get_long(z); } ZEND_HASH_FOREACH_END();
-		extent = 1;
-		for (int i = 0; i < n; i++) {
-			if (c->shape[i] == 0) { extent = 0; break; }
-			if (c->strides[i] > 0) extent += (c->shape[i] - 1) * c->strides[i];
-		}
-	} else {
-		for (int i = n - 1; i >= 0; i--) { acc *= c->shape[i] ? c->shape[i] : 1; }
-		extent = acc;
-	}
-	total = (size_t)byte_offset + (size_t)extent * esize + 64;
-	if (posix_memalign(&c->mem, 64, total) != 0) { free(c); RETURN_FALSE; }
-	for (size_t i = 0; i < total; i++) ((uint8_t *)c->mem)[i] = (uint8_t)i;
-
-	c->t.version.major = (uint32_t)major;
-	c->t.version.minor = (uint32_t)minor;
-	c->t.manager_ctx = c;
-	c->t.deleter = test_deleter;
-	c->t.flags = (uint64_t)flags;
-	c->t.dl_tensor.data = c->mem;
-	c->t.dl_tensor.device.device_type = (DLDeviceType)device;
-	c->t.dl_tensor.device.device_id = (int32_t)device_id;
-	c->t.dl_tensor.ndim = n;
-	c->t.dl_tensor.dtype.code = (uint8_t)code;
-	c->t.dl_tensor.dtype.bits = (uint8_t)bits;
-	c->t.dl_tensor.dtype.lanes = (uint16_t)lanes;
-	c->t.dl_tensor.shape = c->shape;
-	c->t.dl_tensor.strides = strides ? c->strides : NULL;
-	c->t.dl_tensor.byte_offset = (uint64_t)byte_offset;
-	test_made++;
-	RETURN_OBJ(capsule_new(&c->t));
-}
-
-PHP_FUNCTION(buffers_test_counts)
-{
-	ZEND_PARSE_PARAMETERS_NONE();
-	array_init(return_value);
-	add_assoc_long(return_value, "made", test_made);
-	add_assoc_long(return_value, "deleted", test_deleted);
-}
-
-const zend_function_entry buf_testing_functions[] = {
-	PHP_FE(buffers_test_make, arginfo_buffers_test_make)
-	PHP_FE(buffers_test_counts, arginfo_buffers_test_counts)
-	PHP_FE_END
-};
-#endif

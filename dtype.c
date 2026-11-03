@@ -67,14 +67,3 @@ PHP_METHOD(Buffers_DType, isByteAligned) { ZEND_PARSE_PARAMETERS_NONE(); RETURN_
 PHP_METHOD(Buffers_DType, isInteger) { ZEND_PARSE_PARAMETERS_NONE(); RETURN_BOOL(SELF->kind == BUF_INT || SELF->kind == BUF_UINT); }
 PHP_METHOD(Buffers_DType, isFloatingPoint) { ZEND_PARSE_PARAMETERS_NONE(); RETURN_BOOL(SELF->kind == BUF_FLOAT); }
 PHP_METHOD(Buffers_DType, isComplex) { ZEND_PARSE_PARAMETERS_NONE(); RETURN_BOOL(SELF->kind == BUF_COMPLEX); }
-
-PHP_METHOD(Buffers_DType, dlpack)
-{
-	const buf_dtype_info *d = SELF;
-
-	ZEND_PARSE_PARAMETERS_NONE();
-	array_init_size(return_value, 3);
-	add_assoc_long(return_value, "code", d->dlpack_code);
-	add_assoc_long(return_value, "bits", d->bits);
-	add_assoc_long(return_value, "lanes", 1);
-}

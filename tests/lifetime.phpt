@@ -4,8 +4,8 @@ Lifetime: views keep their buffer alive, sub-view pooling, cycles and shutdown
 <?php if (!extension_loaded('buffers')) die('skip buffers extension not loaded'); ?>
 --FILE--
 <?php
-use Buffers\{DType, ArrayBuffer};
-function make() { $b = new ArrayBuffer(16); $v = $b->view(DType::UInt8, [4, 4]); $v[3][3] = 9; return $v; }
+use Buffers\{DType, Buffer};
+function make() { $b = new Buffer(16); $v = $b->view(DType::UInt8, [4, 4]); $v[3][3] = 9; return $v; }
 $v = make();
 var_dump($v[3][3], $v->buffer->byteLength());
 $row = $v[3];
@@ -13,7 +13,7 @@ unset($v);
 gc_collect_cycles();
 var_dump($row[3], $row->buffer->toString()[15] === "\x09");
 // views of the same buffer share the buffer object
-$b = new ArrayBuffer(8);
+$b = new Buffer(8);
 $x = $b->view(DType::UInt8); $y = $b->view(DType::Int16, 4);
 var_dump($x->buffer === $b, $y->buffer === $b);
 $y[0] = 0x0201; var_dump($x[0], $x[1]);
@@ -47,7 +47,7 @@ $arr = ['k' => $again]; $ref = &$arr['k'];
 var_dump($cl() === $again[0], $arr['k'][1] === $again[1]);
 // objects alive at shutdown: parked pool entries, a live view and a sub-view in globals
 $GLOBALS['keep'] = $m[1];
-$GLOBALS['keepbuf'] = (new ArrayBuffer(4))->view(DType::Float32, 1);
+$GLOBALS['keepbuf'] = (new Buffer(4))->view(DType::Float32, 1);
 echo "end\n";
 --EXPECT--
 int(9)

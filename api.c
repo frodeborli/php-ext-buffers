@@ -19,14 +19,13 @@ zend_class_entry *buffers_get_class(int which)
 {
 	switch (which) {
 	case BUFFERS_CE_DTYPE: return buf_ce_dtype;
-	case BUFFERS_CE_BUFFER_INTERFACE: return buf_ce_buffer_if;
-	case BUFFERS_CE_ARRAY_BUFFER: return buf_ce_arraybuffer;
-	case BUFFERS_CE_DLPACK_BUFFER: return buf_ce_dlpackbuffer;
+	case BUFFERS_CE_BUFFER: return buf_ce_buffer;
 	case BUFFERS_CE_VIEW: return buf_ce_view;
 	case BUFFERS_CE_TENSOR: return buf_ce_tensor;
 	case BUFFERS_CE_SHAPE: return buf_ce_shape;
 	case BUFFERS_CE_DEVICE: return buf_ce_device_if;
 	case BUFFERS_CE_CPU_DEVICE: return buf_ce_cpudevice;
+	case BUFFERS_CE_FILE_DEVICE: return buf_ce_filedevice;
 	}
 	return NULL;
 }
@@ -41,11 +40,19 @@ const buffers_dtype_desc *buffers_dtype_describe(int dtype)
 void buffers_dtype_to_zval(int dtype, zval *rv) { buf_dtype_to_zval(dtype, rv); }
 int buffers_dtype_from_object(zend_object *dtype_case) { return buf_dtype_from_object(dtype_case); }
 
+int buffers_dtype_from_dlpack(int code, int bits)
+{
+	for (int i = 0; i < BUF_NTYPES; i++) {
+		if (buf_dtypes[i].dlpack_code == code && buf_dtypes[i].bits == bits) return i;
+	}
+	return -1;
+}
+
 /* ---- buffers ---- */
 
 bool buffers_is_buffer(const zend_object *o)
 {
-	return o && (o->ce == buf_ce_arraybuffer || o->ce == buf_ce_dlpackbuffer);
+	return o && (o->ce == buf_ce_buffer);
 }
 
 zend_result buffers_buffer_get_info(zend_object *buffer, buffers_buffer_info *out)
@@ -53,12 +60,12 @@ zend_result buffers_buffer_get_info(zend_object *buffer, buffers_buffer_info *ou
 	buf_buffer *b;
 
 	if (!buffers_is_buffer(buffer)) {
-		zend_type_error("Expected an ArrayBuffer or DLPackBuffer");
+		zend_type_error("Expected a Buffer");
 		return FAILURE;
 	}
 	b = buf_buffer_from(buffer);
 	out->base = b->base;
-	out->length = b->len;
+	out->length = b->len > SIZE_MAX ? SIZE_MAX : (size_t)b->len;   /* an unmapped file can be larger than the address space */
 	out->writable = b->writable;
 	out->host_accessible = b->host;
 	out->pending = b->pending;
@@ -67,6 +74,8 @@ zend_result buffers_buffer_get_info(zend_object *buffer, buffers_buffer_info *ou
 	out->device_id = b->dev_id;
 	return SUCCESS;
 }
+
+zend_object *buffers_file_device(void) { return buf_file_device(); }
 
 zend_object *buffers_buffer_create_foreign(void *data, size_t length, bool writable, zend_object *device,
 	void (*deleter)(void *ctx), void *ctx)
@@ -155,7 +164,7 @@ zend_object *buffers_view_create(zend_object *buffer, int dtype, int ndim, const
 	zend_object *v;
 
 	if (!buffers_is_buffer(buffer)) {
-		zend_type_error("Expected an ArrayBuffer or DLPackBuffer");
+		zend_type_error("Expected a Buffer");
 		return NULL;
 	}
 	if (dtype < 0 || dtype >= BUF_NTYPES) {

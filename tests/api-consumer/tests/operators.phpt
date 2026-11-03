@@ -4,10 +4,10 @@ C API: operator hook - arithmetic and bitwise operators go to the registered han
 <?php if (!extension_loaded('buffers_api_test')) die('skip needs the buffers_api_test extension'); ?>
 --FILE--
 <?php
-use Buffers\{ArrayBuffer, DType};
-$v = (new ArrayBuffer(24))->view(DType::Float32, [2, 3]);
-$w = (new ArrayBuffer(8))->view(DType::Int16, 4);
-$s = (new ArrayBuffer(8))->view(DType::Int16, []);
+use Buffers\{Buffer, DType};
+$v = (new Buffer(24))->view(DType::Float32, [2, 3]);
+$w = (new Buffer(8))->view(DType::Int16, 4);
+$s = (new Buffer(8))->view(DType::Int16, []);
 $ops = [
     '+'   => fn() => $v + 1,
     '1+'  => fn() => 1 + $v,
@@ -41,7 +41,7 @@ $u = $w; $u *= $u;
 var_dump($u);
 
 echo "comparisons are still identity\n";
-$v2 = (new ArrayBuffer(24))->view(DType::Float32, [2, 3]);
+$v2 = (new Buffer(24))->view(DType::Float32, [2, 3]);
 var_dump($v == $v, $v == $v2, $v === $v2, $v != $v2, $v <=> $v);
 echo "end\n";
 --EXPECT--

@@ -11,7 +11,7 @@ cflags="-O2 -g -Wall -Wextra -Wno-unused-parameter -Wno-missing-field-initialize
 log=$dst/build.log
 cd "$dst"
 $phpize >/dev/null 2>&1
-./configure --enable-buffers --enable-buffers-testing --with-php-config="$phpconfig" CFLAGS="$cflags" "$@" >/dev/null
+./configure --enable-buffers --with-php-config="$phpconfig" CFLAGS="$cflags" "$@" >/dev/null
 make -j"$jobs" >"$log" 2>&1 || { cat "$log"; exit 1; }
 # the header exactly as other extensions find it after "make install"
 mkdir -p "$dst/inc/ext/buffers" && cp php_buffers_api.h dlpack.h "$dst/inc/ext/buffers/"

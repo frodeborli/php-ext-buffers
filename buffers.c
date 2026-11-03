@@ -7,13 +7,6 @@
 
 ZEND_DECLARE_MODULE_GLOBALS(buffers)
 
-#ifdef BUFFERS_TESTING
-extern const zend_function_entry buf_testing_functions[];
-#define BUF_FUNCTIONS buf_testing_functions
-#else
-#define BUF_FUNCTIONS NULL
-#endif
-
 zend_class_entry *buf_json_serializable(void)
 {
 	return zend_hash_str_find_ptr(CG(class_table), "jsonserializable", sizeof("jsonserializable") - 1);
@@ -40,7 +33,6 @@ PHP_MINIT_FUNCTION(buffers)
 	buf_shape_minit();
 	buf_buffer_minit();
 	buf_view_minit();
-	buf_capsule_minit();
 	return SUCCESS;
 }
 
@@ -87,7 +79,7 @@ static const zend_module_dep buffers_deps[] = {
 zend_module_entry buffers_module_entry = {
 	STANDARD_MODULE_HEADER_EX, NULL, buffers_deps,
 	"buffers",
-	BUF_FUNCTIONS,
+	NULL,
 	PHP_MINIT(buffers),
 	PHP_MSHUTDOWN(buffers),
 	PHP_RINIT(buffers),

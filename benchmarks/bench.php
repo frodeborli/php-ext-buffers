@@ -1,7 +1,7 @@
 <?php
 /* usage: php [-d extension=buffers.so ...] benchmarks/bench.php [section]    sections: access, dtype, props, memory
  * Prints one TSV line per measurement: name <TAB> ns per element access. run.sh runs it with and without the JIT. */
-use Buffers\{DType, ArrayBuffer};
+use Buffers\{DType, Buffer};
 
 $section = $argv[1] ?? 'all';
 $w = 640; $h = 480; $px = $w * $h; $reps = 12;
@@ -33,7 +33,7 @@ function measure(string $name, callable $run, int $accesses, int $reps): void {
 }
 
 if ($section === 'all' || $section === 'access') {
-    $buf = new ArrayBuffer($px * 4);
+    $buf = new Buffer($px * 4);
     $flat = $buf->view(DType::UInt8);                       // 1-D idiom
     $v3 = $buf->view(DType::UInt8, [$h, $w, 4]);
     $v2 = $buf->view(DType::UInt8, [$h, $w * 4]);
@@ -71,7 +71,7 @@ if ($section === 'all' || $section === 'access') {
 if ($section === 'all' || $section === 'dtype') {
     $n = 1 << 20;
     foreach (DType::cases() as $c) {
-        $buf = new ArrayBuffer($n * 16);            // fresh memory per dtype: stale bytes of another dtype could be float denormals
+        $buf = new Buffer($n * 16);            // fresh memory per dtype: stale bytes of another dtype could be float denormals
         $f = $buf->view($c, $n);
         $val = match (true) { $c === DType::Bool => true, $c->isComplex() => [1.5, -2.5], $c->isFloatingPoint() => 1.5, default => 3 };
         measure("dtype write {$c->name}", fn() => dtype_write($f, $n, $val), $n, 5);
@@ -81,7 +81,7 @@ if ($section === 'all' || $section === 'dtype') {
 
 if ($section === 'all' || $section === 'props') {
     // properties are computed on read (internal get hooks); creating a sub-view must stay as cheap as it was
-    $pv = (new ArrayBuffer(1024))->view(DType::UInt8, [16, 64]);
+    $pv = (new Buffer(1024))->view(DType::UInt8, [16, 64]);
     $n = 1_000_000;
     measure('prop read ndim',    function () use ($pv, $n) { $s = 0; for ($i = 0; $i < $n; $i++) $s += $pv->ndim; return $s; }, $n, 5);
     measure('prop read offset',  function () use ($pv, $n) { $s = 0; for ($i = 0; $i < $n; $i++) $s += $pv->offset; return $s; }, $n, 5);
@@ -99,9 +99,9 @@ if ($section === 'all' || $section === 'memory') {
         printf("memory\t%s\t%.2f\n", $what, (memory_get_usage() - $before) / $n);
         return $keep;
     };
-    $a = $report('ArrayBuffer + UInt8 view', fn() => (new ArrayBuffer($n))->view(DType::UInt8));
-    $b = $report('ArrayBuffer + Float32 view', fn() => (new ArrayBuffer($n * 4))->view(DType::Float32));
-    $c = $report('ArrayBuffer + Float64 view', fn() => (new ArrayBuffer($n * 8))->view(DType::Float64));
+    $a = $report('Buffer + UInt8 view', fn() => (new Buffer($n))->view(DType::UInt8));
+    $b = $report('Buffer + Float32 view', fn() => (new Buffer($n * 4))->view(DType::Float32));
+    $c = $report('Buffer + Float64 view', fn() => (new Buffer($n * 8))->view(DType::Float64));
     $d = $report('PHP array of ints (packed)', fn() => array_fill(0, $n, 7));
     $e = $report('PHP array of floats (packed)', fn() => array_fill(0, $n, 0.5));
     $f = $report('SplFixedArray', fn() => new SplFixedArray($n));

@@ -1,6 +1,6 @@
 # ext-buffers
 
-The shared representation of n-dimensional typed data for PHP: `Buffers\ArrayBuffer` memory, `Buffers\BufferView`
+The shared representation of n-dimensional typed data for PHP: `Buffers\Buffer` memory, `Buffers\BufferView`
 windows onto it (n-D, strided, every machine-learning dtype including bfloat16, float8, packed float6, float4 and
 int2/int4/uint2/uint4, and complex), `Buffers\Shape`, the `Buffers\Tensor` and `Buffers\Device` interfaces, zero-copy
 [DLPack](https://github.com/dmlc/dlpack) exchange, and a versioned C API (`php_buffers_api.h`) with operator and
@@ -8,9 +8,9 @@ readiness hooks for other extensions. Written in C, no dependencies, PHP 8.4 - 8
 Windows build files are included but untested (see [Verification](#verification)).
 
 ```php
-use Buffers\{ArrayBuffer, DType};
+use Buffers\{Buffer, DType};
 
-$buf   = new ArrayBuffer(640 * 480 * 4);                 // zero-filled, 64-byte aligned, counts toward memory_limit
+$buf   = new Buffer(640 * 480 * 4);                 // zero-filled, 64-byte aligned, counts toward memory_limit
 $rgba  = $buf->view(DType::UInt8, [480, 640, 4]);        // shape [rows, cols, channels]
 $rgba[10][20][3] = 255;                                  // chained single-int offsets
 echo $rgba[10][20][3];                                   // 255
@@ -131,21 +131,21 @@ final class Shape implements ArrayAccess, Countable, IteratorAggregate, JsonSeri
 interface Device { name(): string; dlpackType(): int; id(): int; isHostAccessible(): bool; }
 final class CpuDevice implements Device { public static function get(): CpuDevice; }
 
-interface BufferInterface {
+interface Buffer {
     public function byteLength(): int;
     public function isWritable(): bool;
     public function device(): Device;
     public function view(DType $type, int|array|null $shape = null, ?array $strides = null, int $offset = 0): BufferView;
 }
-final class ArrayBuffer implements BufferInterface {
+final class Buffer implements Buffer {
     public function __construct(int $byteLength);              // zero-filled; emalloc'd, so it counts toward memory_limit
-    public static function fromString(string $data): ArrayBuffer;
+    public static function fromString(string $data): Buffer;
     public function toString(): string;                        // a copy of the bytes
 }
 
 final class BufferView implements Tensor, Countable, ArrayAccess, IteratorAggregate, JsonSerializable {
     // read-only properties, computed when read:
-    //   DType $dtype, Shape $shape, int $ndim, list<int> $strides (in elements), int $offset (bytes), BufferInterface $buffer
+    //   DType $dtype, Shape $shape, int $ndim, list<int> $strides (in elements), int $offset (bytes), Buffer $buffer
     // and a read-write mixed $value, the element of a 0-d view (Error on views with axes)
     public function toDLPack(): DLPackCapsule;
     public static function fromDLPack(DLPackCapsule $capsule): BufferView;
@@ -153,7 +153,7 @@ final class BufferView implements Tensor, Countable, ArrayAccess, IteratorAggreg
 }
 
 final class DLPackCapsule {}    // opaque, consumed once
-final class DLPackBuffer implements BufferInterface {}   // memory owned by someone else (imported tensors, other extensions)
+final class Buffer implements Buffer {}   // memory owned by someone else (imported tensors, other extensions)
 final class ForeignDevice implements Device {}           // the device of an imported tensor that is not on the CPU
 ```
 
@@ -228,9 +228,9 @@ set of tensors under the control of extensions that can honour the C API.
 
 ### Devices
 
-`BufferInterface::device()` says where the memory lives. `ArrayBuffer` is always on `CpuDevice::get()` (dlpackType 1,
+`Buffer::device()` says where the memory lives. `Buffer` is always on `CpuDevice::get()` (dlpackType 1,
 id 0, host accessible). DLPack import accepts **any** device: a tensor that is not on the CPU becomes a view over an
-opaque `DLPackBuffer` whose device is a `ForeignDevice` reporting the DLPack device type and id; its
+opaque `Buffer` whose device is a `ForeignDevice` reporting the DLPack device type and id; its
 `isHostAccessible()` is false except for `kDLCUDAHost` (3), `kDLROCMHost` (11) and `kDLCUDAManaged` (13). Reading,
 writing or iterating the elements of memory that is not host accessible throws `Error`; making sub-views, reading the
 properties and exporting work. Exporting such a view again passes the device type, id, data pointer and byte offset
@@ -314,13 +314,13 @@ A view whose memory is not host accessible throws `Error`; a pending buffer is m
 
 DLPack v1.3 (`dlpack.h` is vendored unmodified, Apache-2.0, see `NOTICE`).
 
-* `toDLPack()` produces a `DLManagedTensorVersioned` on the buffer's device (`kDLCPU` for an `ArrayBuffer`).
+* `toDLPack()` produces a `DLManagedTensorVersioned` on the buffer's device (`kDLCPU` for an `Buffer`).
   **Strides are always materialised** (NULL strides are illegal since DLPack 1.2), `byte_offset` is the view's
   offset, `DLPACK_FLAG_READ_ONLY` mirrors `isWritable()`. Packed float6/float4 views are exported packed (no
   `IS_SUBBYTE_TYPE_PADDED`), 0-d views with `ndim` 0. The capsule keeps the buffer alive; the tensor's deleter
   releases it. The capsule is opaque, a PHP object holding the C pointer. Export waits for a pending buffer (see
   [Readiness](#readiness)).
-* `fromDLPack()` takes a capsule (consuming it once) and wraps the foreign memory in a `DLPackBuffer` whose view is
+* `fromDLPack()` takes a capsule (consuming it once) and wraps the foreign memory in a `Buffer` whose view is
   the returned `BufferView`; the tensor's deleter runs exactly once, when that buffer is freed. For host-accessible
   tensors the buffer covers exactly the tensor's extent, so `$v->offset` starts at 0; for other devices the opaque
   data pointer and byte offset are kept as they are. Any device, one lane, 0-8 dimensions, strides of at least 1 and
@@ -366,7 +366,7 @@ go to the handler: a view is only equal to itself.
 
 A buffer produced asynchronously or lazily can carry a **readiness callback** and a pending flag
 (`buffers_buffer_set_ready_callback()` while the caller holds the only reference, then
-`buffers_buffer_set_pending()`). Element reads and writes, iteration, `ArrayBuffer::toString()` and DLPack export
+`buffers_buffer_set_pending()`). Element reads and writes, iteration, `Buffer::toString()` and DLPack export
 run the callback first while the flag is set; it makes the contents valid and returns `SUCCESS`, or throws and
 returns `FAILURE` (the buffer stays pending, the exception reaches the PHP caller). Making sub-views and reading
 properties never wait. Buffers without a callback and host-accessible memory use the unchanged fast handlers: the

@@ -4,7 +4,7 @@ Packed sub-byte storage: float6 and float4 elements are bits apart, little-bit-e
 <?php if (!extension_loaded('buffers')) die('skip buffers extension not loaded'); ?>
 --FILE--
 <?php
-use Buffers\{ArrayBuffer, DType, BufferView};
+use Buffers\{Buffer, DType, BufferView};
 mt_srand(7);
 
 /** the bytes of $codes packed little-bit-endian, $bits per element */
@@ -19,7 +19,7 @@ function pack_codes(array $codes, int $bits): string {
 }
 /** the value of every code of a format, taken from the byte-aligned decode of a single element */
 function values(DType $t): array {
-    $b = new ArrayBuffer(1); $raw = $b->view(DType::UInt8, 1); $v = $b->view($t, 1);
+    $b = new Buffer(1); $raw = $b->view(DType::UInt8, 1); $v = $b->view($t, 1);
     $r = [];
     for ($c = 0; $c < 1 << $t->bits(); $c++) { $raw[0] = $c; $r[$c] = $v[0]; }
     return $r;
@@ -34,7 +34,7 @@ foreach ([DType::Float4E2M1FN, DType::Float6E2M3FN, DType::Float6E3M2FN] as $t) 
     foreach ([1, 5, 8, 16, 33] as $n) {
         $codes = []; for ($i = 0; $i < $n; $i++) $codes[] = mt_rand(0, (1 << $bits) - 1);
         $bytes = pack_codes($codes, $bits);
-        $buf = ArrayBuffer::fromString($bytes);
+        $buf = Buffer::fromString($bytes);
         $v = $buf->view($t, $n);
         $bad = 0;
         for ($i = 0; $i < $n; $i++) { if (!($v[$i] === $val[$codes[$i]] || (is_nan($v[$i]) && is_nan($val[$codes[$i]])))) $bad++; }
@@ -43,7 +43,7 @@ foreach ([DType::Float4E2M1FN, DType::Float6E2M3FN, DType::Float6E3M2FN] as $t) 
 
     // writes, and neighbours stay as they were
     $n = 24; $model = array_fill(0, $n, 0);
-    $buf = new ArrayBuffer(intdiv($n * $bits, 8)); $v = $buf->view($t, $n);
+    $buf = new Buffer(intdiv($n * $bits, 8)); $v = $buf->view($t, $n);
     $bad = 0;
     for ($k = 0; $k < 400; $k++) {
         $i = mt_rand(0, $n - 1); $c = mt_rand(0, (1 << $bits) - 1);
@@ -55,24 +55,24 @@ foreach ([DType::Float4E2M1FN, DType::Float6E2M3FN, DType::Float6E3M2FN] as $t) 
 
     // default shape: the rest of the buffer
     foreach ([3, 5, 6, 12] as $len) {
-        try { printf("  %2d bytes -> %d elements\n", $len, count((new ArrayBuffer($len))->view($t))); }
+        try { printf("  %2d bytes -> %d elements\n", $len, count((new Buffer($len))->view($t))); }
         catch (ValueError $e) { printf("  %2d bytes -> %s\n", $len, $e->getMessage()); }
     }
-    $o = (new ArrayBuffer(12))->view($t, null, null, 3);
+    $o = (new Buffer(12))->view($t, null, null, 3);
     printf("  offset 3 of 12 bytes -> %d elements, offset %d\n", count($o), $o->offset);
 }
 
 echo "layout of float4: element 0 in the low nibble\n";
-$buf = new ArrayBuffer(2); $f4 = $buf->view(DType::Float4E2M1FN, 4);
+$buf = new Buffer(2); $f4 = $buf->view(DType::Float4E2M1FN, 4);
 $f4[0] = 1.0; $f4[1] = -1.0; $f4[2] = 6.0; $f4[3] = 0.5;
 var_dump(bin2hex($buf->toString()), $f4[0], $f4[1], $f4[2], $f4[3]);
 echo "float6 straddles bytes\n";
-$buf = new ArrayBuffer(3); $f6 = $buf->view(DType::Float6E3M2FN, 4);
+$buf = new Buffer(3); $f6 = $buf->view(DType::Float6E3M2FN, 4);
 foreach ([1.0, 2.0, 3.0, 4.0] as $i => $x) $f6[$i] = $x;
 var_dump(bin2hex($buf->toString()), $f6[1], $f6[2], $f6[3]);
 
 echo "n-D views: rows start on byte boundaries\n";
-$buf = new ArrayBuffer(48);
+$buf = new Buffer(48);
 $m = $buf->view(DType::Float6E2M3FN, [4, 8]);
 var_dump($m->strides, $m->offset, $m[1]->offset, $m[3]->offset, $m[2]->strides, $m[2]->shape->toArray(), $m[2]->ndim);
 $m[2][5] = 1.5; $m[3][0] = -0.5; $m[0][7] = 7.5;
@@ -111,12 +111,12 @@ foreach ([
     'fp4 huge'             => [DType::Float4E2M1FN, [PHP_INT_MAX]],
     'fp4 huge stride'      => [DType::Float4E2M1FN, [2, 2], [PHP_INT_MAX, 1]],
 ] as $name => $args) {
-    try { $v = (new ArrayBuffer(48))->view(...$args); printf("%-21s ok shape=%s strides=%s offset=%d\n", $name, json_encode($v->shape->toArray()), json_encode($v->strides), $v->offset); }
+    try { $v = (new Buffer(48))->view(...$args); printf("%-21s ok shape=%s strides=%s offset=%d\n", $name, json_encode($v->shape->toArray()), json_encode($v->strides), $v->offset); }
     catch (Throwable $e) { printf("%-21s %s: %s\n", $name, get_class($e), preg_match('/^(fp4 huge)/', $name) ? '(too large)' : $e->getMessage()); }
 }
 
 echo "errors on elements\n";
-$f4 = (new ArrayBuffer(4))->view(DType::Float4E2M1FN, 8);
+$f4 = (new Buffer(4))->view(DType::Float4E2M1FN, 8);
 foreach ([fn() => $f4[8], fn() => $f4[-1], fn() => $f4[0] = 'x', fn() => $f4[0] = [1], fn() => $f4["1"]] as $f) {
     try { $f(); echo "no error\n"; } catch (Throwable $e) { echo get_class($e), ': ', $e->getMessage(), "\n"; }
 }
@@ -151,7 +151,7 @@ Float6E2M3FN: bits=6 byteSize=NULL aligned=false
   read n=33 25 bytes, mismatches 0
   write fuzz: bytes differ from the model 0 times
    3 bytes -> 4 elements
-   5 bytes -> Buffers\ArrayBuffer::view(): Argument #2 ($shape) is required: the number of bits in the buffer after the offset is not a multiple of the element width (6 bits)
+   5 bytes -> Buffers\Buffer::view(): Argument #2 ($shape) is required: the number of bits in the buffer after the offset is not a multiple of the element width (6 bits)
    6 bytes -> 8 elements
   12 bytes -> 16 elements
   offset 3 of 12 bytes -> 12 elements, offset 3
@@ -163,7 +163,7 @@ Float6E3M2FN: bits=6 byteSize=NULL aligned=false
   read n=33 25 bytes, mismatches 0
   write fuzz: bytes differ from the model 0 times
    3 bytes -> 4 elements
-   5 bytes -> Buffers\ArrayBuffer::view(): Argument #2 ($shape) is required: the number of bits in the buffer after the offset is not a multiple of the element width (6 bits)
+   5 bytes -> Buffers\Buffer::view(): Argument #2 ($shape) is required: the number of bits in the buffer after the offset is not a multiple of the element width (6 bits)
    6 bytes -> 8 elements
   12 bytes -> 16 elements
   offset 3 of 12 bytes -> 12 elements, offset 3
@@ -236,24 +236,24 @@ int(10)
 0:8 1:8 2:8 3:8 
 0:0.0 1:0.0 2:0.0 3:0.0 4:0.0 5:0.0 6:0.0 7:0.0 
 view() rules
-fp4 default 3x3       ValueError: Buffers\ArrayBuffer::view(): Argument #2 ($shape) axis 0 of a packed Float4E2M1FN view has a stride of 3 elements = 12 bits, which is not a whole number of bytes; pass explicit strides that are multiples of 2 elements
+fp4 default 3x3       ValueError: Buffers\Buffer::view(): Argument #2 ($shape) axis 0 of a packed Float4E2M1FN view has a stride of 3 elements = 12 bits, which is not a whole number of bytes; pass explicit strides that are multiples of 2 elements
 fp4 3x4               ok shape=[3,4] strides=[4,1] offset=0
 fp4 explicit rows     ok shape=[3,3] strides=[4,1] offset=0
-fp4 odd row stride    ValueError: Buffers\ArrayBuffer::view(): Argument #3 ($strides) axis 0 of a packed Float4E2M1FN view has a stride of 3 elements = 12 bits, which is not a whole number of bytes; pass explicit strides that are multiples of 2 elements
-fp4 last stride 2     ValueError: Buffers\ArrayBuffer::view(): Argument #3 ($strides) the last axis of a packed Float4E2M1FN view must have stride 1
-fp4 last stride 2 2d  ValueError: Buffers\ArrayBuffer::view(): Argument #3 ($strides) the last axis of a packed Float4E2M1FN view must have stride 1
+fp4 odd row stride    ValueError: Buffers\Buffer::view(): Argument #3 ($strides) axis 0 of a packed Float4E2M1FN view has a stride of 3 elements = 12 bits, which is not a whole number of bytes; pass explicit strides that are multiples of 2 elements
+fp4 last stride 2     ValueError: Buffers\Buffer::view(): Argument #3 ($strides) the last axis of a packed Float4E2M1FN view must have stride 1
+fp4 last stride 2 2d  ValueError: Buffers\Buffer::view(): Argument #3 ($strides) the last axis of a packed Float4E2M1FN view must have stride 1
 fp6 default 2x4       ok shape=[2,4] strides=[4,1] offset=0
-fp6 default 2x3       ValueError: Buffers\ArrayBuffer::view(): Argument #2 ($shape) axis 0 of a packed Float6E2M3FN view has a stride of 3 elements = 18 bits, which is not a whole number of bytes; pass explicit strides that are multiples of 4 elements
+fp6 default 2x3       ValueError: Buffers\Buffer::view(): Argument #2 ($shape) axis 0 of a packed Float6E2M3FN view has a stride of 3 elements = 18 bits, which is not a whole number of bytes; pass explicit strides that are multiples of 4 elements
 fp6 row stride 4      ok shape=[2,3] strides=[4,1] offset=0
-fp6 row stride 6      ValueError: Buffers\ArrayBuffer::view(): Argument #3 ($strides) axis 0 of a packed Float6E2M3FN view has a stride of 6 elements = 36 bits, which is not a whole number of bytes; pass explicit strides that are multiples of 4 elements
-fp6 row stride 2      ValueError: Buffers\ArrayBuffer::view(): Argument #3 ($strides) axis 0 of a packed Float6E2M3FN view has a stride of 2 elements = 12 bits, which is not a whole number of bytes; pass explicit strides that are multiples of 4 elements
+fp6 row stride 6      ValueError: Buffers\Buffer::view(): Argument #3 ($strides) axis 0 of a packed Float6E2M3FN view has a stride of 6 elements = 36 bits, which is not a whole number of bytes; pass explicit strides that are multiples of 4 elements
+fp6 row stride 2      ValueError: Buffers\Buffer::view(): Argument #3 ($strides) axis 0 of a packed Float6E2M3FN view has a stride of 2 elements = 12 bits, which is not a whole number of bytes; pass explicit strides that are multiples of 4 elements
 fp6 1-D 64 elements   ok shape=[64] strides=[1] offset=0
-fp6 1-D 65 elements   ValueError: Buffers\ArrayBuffer::view(): Argument #2 ($shape) with the given strides and offset extends beyond the end of the buffer (48 bytes)
+fp6 1-D 65 elements   ValueError: Buffers\Buffer::view(): Argument #2 ($shape) with the given strides and offset extends beyond the end of the buffer (48 bytes)
 fp6 end exactly       ok shape=[8] strides=[1] offset=42
-fp6 one past          ValueError: Buffers\ArrayBuffer::view(): Argument #2 ($shape) with the given strides and offset extends beyond the end of the buffer (48 bytes)
-fp6 offset beyond     ValueError: Buffers\ArrayBuffer::view(): Argument #4 ($offset) must be between 0 and the byte length of the buffer
+fp6 one past          ValueError: Buffers\Buffer::view(): Argument #2 ($shape) with the given strides and offset extends beyond the end of the buffer (48 bytes)
+fp6 offset beyond     ValueError: Buffers\Buffer::view(): Argument #4 ($offset) must be between 0 and the byte length of the buffer
 fp6 offset at end     ok shape=[0] strides=[1] offset=48
-fp4 empty 2-D         ValueError: Buffers\ArrayBuffer::view(): Argument #2 ($shape) axis 0 of a packed Float4E2M1FN view has a stride of 3 elements = 12 bits, which is not a whole number of bytes; pass explicit strides that are multiples of 2 elements
+fp4 empty 2-D         ValueError: Buffers\Buffer::view(): Argument #2 ($shape) axis 0 of a packed Float4E2M1FN view has a stride of 3 elements = 12 bits, which is not a whole number of bytes; pass explicit strides that are multiples of 2 elements
 fp4 huge              ValueError: (too large)
 fp4 huge stride       ValueError: (too large)
 errors on elements

@@ -5,7 +5,7 @@
 #include "zend_interfaces.h"
 #include "buffers_arginfo.h"
 
-zend_class_entry *buf_ce_device_if, *buf_ce_cpudevice, *buf_ce_foreigndevice;
+zend_class_entry *buf_ce_device_if, *buf_ce_cpudevice, *buf_ce_foreigndevice, *buf_ce_filedevice;
 static zend_object_handlers device_handlers, foreign_device_handlers;
 
 static zend_object *device_create_with(zend_class_entry *ce, zend_object_handlers *h, int32_t type, int32_t id)
@@ -20,6 +20,7 @@ static zend_object *device_create_with(zend_class_entry *ce, zend_object_handler
 }
 
 static zend_object *cpudevice_create(zend_class_entry *ce) { return device_create_with(ce, &device_handlers, kDLCPU, 0); }
+static zend_object *filedevice_create(zend_class_entry *ce) { return device_create_with(ce, &device_handlers, BUF_DEV_FILE, 0); }
 static zend_object *foreigndevice_create(zend_class_entry *ce) { return device_create_with(ce, &foreign_device_handlers, 0, 0); }
 
 zend_object *buf_foreign_device_new(int32_t type, int32_t id)
@@ -29,13 +30,14 @@ zend_object *buf_foreign_device_new(int32_t type, int32_t id)
 
 static zend_function *foreign_no_constructor(zend_object *o)
 {
-	zend_throw_error(NULL, "ForeignDevice cannot be instantiated; it comes from BufferView::fromDLPack()");
+	zend_throw_error(NULL, "ForeignDevice cannot be instantiated; it comes from the DLPack import of the C API");
 	return NULL;
 }
 
 const char *buf_device_type_name(int32_t type)
 {
 	switch (type) {
+	case BUF_DEV_FILE: return "file";
 	case kDLCPU: return "cpu";
 	case kDLCUDA: return "cuda";
 	case kDLCUDAHost: return "cuda_host";
@@ -72,15 +74,52 @@ zend_string *buf_device_name(int32_t type, int32_t id)
 	const char *n = buf_device_type_name(type);
 
 	if (type == kDLCPU) return zend_string_init("cpu", 3, 0);
+	if (type == BUF_DEV_FILE) return zend_string_init("file", 4, 0);
+	if (type == BUF_DEV_OTHER) return zend_string_init("device", 6, 0);
 	if (n) return zend_strpprintf(0, "%s:%d", n, (int)id);
 	return zend_strpprintf(0, "device%d:%d", (int)type, (int)id);
+}
+
+/* the DLPack device types of the Device classes of other extensions */
+#define MAX_DEVICE_TYPES 16
+static struct { zend_class_entry *ce; int type; } device_types[MAX_DEVICE_TYPES];
+static int ndevice_types;
+
+zend_result buffers_register_device_type(zend_class_entry *device_ce, int dlpack_type)
+{
+	if (!device_ce || dlpack_type < 1 || ndevice_types == MAX_DEVICE_TYPES) {
+		return FAILURE;
+	}
+	for (int i = 0; i < ndevice_types; i++) {
+		if (device_types[i].ce == device_ce) return FAILURE;
+	}
+	device_types[ndevice_types].ce = device_ce;
+	device_types[ndevice_types++].type = dlpack_type;
+	return SUCCESS;
+}
+
+zend_result buffers_device_dlpack(zend_object *device, int *type, int *id)
+{
+	int32_t t, i;
+	bool host;
+
+	if (!buf_device_query(device, &t, &i, &host)) {
+		return FAILURE;
+	}
+	if (t < 1) {
+		zend_clear_exception();
+		return FAILURE;
+	}
+	*type = t;
+	*id = i;
+	return SUCCESS;
 }
 
 bool buf_device_query(zend_object *dev, int32_t *type, int32_t *id, bool *host)
 {
 	zval rv;
 
-	if (!dev || dev->ce == buf_ce_cpudevice || dev->ce == buf_ce_foreigndevice) {
+	if (!dev || dev->ce == buf_ce_cpudevice || dev->ce == buf_ce_foreigndevice || dev->ce == buf_ce_filedevice) {
 		buf_device *d = dev ? buf_device_from(dev) : NULL;
 
 		*type = d ? d->type : kDLCPU;
@@ -89,9 +128,13 @@ bool buf_device_query(zend_object *dev, int32_t *type, int32_t *id, bool *host)
 		return true;
 	}
 	/* a Device implemented by another extension */
-	zend_call_method_with_0_params(dev, dev->ce, NULL, "dlpackType", &rv);
-	if (EG(exception) || Z_TYPE(rv) != IS_LONG) goto fail;
-	*type = (int32_t)Z_LVAL(rv);
+	*type = BUF_DEV_OTHER;
+	for (int i = 0; i < ndevice_types; i++) {
+		if (instanceof_function(dev->ce, device_types[i].ce)) {
+			*type = device_types[i].type;
+			break;
+		}
+	}
 	zend_call_method_with_0_params(dev, dev->ce, NULL, "id", &rv);
 	if (EG(exception) || Z_TYPE(rv) != IS_LONG) goto fail;
 	*id = (int32_t)Z_LVAL(rv);
@@ -101,7 +144,7 @@ bool buf_device_query(zend_object *dev, int32_t *type, int32_t *id, bool *host)
 	return true;
 fail:
 	if (!EG(exception)) {
-		zend_throw_error(NULL, "%s::dlpackType(), id() and isHostAccessible() must return int, int and bool", ZSTR_VAL(dev->ce->name));
+		zend_throw_error(NULL, "%s::id() and isHostAccessible() must return int and bool", ZSTR_VAL(dev->ce->name));
 	}
 	return false;
 }
@@ -126,10 +169,28 @@ zend_object *buffers_cpu_device(void)
 
 void buf_device_rshutdown(void)
 {
+	if (BUFG(file_device)) {
+		OBJ_RELEASE(BUFG(file_device));
+		BUFG(file_device) = NULL;
+	}
 	if (BUFG(cpu_device)) {
 		OBJ_RELEASE(BUFG(cpu_device));
 		BUFG(cpu_device) = NULL;
 	}
+}
+
+PHP_METHOD(Buffers_FileDevice, __construct) { ZEND_PARSE_PARAMETERS_NONE(); }
+PHP_METHOD(Buffers_FileDevice, get) { ZEND_PARSE_PARAMETERS_NONE(); RETURN_OBJ_COPY(buf_file_device()); }
+PHP_METHOD(Buffers_FileDevice, name) { ZEND_PARSE_PARAMETERS_NONE(); RETURN_STRING("file"); }
+PHP_METHOD(Buffers_FileDevice, id) { ZEND_PARSE_PARAMETERS_NONE(); RETURN_LONG(0); }
+PHP_METHOD(Buffers_FileDevice, isHostAccessible) { ZEND_PARSE_PARAMETERS_NONE(); RETURN_FALSE; }
+
+zend_object *buf_file_device(void)
+{
+	if (!BUFG(file_device)) {
+		BUFG(file_device) = filedevice_create(buf_ce_filedevice);
+	}
+	return BUFG(file_device);
 }
 
 #define DEVICE_METHODS(cls) \
@@ -139,7 +200,6 @@ void buf_device_rshutdown(void)
 		if (d->type == kDLCPU) RETURN_STRING("cpu"); \
 		if (n) RETURN_NEW_STR(zend_strpprintf(0, "%s:%d", n, (int)d->id)); \
 		RETURN_NEW_STR(zend_strpprintf(0, "device%d:%d", (int)d->type, (int)d->id)); } \
-	PHP_METHOD(cls, dlpackType) { ZEND_PARSE_PARAMETERS_NONE(); RETURN_LONG(SELF->type); } \
 	PHP_METHOD(cls, id) { ZEND_PARSE_PARAMETERS_NONE(); RETURN_LONG(SELF->id); } \
 	PHP_METHOD(cls, isHostAccessible) { ZEND_PARSE_PARAMETERS_NONE(); RETURN_BOOL(host_accessible(SELF->type)); }
 DEVICE_METHODS(Buffers_CpuDevice)
@@ -166,6 +226,12 @@ void buf_device_minit(void)
 	buf_ce_cpudevice->create_object = cpudevice_create;
 	zend_class_implements(buf_ce_cpudevice, 1, buf_ce_device_if);
 	init_handlers(&device_handlers);
+
+	INIT_CLASS_ENTRY(ce, "Buffers\\FileDevice", class_Buffers_FileDevice_methods);
+	buf_ce_filedevice = zend_register_internal_class_ex(&ce, NULL);
+	buf_ce_filedevice->ce_flags |= ZEND_ACC_FINAL | ZEND_ACC_NO_DYNAMIC_PROPERTIES | ZEND_ACC_NOT_SERIALIZABLE;
+	buf_ce_filedevice->create_object = filedevice_create;
+	zend_class_implements(buf_ce_filedevice, 1, buf_ce_device_if);
 
 	INIT_CLASS_ENTRY(ce, "Buffers\\ForeignDevice", class_Buffers_ForeignDevice_methods);
 	buf_ce_foreigndevice = zend_register_internal_class_ex(&ce, NULL);

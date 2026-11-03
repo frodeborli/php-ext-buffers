@@ -14,7 +14,7 @@
 
 /* ---- counters ----------------------------------------------------------------------------- */
 
-static zend_long made, deleted, ctx_freed, ready_calls, owners_made, owners_freed, pending_made;
+static zend_long tensors_made, tensors_deleted, made, deleted, ctx_freed, ready_calls, owners_made, owners_freed, pending_made, transfers;
 
 /* ---- a buffer over malloc'd memory with a counting deleter ------------------------------------ */
 
@@ -122,7 +122,7 @@ PHP_FUNCTION(bat_make_pending_arraybuffer)
 {
 	zend_long len, fill;
 	zval obj, arg;
-	zend_class_entry *ce = buffers_get_class(BUFFERS_CE_ARRAY_BUFFER);
+	zend_class_entry *ce = buffers_get_class(BUFFERS_CE_BUFFER);
 	pending_ctx *c;
 
 	ZEND_PARSE_PARAMETERS_START(2, 2)
@@ -205,6 +205,9 @@ PHP_FUNCTION(bat_counts)
 	add_assoc_long(return_value, "made", made);
 	add_assoc_long(return_value, "deleted", deleted);
 	add_assoc_long(return_value, "pending_made", pending_made);
+	add_assoc_long(return_value, "transfers", transfers);
+	add_assoc_long(return_value, "tensors_made", tensors_made);
+	add_assoc_long(return_value, "tensors_deleted", tensors_deleted);
 	add_assoc_long(return_value, "ctx_freed", ctx_freed);
 	add_assoc_long(return_value, "ready_calls", ready_calls);
 	add_assoc_long(return_value, "owners_made", owners_made);
@@ -315,6 +318,7 @@ PHP_FUNCTION(bat_dtype_info)
 	add_assoc_long(return_value, "size", d->size);
 	add_assoc_long(return_value, "dlpack_code", d->dlpack_code);
 	add_assoc_long(return_value, "roundtrip", buffers_dtype_from_object(Z_OBJ(c)));
+	add_assoc_long(return_value, "dlpack_roundtrip", buffers_dtype_from_dlpack(d->dlpack_code, d->bits));
 	zval_ptr_dtor(&c);
 }
 
@@ -419,7 +423,6 @@ static const zend_function_entry matrix_methods[] = {
 /* ---- a Device implemented by another extension: CUDA device 5, not host accessible ------------------- */
 
 PHP_METHOD(BatDevice, name) { ZEND_PARSE_PARAMETERS_NONE(); RETURN_STRING("bat:5"); }
-PHP_METHOD(BatDevice, dlpackType) { ZEND_PARSE_PARAMETERS_NONE(); RETURN_LONG(kDLCUDA); }
 PHP_METHOD(BatDevice, id) { ZEND_PARSE_PARAMETERS_NONE(); RETURN_LONG(5); }
 PHP_METHOD(BatDevice, isHostAccessible) { ZEND_PARSE_PARAMETERS_NONE(); RETURN_FALSE; }
 
@@ -428,7 +431,6 @@ ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(ai_dev_i, 0, 0, IS_LONG, 0) ZEND_END_ARG
 ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(ai_dev_b, 0, 0, _IS_BOOL, 0) ZEND_END_ARG_INFO()
 static const zend_function_entry device_methods[] = {
 	PHP_ME(BatDevice, name, ai_dev_s, ZEND_ACC_PUBLIC)
-	PHP_ME(BatDevice, dlpackType, ai_dev_i, ZEND_ACC_PUBLIC)
 	PHP_ME(BatDevice, id, ai_dev_i, ZEND_ACC_PUBLIC)
 	PHP_ME(BatDevice, isHostAccessible, ai_dev_b, ZEND_ACC_PUBLIC)
 	PHP_FE_END
@@ -526,6 +528,123 @@ static const zend_function_entry tensor_methods[] = {
 	PHP_ME(BatTensor, __construct, ai_tensor_ctor, ZEND_ACC_PUBLIC)
 	PHP_FE_END
 };
+
+/* A transfer for BatDevice: "uploads" a contiguous host copy to malloc'd memory that stands in for the device,
+ * and "downloads" it again. Registered with buffers_register_transfer(). */
+static zend_object *bat_transfer(zend_object *view, zend_object *device)
+{
+	buffers_view_info vi;
+	buffers_buffer_info bi;
+	zend_object *src = view, *buf, *res;
+	bool upload = instanceof_function(device->ce, ce_device);
+	uint8_t *mem;
+
+	transfers++;
+	if (upload) {   /* the contiguous host copy comes from the core */
+		src = buffers_view_to(view, buffers_cpu_device());
+		if (!src) return NULL;
+	}
+	if (buffers_view_get_info(src, &vi) == FAILURE || buffers_buffer_get_info(vi.buffer, &bi) == FAILURE) {
+		if (upload) OBJ_RELEASE(src);
+		return NULL;
+	}
+	mem = malloc(bi.length ? bi.length : 1);
+	memcpy(mem, bi.base, bi.length);
+	buf = buffers_buffer_create_foreign(mem, bi.length, true, upload ? device : NULL, counting_deleter, mem);
+	if (upload) OBJ_RELEASE(src);
+	if (!buf) {
+		free(mem);
+		return NULL;
+	}
+	made++;
+	res = buffers_view_create(buf, vi.dtype, vi.ndim, vi.shape, vi.strides, vi.byte_offset);
+	OBJ_RELEASE(buf);
+	return res;
+}
+
+/* ---- a producer of foreign DLPack tensors ----------------------------------------------------------
+ * bat_import(code, bits, lanes, shape, ?strides = null, flags = 0, device = 1, byteOffset = 0, minor = 3, major = 1, deviceId = 0)
+ * builds a tensor the way a foreign framework would (memory holding the byte pattern i & 0xff, a counted deleter) and imports it
+ * with buffers_dlpack_import(). A rejected tensor is released by its deleter, once. */
+typedef struct {
+	DLManagedTensorVersioned t;
+	int64_t shape[16], strides[16]; /* more than BUFFERS_MAX_NDIM, so tests can ask for 9 dimensions */
+	void *mem;
+} tensor_ctx;
+
+static void tensor_deleter(DLManagedTensorVersioned *t)
+{
+	tensor_ctx *c = (tensor_ctx *)t;
+
+	free(c->mem);
+	free(c);
+	tensors_deleted++;
+}
+
+PHP_FUNCTION(bat_import)
+{
+	zend_long code, bits, lanes, flags = 0, device = 1, device_id = 0, byte_offset = 0, minor = DLPACK_MINOR_VERSION, major = DLPACK_MAJOR_VERSION;
+	HashTable *shape, *strides = NULL;
+	tensor_ctx *c;
+	zval *z;
+	int n = 0;
+	int64_t extent = 1, esize, acc = 1;
+	size_t total;
+	zend_object *view;
+
+	ZEND_PARSE_PARAMETERS_START(4, 11)
+		Z_PARAM_LONG(code) Z_PARAM_LONG(bits) Z_PARAM_LONG(lanes) Z_PARAM_ARRAY_HT(shape)
+		Z_PARAM_OPTIONAL
+		Z_PARAM_ARRAY_HT_OR_NULL(strides) Z_PARAM_LONG(flags) Z_PARAM_LONG(device) Z_PARAM_LONG(byte_offset) Z_PARAM_LONG(minor) Z_PARAM_LONG(major) Z_PARAM_LONG(device_id)
+	ZEND_PARSE_PARAMETERS_END();
+
+	if (zend_hash_num_elements(shape) > 16 || (strides && zend_hash_num_elements(strides) > 16)) {
+		zend_argument_value_error(4, "has too many dimensions for the test helper");
+		RETURN_THROWS();
+	}
+	c = calloc(1, sizeof *c);
+	ZEND_HASH_FOREACH_VAL(shape, z) { c->shape[n++] = zval_get_long(z); } ZEND_HASH_FOREACH_END();
+	esize = (bits * lanes + 7) / 8;
+	if (esize < 1) esize = 1;
+	if (strides) {
+		int m = 0;
+		ZEND_HASH_FOREACH_VAL(strides, z) { c->strides[m++] = zval_get_long(z); } ZEND_HASH_FOREACH_END();
+		extent = 1;
+		for (int i = 0; i < n; i++) {
+			if (c->shape[i] == 0) { extent = 0; break; }
+			if (c->strides[i] > 0) extent += (c->shape[i] - 1) * c->strides[i];
+		}
+	} else {
+		for (int i = n - 1; i >= 0; i--) { acc *= c->shape[i] ? c->shape[i] : 1; }
+		extent = acc;
+	}
+	total = (size_t)byte_offset + (size_t)extent * esize + 64;
+	c->mem = malloc(total);
+	for (size_t i = 0; i < total; i++) ((uint8_t *)c->mem)[i] = (uint8_t)i;
+
+	c->t.version.major = (uint32_t)major;
+	c->t.version.minor = (uint32_t)minor;
+	c->t.manager_ctx = c;
+	c->t.deleter = tensor_deleter;
+	c->t.flags = (uint64_t)flags;
+	c->t.dl_tensor.data = c->mem;
+	c->t.dl_tensor.device.device_type = (DLDeviceType)device;
+	c->t.dl_tensor.device.device_id = (int32_t)device_id;
+	c->t.dl_tensor.ndim = n;
+	c->t.dl_tensor.dtype.code = (uint8_t)code;
+	c->t.dl_tensor.dtype.bits = (uint8_t)bits;
+	c->t.dl_tensor.dtype.lanes = (uint16_t)lanes;
+	c->t.dl_tensor.shape = c->shape;
+	c->t.dl_tensor.strides = strides ? c->strides : NULL;
+	c->t.dl_tensor.byte_offset = (uint64_t)byte_offset;
+	tensors_made++;
+	view = buffers_dlpack_import(&c->t);
+	if (!view) {
+		c->t.deleter(&c->t);   /* not imported: still ours */
+		RETURN_THROWS();
+	}
+	RETURN_OBJ(view);
+}
 
 /* ---- DLPack ----------------------------------------------------------------------------------- */
 
@@ -675,6 +794,19 @@ static zend_result describing_handler(uint8_t opcode, zval *result, zval *op1, z
 /* ---- module ---------------------------------------------------------------------------------------- */
 
 /* arginfo that matches each function's ZEND_PARSE_PARAMETERS (debug builds check it) */
+ZEND_BEGIN_ARG_INFO_EX(ai_bat_import, 0, 0, 4)
+	ZEND_ARG_INFO(0, a0)
+	ZEND_ARG_INFO(0, a1)
+	ZEND_ARG_INFO(0, a2)
+	ZEND_ARG_INFO(0, a3)
+	ZEND_ARG_INFO(0, a4)
+	ZEND_ARG_INFO(0, a5)
+	ZEND_ARG_INFO(0, a6)
+	ZEND_ARG_INFO(0, a7)
+	ZEND_ARG_INFO(0, a8)
+	ZEND_ARG_INFO(0, a9)
+	ZEND_ARG_INFO(0, a10)
+ZEND_END_ARG_INFO()
 ZEND_BEGIN_ARG_INFO_EX(ai_bat_make_buffer, 0, 0, 1)
 	ZEND_ARG_INFO(0, a0)
 	ZEND_ARG_INFO(0, a1)
@@ -734,6 +866,7 @@ ZEND_BEGIN_ARG_INFO_EX(ai_bat_shape_dims, 0, 0, 1)
 ZEND_END_ARG_INFO()
 
 static const zend_function_entry functions[] = {
+	PHP_FE(bat_import, ai_bat_import)
 	PHP_FE(bat_make_buffer, ai_bat_make_buffer)
 	PHP_FE(bat_make_pending, ai_bat_make_pending)
 	PHP_FE(bat_make_pending_arraybuffer, ai_bat_make_pending_arraybuffer)
@@ -803,6 +936,9 @@ static PHP_MINIT_FUNCTION(buffers_api_test)
 	ce_device = zend_register_internal_class_ex(&ce, NULL);
 	ce_device->ce_flags |= ZEND_ACC_FINAL | ZEND_ACC_NO_DYNAMIC_PROPERTIES | ZEND_ACC_NOT_SERIALIZABLE;
 	zend_class_implements(ce_device, 1, device_if);
+	if (buffers_register_device_type(ce_device, kDLCUDA) == FAILURE || buffers_register_transfer(ce_device, bat_transfer) == FAILURE) {
+		return FAILURE;
+	}
 	return SUCCESS;
 }
 

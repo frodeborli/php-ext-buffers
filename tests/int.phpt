@@ -4,8 +4,8 @@ Integer dtypes: wrapping, float conversion, type errors
 <?php if (!extension_loaded('buffers')) die('skip buffers extension not loaded'); if (PHP_INT_SIZE !== 8) die('skip 64-bit PHP only: tests Int64, UInt64 and UInt32'); ?>
 --FILE--
 <?php
-use Buffers\{DType, ArrayBuffer, BufferView};
-$b = new ArrayBuffer(64);
+use Buffers\{DType, Buffer, BufferView};
+$b = new Buffer(64);
 foreach (['Int8','Int16','Int32','Int64','UInt8','UInt16','UInt32','UInt64'] as $name) {
     $v = $b->view(constant("Buffers\\DType::$name"), 4);
     $out = [];

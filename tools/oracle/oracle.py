@@ -49,12 +49,12 @@ def ints(so):
     """Packed integers go through the extension itself (they have no codec.h part): decode of every code and the wrap of
     every written value, compared with ml_dtypes' int2/int4/uint2/uint4."""
     php = os.environ.get("PHP", "php")
-    code = r'''<?php use Buffers\{ArrayBuffer, DType};
+    code = r'''<?php use Buffers\{Buffer, DType};
 $out = [];
 foreach (["Int2", "Int4", "UInt2", "UInt4"] as $n) {
     $t = constant("Buffers\\DType::$n"); $mask = (1 << $t->bits()) - 1; $r = ["codes" => [], "writes" => []];
-    for ($c = 0; $c <= $mask; $c++) $r["codes"][] = ArrayBuffer::fromString(chr($c))->view($t, 1)[0];
-    $v = (new ArrayBuffer(1))->view($t, 1);
+    for ($c = 0; $c <= $mask; $c++) $r["codes"][] = Buffer::fromString(chr($c))->view($t, 1)[0];
+    $v = (new Buffer(1))->view($t, 1);
     for ($x = -1000; $x <= 1000; $x++) { $v[0] = $x; $r["writes"][] = $v[0]; }
     $out[$n] = $r;
 }

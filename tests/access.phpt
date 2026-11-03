@@ -4,8 +4,8 @@ BufferView: chained offsets, sub-views, aliasing, offset errors
 <?php if (!extension_loaded('buffers')) die('skip buffers extension not loaded'); ?>
 --FILE--
 <?php
-use Buffers\{DType, ArrayBuffer, BufferView, BufferInterface};
-$b = new ArrayBuffer(24);
+use Buffers\{DType, Buffer, BufferView};
+$b = new Buffer(24);
 $v = $b->view(DType::UInt8, [2, 3, 4]);
 for ($i = 0; $i < 24; $i++) $b->view(DType::UInt8)[$i] = $i;
 var_dump($v[1][2][3], $v[0][0][0], $v[1][0][0]);
@@ -107,6 +107,6 @@ int(23)
 20: Error: Cannot create dynamic property Buffers\BufferView::$foo
 21: Error: Trying to clone an uncloneable object of class Buffers\BufferView
 22: Exception: Serialization of 'Buffers\BufferView' is not allowed
-23: Error: BufferView cannot be instantiated; use BufferInterface::view()
+23: Error: BufferView cannot be instantiated; use Buffer::view()
 notice: Indirect modification of overloaded element of Buffers\BufferView has no effect
 done

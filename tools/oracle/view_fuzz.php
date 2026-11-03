@@ -1,12 +1,12 @@
 <?php
-use Buffers\{DType, ArrayBuffer};
+use Buffers\{DType, Buffer};
 /* Helper of view_fuzz.py: view() with hostile arguments. Prints, per case, "ok <last corner element>" or the exception class. */
 $cases = json_decode(file_get_contents($argv[1]), true, 512, JSON_BIGINT_AS_STRING);
 $buf = [];
 $out = [];
 foreach ($cases as $c) {
     $dt = constant("Buffers\\DType::{$c['dtype']}");
-    $b = $buf[$c['len']] ??= ArrayBuffer::fromString(implode('', $c['len'] ? array_map(fn($i) => chr($i % 251), range(0, $c['len'] - 1)) : []));
+    $b = $buf[$c['len']] ??= Buffer::fromString(implode('', $c['len'] ? array_map(fn($i) => chr($i % 251), range(0, $c['len'] - 1)) : []));
     $num = fn($x) => is_string($x) ? (int)$x : $x;   // JSON_BIGINT_AS_STRING only for values beyond int64: keep those as floats
     $conv = fn($a) => is_array($a) ? array_map(fn($x) => is_string($x) ? (float)$x : $x, $a) : (is_string($a) ? (float)$a : $a);
     try {
