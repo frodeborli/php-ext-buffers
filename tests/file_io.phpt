@@ -36,7 +36,7 @@ $all = file_get_contents($path);
 var_dump(strlen($all), $all[50], $all[79], $all[49] === "\0", $all[80] === "\0", substr($all, -4));
 echo "errors\n";
 foreach ([fn() => Buffer::fromFile($path, 0, null, false, true), fn() => Buffer::fromFile($path . '.none', 0, null, true, true), fn() => Buffer::createFile('/nonexistent-dir/x', 8), fn() => Buffer::createFile($path, -1), fn() => Buffer::fromFile($path, 0, 1000, true, true)] as $f) {
-    try { $f(); echo "no error\n"; } catch (Throwable $e) { echo get_class($e), ': ', preg_replace('~/[^ \']*/buf[^ \']*|/nonexistent-dir/x~', 'PATH', $e->getMessage()), "\n"; }
+    try { $f(); echo "no error\n"; } catch (Throwable $e) { echo get_class($e), ': ', str_replace([$path . '.none', $path, '/nonexistent-dir/x'], 'PATH', $e->getMessage()), "\n"; }
 }
 unset($w, $u);
 
@@ -58,7 +58,7 @@ $ro = Buffer::fromFile(__FILE__, 0, 16);
 foreach ([fn() => $b->writeTo($m, 17), fn() => $b->writeTo($m, -1), fn() => $b->writeTo($m, 10, 7), fn() => $b->writeTo($m, 0, -1), fn() => $b->readFrom($m, 17), fn() => $b->readFrom($m, 10, 7),
           fn() => $ro->readFrom($m), fn() => $ro->writeTo(fopen('php://memory', 'w')), fn() => $b->writeTo('not a stream'),
           fn() => Buffer::fromFile(__FILE__, 0, null, false)->writeTo(fopen('php://memory', 'w')), fn() => Buffer::fromFile(__FILE__, 0, null, false)->readFrom($m)] as $f) {
-    try { $f(); echo "no error\n"; } catch (Throwable $e) { echo get_class($e), ': ', preg_replace('~on device [^:]*:~', 'on device X:', $e->getMessage()), "\n"; }
+    try { $f(); echo "no error\n"; } catch (Throwable $e) { echo get_class($e), ': ', str_replace('on device file:', 'on device X:', $e->getMessage()), "\n"; }
 }
 echo "a file\n";
 $out = fopen($path, 'w+');

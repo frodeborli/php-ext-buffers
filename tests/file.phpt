@@ -46,7 +46,7 @@ foreach ([[strlen($data) + 1, null], [0, strlen($data) + 1], [10, strlen($data) 
     try { Buffer::fromFile($path, $off, $len); echo "no error\n"; } catch (Throwable $e) { printf("%s: %s\n", get_class($e), str_replace(strlen($data) . ' bytes', 'N bytes', $e->getMessage())); }
 }
 foreach ([$path . '.missing', sys_get_temp_dir()] as $bad) {
-    try { Buffer::fromFile($bad); } catch (Throwable $e) { echo get_class($e), ': ', preg_replace('~' . preg_quote(sys_get_temp_dir(), '~') . '[^\']*~', 'PATH', $e->getMessage()), "\n"; }
+    try { Buffer::fromFile($bad); } catch (Throwable $e) { echo get_class($e), ': ', str_replace([$bad, sys_get_temp_dir()], 'PATH', $e->getMessage()), "\n"; }
 }
 
 echo "to(): a mapped file is host memory\n";
