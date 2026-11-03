@@ -125,6 +125,7 @@ static zend_class_entry *register_buffer(const char *name, const zend_function_e
 	h->offset = XtOffsetOf(dlp_buffer, std);
 	h->free_obj = buffer_free;
 	h->clone_obj = NULL;
+	h->compare = dlp_compare_identity;
 	return c;
 }
 

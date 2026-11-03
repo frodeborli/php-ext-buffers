@@ -598,6 +598,7 @@ void dlp_view_minit(void)
 				h->dtor_obj = view_dtor;
 				h->free_obj = view_free;
 				h->clone_obj = NULL;
+				h->compare = dlp_compare_identity;
 				h->get_constructor = view_no_constructor;
 				h->count_elements = view_count_elements;
 				h->has_dimension = view_has_dimension;

@@ -223,7 +223,7 @@ DLPack v1.3 (`dlpack.h` is vendored unmodified, Apache-2.0, see `NOTICE`).
 
 What has been run, on Linux x86-64 (Ubuntu host, Debian 12 and Alpine containers):
 
-* `tests/` phpt suite (16 tests) on PHP 8.2, 8.3, 8.4 and 8.5, Debian/glibc and Alpine/musl via Docker
+* `tests/` phpt suite (17 tests) on PHP 8.2, 8.3, 8.4 and 8.5, Debian/glibc and Alpine/musl via Docker
   (`tools/docker-test.sh`), plus ZTS images (8.4, 8.5 Debian, 8.4 Alpine), plus debug builds of PHP 8.5
   NTS and ZTS (assertions on); all pass, no compiler warnings with `-Wall -Wextra`.
 * The whole suite under valgrind with `USE_ZEND_ALLOC=0` (`tools/valgrind.sh`): zero errors, zero

@@ -14,6 +14,12 @@ extern const zend_function_entry dlp_testing_functions[];
 #define DLP_FUNCTIONS NULL
 #endif
 
+int dlp_compare_identity(zval *a, zval *b)
+{
+	ZEND_COMPARE_OBJECTS_FALLBACK(a, b);
+	return Z_OBJ_P(a) == Z_OBJ_P(b) ? 0 : ZEND_UNCOMPARABLE;
+}
+
 static PHP_GINIT_FUNCTION(dlpack)
 {
 #if defined(ZTS) && defined(COMPILE_DL_DLPACK)

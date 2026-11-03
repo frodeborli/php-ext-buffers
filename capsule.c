@@ -236,6 +236,7 @@ void dlp_capsule_minit(void)
 	capsule_handlers.offset = XtOffsetOf(dlp_capsule, std);
 	capsule_handlers.free_obj = capsule_free;
 	capsule_handlers.clone_obj = NULL;
+	capsule_handlers.compare = dlp_compare_identity;
 	capsule_handlers.get_constructor = capsule_no_constructor;
 }
 

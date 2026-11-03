@@ -125,6 +125,9 @@ static inline bool dlp_mul_ovf(int64_t a, int64_t b, int64_t *r)
 	return false;
 }
 
+/* dlpack.c: objects are equal only to themselves (the default would compare the empty property tables: any two views are "==") */
+int dlp_compare_identity(zval *a, zval *b);
+
 /* dtype.c */
 void dlp_dtype_minit(void);
 void dlp_dtype_mshutdown(void);
