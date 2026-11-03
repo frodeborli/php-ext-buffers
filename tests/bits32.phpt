@@ -56,10 +56,4 @@ BComplex32        ok array (
   0 => 1.0,
   1 => 0.0,
 )
-import
-0/64 ValueError: The dtype Int64 is not supported on 32-bit PHP: its values do not fit a PHP int
-1/64 ValueError: The dtype UInt64 is not supported on 32-bit PHP: its values do not fit a PHP int
-1/32 ValueError: The dtype UInt32 is not supported on 32-bit PHP: its values do not fit a PHP int
-0/32 ok Int32
-1/16 ok UInt16
 end

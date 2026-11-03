@@ -19,6 +19,7 @@ for image in $images; do
     /src/tools/run-phpt.sh "$(command -v php)" /build -P | grep -E "^(FAIL|BORK|WARN)|Tests (passed|failed|skipped)|^--- ext"
   ' 2>&1)
   rc=$?
+  echo "$out" | grep -q '^FAIL' && rc=1
   printf '%s\n--- %s: exit %s\n' "$out" "$image" "$rc"
   [ $rc -eq 0 ] || status=1
 done
