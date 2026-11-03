@@ -9,7 +9,7 @@ so=${1:-$here/../modules/dlpack.so}
 section=${2:-all}
 php=${PHP:-php}
 opc=""; $php -n -m | grep -q "Zend OPcache" || opc="-d zend_extension=opcache"   # built in since PHP 8.5
-common="-n -d extension=$so $opc -d zend.assertions=-1 -d opcache.enable_cli=1 -d opcache.file_update_protection=0"
+common="-n -d memory_limit=-1 -d extension=$so $opc -d zend.assertions=-1 -d opcache.enable_cli=1 -d opcache.file_update_protection=0"
 tmp=$(mktemp -d)
 $php $common -d opcache.jit=off "$here/bench.php" "$section" > "$tmp/interp.tsv"
 $php $common -d opcache.jit=tracing -d opcache.jit_buffer_size=128M "$here/bench.php" "$section" > "$tmp/jit.tsv"

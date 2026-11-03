@@ -14,13 +14,9 @@ enum DType: string
     case UInt32 = 'uint32';
     case UInt64 = 'uint64';
     case Float16 = 'float16';
-    case BFloat16 = 'bfloat16';
     case Float32 = 'float32';
     case Float64 = 'float64';
-    case Complex32 = 'complex32';
-    case BComplex32 = 'bcomplex32';
-    case Complex64 = 'complex64';
-    case Complex128 = 'complex128';
+    case BFloat16 = 'bfloat16';
     case Float8E3M4 = 'float8_e3m4';
     case Float8E4M3 = 'float8_e4m3';
     case Float8E4M3B11FNUZ = 'float8_e4m3b11fnuz';
@@ -32,6 +28,10 @@ enum DType: string
     case Float6E2M3FN = 'float6_e2m3fn';
     case Float6E3M2FN = 'float6_e3m2fn';
     case Float4E2M1FN = 'float4_e2m1fn';
+    case Complex32 = 'complex32';
+    case Complex64 = 'complex64';
+    case Complex128 = 'complex128';
+    case BComplex32 = 'bcomplex32';
 
     public function bits(): int {}
     public function byteSize(): ?int {}

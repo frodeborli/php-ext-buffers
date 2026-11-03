@@ -12,6 +12,7 @@ foreach (DType::cases() as $c) {
     var_dump($c->isByteAligned() === true, DType::from($c->value) === $c, DType::tryFrom($c->value . 'x'));
 }
 echo $n, " cases\n";
+echo implode(', ', array_map(fn($c) => $c->name, DType::cases())) === 'Bool, Int8, Int16, Int32, Int64, UInt8, UInt16, UInt32, UInt64, Float16, Float32, Float64, BFloat16, Float8E3M4, Float8E4M3, Float8E4M3B11FNUZ, Float8E4M3FN, Float8E4M3FNUZ, Float8E5M2, Float8E5M2FNUZ, Float8E8M0FNU, Float6E2M3FN, Float6E3M2FN, Float4E2M1FN, Complex32, Complex64, Complex128, BComplex32' ? "order ok\n" : "ORDER WRONG\n";
 var_dump(DType::UInt8 instanceof UnitEnum, DType::UInt8 instanceof BackedEnum);
 --EXPECT--
 Bool                 bool                 bits=8   bytes=1  int=0 float=0 complex=0 dl={"code":6,"bits":8,"lanes":1}
@@ -54,10 +55,6 @@ Float16              float16              bits=16  bytes=2  int=0 float=1 comple
 bool(true)
 bool(true)
 NULL
-BFloat16             bfloat16             bits=16  bytes=2  int=0 float=1 complex=0 dl={"code":4,"bits":16,"lanes":1}
-bool(true)
-bool(true)
-NULL
 Float32              float32              bits=32  bytes=4  int=0 float=1 complex=0 dl={"code":2,"bits":32,"lanes":1}
 bool(true)
 bool(true)
@@ -66,19 +63,7 @@ Float64              float64              bits=64  bytes=8  int=0 float=1 comple
 bool(true)
 bool(true)
 NULL
-Complex32            complex32            bits=32  bytes=4  int=0 float=0 complex=1 dl={"code":5,"bits":32,"lanes":1}
-bool(true)
-bool(true)
-NULL
-BComplex32           bcomplex32           bits=32  bytes=4  int=0 float=0 complex=1 dl={"code":18,"bits":32,"lanes":1}
-bool(true)
-bool(true)
-NULL
-Complex64            complex64            bits=64  bytes=8  int=0 float=0 complex=1 dl={"code":5,"bits":64,"lanes":1}
-bool(true)
-bool(true)
-NULL
-Complex128           complex128           bits=128 bytes=16 int=0 float=0 complex=1 dl={"code":5,"bits":128,"lanes":1}
+BFloat16             bfloat16             bits=16  bytes=2  int=0 float=1 complex=0 dl={"code":4,"bits":16,"lanes":1}
 bool(true)
 bool(true)
 NULL
@@ -126,6 +111,23 @@ Float4E2M1FN         float4_e2m1fn        bits=4   bytes=1  int=0 float=1 comple
 bool(true)
 bool(true)
 NULL
+Complex32            complex32            bits=32  bytes=4  int=0 float=0 complex=1 dl={"code":5,"bits":32,"lanes":1}
+bool(true)
+bool(true)
+NULL
+Complex64            complex64            bits=64  bytes=8  int=0 float=0 complex=1 dl={"code":5,"bits":64,"lanes":1}
+bool(true)
+bool(true)
+NULL
+Complex128           complex128           bits=128 bytes=16 int=0 float=0 complex=1 dl={"code":5,"bits":128,"lanes":1}
+bool(true)
+bool(true)
+NULL
+BComplex32           bcomplex32           bits=32  bytes=4  int=0 float=0 complex=1 dl={"code":18,"bits":32,"lanes":1}
+bool(true)
+bool(true)
+NULL
 28 cases
+order ok
 bool(true)
 bool(true)

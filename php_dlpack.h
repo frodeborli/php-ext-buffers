@@ -37,13 +37,9 @@ enum { DLP_BOOL, DLP_INT, DLP_UINT, DLP_FLOAT, DLP_COMPLEX };
 	X(UINT32,   UInt32,    "uint32",    DLP_UINT,    32,  4,  kDLUInt) \
 	X(UINT64,   UInt64,    "uint64",    DLP_UINT,    64,  8,  kDLUInt) \
 	X(FLOAT16,  Float16,   "float16",   DLP_FLOAT,   16,  2,  kDLFloat) \
-	X(BFLOAT16, BFloat16,  "bfloat16",  DLP_FLOAT,   16,  2,  kDLBfloat) \
 	X(FLOAT32,  Float32,   "float32",   DLP_FLOAT,   32,  4,  kDLFloat) \
 	X(FLOAT64,  Float64,   "float64",   DLP_FLOAT,   64,  8,  kDLFloat) \
-	X(COMPLEX32,  Complex32,  "complex32",  DLP_COMPLEX, 32,  4,  kDLComplex) \
-	X(BCOMPLEX32, BComplex32, "bcomplex32", DLP_COMPLEX, 32,  4,  kDLBcomplex) \
-	X(COMPLEX64,  Complex64,  "complex64",  DLP_COMPLEX, 64,  8,  kDLComplex) \
-	X(COMPLEX128, Complex128, "complex128", DLP_COMPLEX, 128, 16, kDLComplex) \
+	X(BFLOAT16, BFloat16,  "bfloat16",  DLP_FLOAT,   16,  2,  kDLBfloat) \
 	X(F8E3M4,       Float8E3M4,       "float8_e3m4",       DLP_FLOAT, 8, 1, kDLFloat8_e3m4) \
 	X(F8E4M3,       Float8E4M3,       "float8_e4m3",       DLP_FLOAT, 8, 1, kDLFloat8_e4m3) \
 	X(F8E4M3B11FNUZ, Float8E4M3B11FNUZ, "float8_e4m3b11fnuz", DLP_FLOAT, 8, 1, kDLFloat8_e4m3b11fnuz) \
@@ -54,7 +50,11 @@ enum { DLP_BOOL, DLP_INT, DLP_UINT, DLP_FLOAT, DLP_COMPLEX };
 	X(F8E8M0FNU,    Float8E8M0FNU,    "float8_e8m0fnu",    DLP_FLOAT, 8, 1, kDLFloat8_e8m0fnu) \
 	X(F6E2M3FN,     Float6E2M3FN,     "float6_e2m3fn",     DLP_FLOAT, 6, 1, kDLFloat6_e2m3fn) \
 	X(F6E3M2FN,     Float6E3M2FN,     "float6_e3m2fn",     DLP_FLOAT, 6, 1, kDLFloat6_e3m2fn) \
-	X(F4E2M1FN,     Float4E2M1FN,     "float4_e2m1fn",     DLP_FLOAT, 4, 1, kDLFloat4_e2m1fn)
+	X(F4E2M1FN,     Float4E2M1FN,     "float4_e2m1fn",     DLP_FLOAT, 4, 1, kDLFloat4_e2m1fn) \
+	X(COMPLEX32,  Complex32,  "complex32",  DLP_COMPLEX, 32,  4,  kDLComplex) \
+	X(COMPLEX64,  Complex64,  "complex64",  DLP_COMPLEX, 64,  8,  kDLComplex) \
+	X(COMPLEX128, Complex128, "complex128", DLP_COMPLEX, 128, 16, kDLComplex) \
+	X(BCOMPLEX32, BComplex32, "bcomplex32", DLP_COMPLEX, 32,  4,  kDLBcomplex)
 
 enum {
 #define X(id, ...) DLP_T_##id,
