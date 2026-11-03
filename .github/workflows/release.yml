@@ -1,15 +1,15 @@
 name: Release
 
-# Builds the 24 per-ABI binaries from the commit this runs on, and publishes them with their
+# Builds the 12 per-ABI binaries from the commit this runs on, and publishes them with their
 # SHA256SUMS and licences as the GitHub Release of tag `version` (created at that commit).
-# PHP_DLPACK_VERSION in php_dlpack.h must equal `version`. Nothing here writes to any other
-# repository: dlpack's tools/bundle-ext pulls a release's binaries into a dlpack release tag.
+# PHP_BUFFERS_VERSION in php_buffers.h must equal `version`. Nothing here writes to any other
+# repository: buffers' tools/bundle-ext pulls a release's binaries into a buffers release tag.
 
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Extension version (PHP_DLPACK_VERSION in php_dlpack.h), e.g. 0.1.0'
+        description: 'Extension version (PHP_BUFFERS_VERSION in php_buffers.h), e.g. 0.1.0'
         required: true
       dry_run:
         description: 'Build and check only: publish nothing'
@@ -29,12 +29,8 @@ jobs:
       fail-fast: true
       matrix:
         include:
-          - { php: '8.2', runner: ubuntu-latest, arch: x86_64 }
-          - { php: '8.3', runner: ubuntu-latest, arch: x86_64 }
           - { php: '8.4', runner: ubuntu-latest, arch: x86_64 }
           - { php: '8.5', runner: ubuntu-latest, arch: x86_64 }
-          - { php: '8.2', runner: ubuntu-24.04-arm, arch: aarch64 }
-          - { php: '8.3', runner: ubuntu-24.04-arm, arch: aarch64 }
           - { php: '8.4', runner: ubuntu-24.04-arm, arch: aarch64 }
           - { php: '8.5', runner: ubuntu-24.04-arm, arch: aarch64 }
     steps:
@@ -45,12 +41,12 @@ jobs:
         run: |
           set -eux
           phpize
-          ./configure --enable-dlpack CFLAGS="-O2 -g0 -fvisibility=hidden -ffile-prefix-map=$PWD=." LDFLAGS="-Wl,--version-script=$PWD/tools/exports.map"
+          ./configure --enable-buffers CFLAGS="-O2 -g0 -fvisibility=hidden -ffile-prefix-map=$PWD=." LDFLAGS="-Wl,--version-script=$PWD/tools/exports.map"
           make -j"$(nproc)"
-          tools/release-strip.sh modules/dlpack.so
-          ART="dlpack-${{ matrix.php }}-nts-$(uname -m)-glibc.so"
-          cp modules/dlpack.so "$ART"
-          php -d extension="$PWD/$ART" -r 'exit(extension_loaded("dlpack") ? 0 : 1);'
+          tools/release-strip.sh modules/buffers.so
+          ART="buffers-${{ matrix.php }}-nts-$(uname -m)-glibc.so"
+          cp modules/buffers.so "$ART"
+          php -d extension="$PWD/$ART" -r 'exit(extension_loaded("buffers") ? 0 : 1);'
           # the oldest glibc it may need: Debian 12, Ubuntu 22.04 and RHEL 9 have 2.34 or later
           need=$(objdump -T "$ART" | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -1)
           [ "$(printf '%s\nGLIBC_2.34\n' "$need" | sort -V | tail -1)" = GLIBC_2.34 ] || { echo "::error::$ART needs $need"; exit 1; }
@@ -65,12 +61,8 @@ jobs:
       fail-fast: true
       matrix:
         include:
-          - { php: '8.2', runner: ubuntu-latest, arch: x86_64 }
-          - { php: '8.3', runner: ubuntu-latest, arch: x86_64 }
           - { php: '8.4', runner: ubuntu-latest, arch: x86_64 }
           - { php: '8.5', runner: ubuntu-latest, arch: x86_64 }
-          - { php: '8.2', runner: ubuntu-24.04-arm, arch: aarch64 }
-          - { php: '8.3', runner: ubuntu-24.04-arm, arch: aarch64 }
           - { php: '8.4', runner: ubuntu-24.04-arm, arch: aarch64 }
           - { php: '8.5', runner: ubuntu-24.04-arm, arch: aarch64 }
     steps:
@@ -82,13 +74,13 @@ jobs:
             trap "chown -R $IDS /w" EXIT   # the container runs as root; later steps read /w as the runner user
             apk add --no-cache $PHPIZE_DEPS >/dev/null
             phpize
-            ./configure --enable-dlpack CFLAGS="-O2 -g0 -fvisibility=hidden -ffile-prefix-map=$PWD=." LDFLAGS="-Wl,--version-script=$PWD/tools/exports.map"
+            ./configure --enable-buffers CFLAGS="-O2 -g0 -fvisibility=hidden -ffile-prefix-map=$PWD=." LDFLAGS="-Wl,--version-script=$PWD/tools/exports.map"
             make -j"$(nproc)"
-            tools/release-strip.sh modules/dlpack.so
-            php -d extension="$PWD/modules/dlpack.so" -r "exit(extension_loaded(\"dlpack\") ? 0 : 1);"
+            tools/release-strip.sh modules/buffers.so
+            php -d extension="$PWD/modules/buffers.so" -r "exit(extension_loaded(\"buffers\") ? 0 : 1);"
           '
-          ART="dlpack-${{ matrix.php }}-nts-$(uname -m)-musl.so"
-          cp modules/dlpack.so "$ART"
+          ART="buffers-${{ matrix.php }}-nts-$(uname -m)-musl.so"
+          cp modules/buffers.so "$ART"
           echo "ART=$ART" >> "$GITHUB_ENV"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with: { name: "${{ env.ART }}", path: "${{ env.ART }}", if-no-files-found: error }
@@ -103,7 +95,7 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
-        php: ['8.2', '8.3', '8.4', '8.5']
+        php: ['8.4', '8.5']
         arch: [arm64, x86_64]
     env:
       MACOSX_DEPLOYMENT_TARGET: '12.0'
@@ -119,14 +111,14 @@ jobs:
           done
           export PKG_CONFIG_PATH
           phpize
-          ./configure --enable-dlpack CFLAGS="-O2 -g0 -fvisibility=hidden -ffile-prefix-map=$PWD=."
+          ./configure --enable-buffers CFLAGS="-O2 -g0 -fvisibility=hidden -ffile-prefix-map=$PWD=."
           # at make time: in configure's LDFLAGS the export list would also apply to its test programs
           make -j"$(sysctl -n hw.ncpu)" EXTRA_LDFLAGS="-Wl,-exported_symbols_list,$PWD/tools/exports.list"
-          tools/release-strip.sh modules/dlpack.so
-          ART="dlpack-${{ matrix.php }}-nts-${{ matrix.arch }}-darwin.so"
-          cp modules/dlpack.so "$ART"
+          tools/release-strip.sh modules/buffers.so
+          ART="buffers-${{ matrix.php }}-nts-${{ matrix.arch }}-darwin.so"
+          cp modules/buffers.so "$ART"
           file "$ART" | grep -q "Mach-O 64-bit bundle ${{ matrix.arch }}"
-          php -d extension="$PWD/$ART" -r 'exit(extension_loaded("dlpack") ? 0 : 1);'
+          php -d extension="$PWD/$ART" -r 'exit(extension_loaded("buffers") ? 0 : 1);'
           echo "ART=$ART" >> "$GITHUB_ENV"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with: { name: "${{ env.ART }}", path: "${{ env.ART }}", if-no-files-found: error }
@@ -142,12 +134,12 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Version in php_dlpack.h matches the release, and is not released yet
+      - name: Version in php_buffers.h matches the release, and is not released yet
         env: { GH_TOKEN: "${{ github.token }}", VERSION: "${{ inputs.version }}" }
         run: |
           set -eu
-          v=$(sed -n 's/^#define PHP_DLPACK_VERSION "\(.*\)"/\1/p' php_dlpack.h)
-          test "$v" = "$VERSION" || { echo "::error::php_dlpack.h says $v, not $VERSION: bump PHP_DLPACK_VERSION first"; exit 1; }
+          v=$(sed -n 's/^#define PHP_BUFFERS_VERSION "\(.*\)"/\1/p' php_buffers.h)
+          test "$v" = "$VERSION" || { echo "::error::php_buffers.h says $v, not $VERSION: bump PHP_BUFFERS_VERSION first"; exit 1; }
           if gh release view "$VERSION" >/dev/null 2>&1 || git ls-remote --tags origin "refs/tags/$VERSION" | grep -q .; then
             echo "::error::$VERSION is released or tagged already"; exit 1
           fi
@@ -181,7 +173,7 @@ jobs:
           set -eu
           pre=; case "$VERSION" in *-*) pre=--prerelease;; esac
           gh release create "$VERSION" --target "$GITHUB_SHA" --title "$VERSION" $pre \
-            --notes "Prebuilt binaries for PHP 8.2-8.5 NTS: Linux x86_64/aarch64 (glibc, musl) and macOS arm64/x86_64. Check them with SHA256SUMS." \
+            --notes "Prebuilt binaries for PHP 8.4-8.5 NTS: Linux x86_64/aarch64 (glibc, musl) and macOS arm64/x86_64. Check them with SHA256SUMS." \
             dist/*.so dist/SHA256SUMS dist/LICENSE dist/LICENSE.dlpack dist/NOTICE
 
       - name: Keep the binaries (dry run)

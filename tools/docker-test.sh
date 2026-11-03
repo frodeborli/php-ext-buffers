@@ -7,8 +7,10 @@ src=$(cd "$(dirname "$0")/.." && pwd)
 images=${*:-"php:8.4-cli-bookworm php:8.5-cli-bookworm php:8.4-cli-alpine php:8.5-cli-alpine
 php:8.4-zts-bookworm php:8.5-zts-bookworm php:8.4-zts-alpine php:8.5-zts-alpine"}
 status=0
+platform=${DOCKER_PLATFORM:-$(docker version -f '{{.Server.Os}}/{{.Server.Arch}}')}
 for image in $images; do
-  out=$(docker run --rm ${DOCKER_PLATFORM:+--platform $DOCKER_PLATFORM} -v "$src":/src:ro "$image" sh -c '
+  docker pull -q --platform "$platform" "$image" >/dev/null   # a local tag may hold another architecture
+  out=$(docker run --rm --platform "$platform" -v "$src":/src:ro "$image" sh -c '
     set -e
     if command -v apk >/dev/null; then apk add --no-cache $PHPIZE_DEPS >/dev/null; else apt-get update -qq >/dev/null && apt-get install -y -qq $PHPIZE_DEPS >/dev/null; fi
     /src/tools/build.sh /src /build "$(command -v phpize)" "$(command -v php-config)"

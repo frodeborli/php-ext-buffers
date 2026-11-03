@@ -1,13 +1,20 @@
 <?php
+use Buffers\{DType, ArrayBuffer};
 /* Helper of numpy_fuzz.py: for every case builds the view, reads every element through chained
  * offsets, then applies the writes through chained offsets, and prints both as JSON. */
 $cases = json_decode(file_get_contents($argv[1]), true);
 $out = [];
 $bits = fn(float $x) => is_nan($x) ? 'nan' : bin2hex(pack('E', $x));
 foreach ($cases as $c) {
-    $dt = constant("DType::{$c['dtype']}");
+    $dt = constant("Buffers\\DType::{$c['dtype']}");
     $buf = ArrayBuffer::fromString(hex2bin($c['hex']));
     $v = $buf->view($dt, $c['shape'], $c['strides'], $c['offset']);
+    if (!empty($c['zero_d'])) {   // no elements to read: check the geometry and a DLPack round trip
+        $w = Buffers\BufferView::fromDLPack($v->toDLPack());
+        $out[] = ['reads' => [], 'info' => ['ndim' => $v->ndim, 'shape' => $v->shape->toArray(), 'strides' => $v->strides, 'offset' => $v->offset,
+            'rt' => $w->ndim === 0 && $w->dtype === $dt && $w->strides === [] && $w->buffer->byteLength() === (($dt->byteSize() ?? 1))]];
+        continue;
+    }
     $enc = fn($x) => is_array($x) ? [$bits($x[0]), $bits($x[1])] : (is_float($x) ? $bits($x) : $x);
     // leaf positions in C order
     $walk = function ($view, $prefix, $depth) use (&$walk, $c, &$cb) {

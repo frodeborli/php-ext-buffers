@@ -18,7 +18,7 @@ jobs:
       - id: m
         run: |
           php='${{ inputs.php }}'
-          echo "php=$( [ -n "$php" ] && echo "[\"$php\"]" || echo '["8.2","8.3","8.4","8.5"]')" >> "$GITHUB_OUTPUT"
+          echo "php=$( [ -n "$php" ] && echo "[\"$php\"]" || echo '["8.4","8.5"]')" >> "$GITHUB_OUTPUT"
 
   build-test:
     name: PHP ${{ matrix.php }} macOS arm64
@@ -32,12 +32,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
         with: { php-version: '${{ matrix.php }}', tools: phpize, coverage: none }
-      - name: Build
-        run: |
-          phpize
-          ./configure --enable-dlpack --enable-dlpack-testing CFLAGS="-g -O2 -Wall -Wextra -Wno-unused-parameter -Wno-missing-field-initializers"
-          make -j"$(sysctl -n hw.ncpu)"
-          php -d extension="$PWD/modules/dlpack.so" -r 'exit(extension_loaded("dlpack") ? 0 : 1);'
+      - name: Build (extension and API consumer; fails on any warning)
+        run: tools/build.sh "$PWD" /tmp/build "$(command -v phpize)" "$(command -v php-config)"
       - name: Test
-        env: { NO_INTERACTION: '1', REPORT_EXIT_STATUS: '1', TEST_PHP_ARGS: '--show-diff' }
-        run: make test TESTS=tests/
+        run: tools/run-phpt.sh "$(command -v php)" /tmp/build -P

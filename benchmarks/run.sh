@@ -1,11 +1,11 @@
 #!/bin/sh
-# usage: benchmarks/run.sh [path/to/dlpack.so] [section]
+# usage: benchmarks/run.sh [path/to/buffers.so] [section]
 # Runs bench.php twice - interpreter and tracing JIT - and prints both side by side.
 # The JIT run is only reported if opcache's jit buffer shows that code was compiled.
 # (opcache.file_update_protection=0: by default opcache refuses to compile files younger than 2 s, silently.)
 set -e
 here=$(cd "$(dirname "$0")" && pwd)
-so=${1:-$here/../modules/dlpack.so}
+so=${1:-$here/../modules/buffers.so}
 section=${2:-all}
 php=${PHP:-php}
 opc=""; $php -n -m | grep -q "Zend OPcache" || opc="-d zend_extension=opcache"   # built in since PHP 8.5

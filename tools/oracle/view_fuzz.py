@@ -1,18 +1,21 @@
 """view() argument fuzz: hostile shapes, strides and offsets against an exact big-integer model.
 
-Accept/reject must match the rules, and for accepted views the last element read through chained
-offsets must equal the bytes at the modelled position (no overflow, no out-of-bounds access).
+Accept/reject must match the rules (including 0-d views and the packed float6/float4 rules), and for
+accepted views the last element read through chained offsets must equal the bytes at the modelled
+position (no overflow, no out-of-bounds access).
 
-  python3 view_fuzz.py [cases=20000] [seed=1] [path/to/dlpack.so]
+  python3 view_fuzz.py [cases=20000] [seed=1] [path/to/buffers.so]
 """
 import json, os, random, struct, subprocess, sys, tempfile
+import numpy as np, ml_dtypes as m
 N = int(sys.argv[1]) if len(sys.argv) > 1 else 20000
 seed = int(sys.argv[2]) if len(sys.argv) > 2 else 1
-so = sys.argv[3] if len(sys.argv) > 3 else os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../modules/dlpack.so")
+so = sys.argv[3] if len(sys.argv) > 3 else os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../modules/buffers.so")
 php = os.environ.get("PHP", "php")
 rnd = random.Random(seed)
 I64 = 2**63 - 1
 INT = {"Int8": ("b", 1), "Int16": ("<h", 2), "Int32": ("<i", 4), "Int64": ("<q", 8), "UInt8": ("B", 1), "UInt16": ("<H", 2), "UInt32": ("<I", 4), "UInt64": ("<Q", 8)}
+PACKED = {"Float6E2M3FN": (m.float6_e2m3fn, 6), "Float6E3M2FN": (m.float6_e3m2fn, 6), "Float4E2M1FN": (m.float4_e2m1fn, 4)}
 POOL = [0, 1, 1, 2, 3, 4, 5, 7, 8, 15, 16, 31, 33, 100, 255, 256, 1000, 2**16, 2**31 - 1, 2**31, 2**32, 2**32 + 1, 2**53, 2**62, 2**63 - 2, I64, -1, -2, -8]
 
 
@@ -22,9 +25,9 @@ def num():
 
 cases = []
 for _ in range(N):
-    name = rnd.choice(list(INT))
+    name = rnd.choice(list(INT) + list(PACKED) * 3)
     ln = rnd.choice([0, 1, 7, 8, 16, 24, 64, 100, 4096])
-    esize = INT[name][1]
+    esize = INT[name][1] if name in INT else 1
     ndim = rnd.choice([0, 1, 1, 2, 2, 3, 4, 8, 9])
     shape = [num() for _ in range(ndim)]
     mode = rnd.random()
@@ -37,17 +40,22 @@ for _ in range(N):
 
 def model(c):
     """returns ('ok', last corner, strides in elements, offset) or 'reject'"""
-    size = INT[c["dtype"]][1]; ln = c["len"]; off = c["offset"]
-    if off < 0 or off > ln or off % size: return "reject"
+    packed = c["dtype"] in PACKED
+    size = INT[c["dtype"]][1] if not packed else 0; ln = c["len"]; off = c["offset"]
+    nbits = PACKED[c["dtype"]][1] if packed else size * 8
+    if off < 0 or off > ln or (not packed and off % size): return "reject"
     sh = c["shape"]
     if sh is None:
-        if (ln - off) % size: return "reject"
-        shape = [(ln - off) // size]
+        if packed:
+            if (ln - off) * 8 % nbits: return "reject"
+            shape = [(ln - off) * 8 // nbits]
+        elif (ln - off) % size: return "reject"
+        else: shape = [(ln - off) // size]
     elif isinstance(sh, int):
         if sh < 0: return "reject"
         shape = [sh]
     else:
-        if len(sh) == 0 or len(sh) > 8 or any(x < 0 for x in sh): return "reject"
+        if len(sh) > 8 or any(x < 0 for x in sh): return "reject"
         shape = list(sh)
     nd = len(shape)
     st = c["strides"]
@@ -61,8 +69,20 @@ def model(c):
             elems[i] = acc
             acc *= max(shape[i], 1)
             if acc > I64: return "reject"
-    if any(e * size > I64 for e in elems): return "reject"
+    if packed:
+        if nd and elems[-1] != 1: return "reject"
+        for e in elems[:-1]:
+            if e * nbits > I64 or e * nbits % 8: return "reject"
+    elif any(e * size > I64 for e in elems): return "reject"
     if 0 in shape: return ("ok", "empty", elems, off)
+    if nd == 0: return ("ok", "zero-d", elems, off) if off + max(size, 1) <= ln else "reject"
+    if packed:
+        if shape[-1] * nbits > I64: return "reject"
+        rowb = (shape[-1] * nbits + 7) // 8
+        last = sum((s - 1) * e * nbits // 8 for s, e in zip(shape[:-1], elems[:-1]))
+        if last > I64 - rowb or off + last + rowb > ln: return "reject"
+        bit = off * 8 + sum((s - 1) * e * nbits for s, e in zip(shape, elems))
+        return ("ok", bit, elems, off)
     last = sum((s - 1) * e * size for s, e in zip(shape, elems))
     if last > I64 - size or off + last + size > ln: return "reject"
     return ("ok", (off + last), elems, off)
@@ -92,6 +112,19 @@ for c, got in zip(cases, res):
     if e[1] == "empty":
         want = f"ok empty {json.dumps(e[2], separators=(',', ':'))} {e[3]}"
         if got.replace(", ", ",") != want: bad += 1; print("empty view metadata differs:", c, got, want)
+        continue
+    if e[1] == "zero-d":
+        want = f"ok zero-d {json.dumps(e[2], separators=(',', ':'))} {e[3]}"
+        if got.replace(", ", ",") != want: bad += 1; print("0-d view metadata differs:", c, got, want)
+        continue
+    if c["dtype"] in PACKED:   # the buffer holds byte i = i % 251; decode the code at the last corner's bit position
+        comp, nbits = PACKED[c["dtype"]]
+        bitpos = e[1]
+        w = ((bitpos >> 3) % 251) | (((bitpos >> 3) + 1) % 251) << 8
+        code = (w >> (bitpos & 7)) & ((1 << nbits) - 1)
+        x = float(np.array([code], dtype=np.uint8).view(comp).astype(np.float64)[0])
+        want = f"ok {struct.pack('>d', x).hex()} {json.dumps(e[2], separators=(',', ':'))} {e[3]}"
+        if got.replace(", ", ",") != want: bad += 1; print("packed read differs:", c, "got", got, "want", want)
         continue
     fmt, size = INT[c["dtype"]]
     # the buffer holds byte i = i % 251, so the last corner element can be computed here

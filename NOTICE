@@ -1,4 +1,4 @@
-ext-dlpack
+ext-buffers
 Copyright (c) 2026 Frode Børli
 
 This product includes dlpack.h from DLPack (https://github.com/dmlc/dlpack),

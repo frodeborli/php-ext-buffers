@@ -1,10 +1,13 @@
-"""Differential fuzz of TypedView against NumPy (+ ml_dtypes).
+"""Differential fuzz of BufferView against NumPy (+ ml_dtypes).
 
 Random dtype, buffer bytes, shape, strides and offset; PHP reads every element through chained
 offsets and NumPy (as_strided over the same bytes) must see the same values. A second pass writes
-random values through PHP and NumPy and compares the whole buffer afterwards.
+random values through PHP and NumPy and compares the whole buffer afterwards. The packed formats
+(float6, float4: elements bits apart, little-bit-endian) are checked with NumPy bit operations:
+every element's bit position is computed, its code extracted from the bytes, and decoded by ml_dtypes
+(which stores them padded, one per byte). 0-d views are checked for shape, strides and offset.
 
-  python3 numpy_fuzz.py [cases=3000] [seed=1] [path/to/dlpack.so]      (run from a clean directory; see run.sh)
+  python3 numpy_fuzz.py [cases=3000] [seed=1] [path/to/buffers.so]      (run from a clean directory; see run.sh)
 """
 import json, os, random, struct, subprocess, sys, tempfile, warnings
 import numpy as np, ml_dtypes as m
@@ -13,7 +16,7 @@ from numpy.lib.stride_tricks import as_strided
 warnings.filterwarnings("ignore")
 N = int(sys.argv[1]) if len(sys.argv) > 1 else 3000
 seed = int(sys.argv[2]) if len(sys.argv) > 2 else 1
-so = sys.argv[3] if len(sys.argv) > 3 else os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../modules/dlpack.so")
+so = sys.argv[3] if len(sys.argv) > 3 else os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../modules/buffers.so")
 php = os.environ.get("PHP", "php")
 rnd = random.Random(seed)
 
@@ -26,17 +29,64 @@ T = {
     "Float8E3M4": (m.float8_e3m4, 1, 1), "Float8E4M3": (m.float8_e4m3, 1, 1), "Float8E4M3B11FNUZ": (m.float8_e4m3b11fnuz, 1, 1),
     "Float8E4M3FN": (m.float8_e4m3fn, 1, 1), "Float8E4M3FNUZ": (m.float8_e4m3fnuz, 1, 1), "Float8E5M2": (m.float8_e5m2, 1, 1),
     "Float8E5M2FNUZ": (m.float8_e5m2fnuz, 1, 1), "Float8E8M0FNU": (m.float8_e8m0fnu, 1, 1),
-    "Float6E2M3FN": (m.float6_e2m3fn, 1, 1), "Float6E3M2FN": (m.float6_e3m2fn, 1, 1), "Float4E2M1FN": (m.float4_e2m1fn, 1, 1),
 }
+# packed sub-byte formats: name -> (ml_dtypes type, bits)
+PACKED = {"Float6E2M3FN": (m.float6_e2m3fn, 6), "Float6E3M2FN": (m.float6_e3m2fn, 6), "Float4E2M1FN": (m.float4_e2m1fn, 4)}
 UINT = {1: np.uint8, 2: np.uint16, 4: np.uint32, 8: np.uint64}
-MASK = {"Float6E2M3FN": 0x3F, "Float6E3M2FN": 0x3F, "Float4E2M1FN": 0x0F, "Bool": 0x01}
+MASK = {"Bool": 0x01}
 
 
 def bits(x):
     return "nan" if x != x else struct.pack(">d", x).hex()
 
 
+def write_values(name, ncomp, n):
+    vals = []
+    for _ in range(n):
+        def one():
+            r = rnd.random()
+            if name == "Bool": return rnd.random() < 0.5
+            if name.startswith(("Int", "UInt")):
+                return rnd.choice([rnd.randint(-2**63, 2**63 - 1), rnd.randint(-300, 300), rnd.randint(-70000, 70000)])
+            if r < 0.04: return rnd.choice(["nan", "inf", "-inf"])
+            if r < 0.08: return bits(rnd.choice([0.0, -0.0, 5e-324, 1.7976931348623157e308]))
+            return bits(rnd.choice([-1, 1]) * 2.0 ** rnd.uniform(-30, 30) * rnd.uniform(1, 2))
+        vals.append([one(), one()] if ncomp == 2 else one())
+    return vals
+
+
+def make_packed_case(name, writes):
+    nbits = PACKED[name][1]
+    step = int(8 // np.gcd(8, nbits))         # row strides are multiples of this many elements: whole bytes
+    ndim = rnd.randint(1, 4)
+    shape = [rnd.choice([0, 1, 1, 2, 3, 4, 5, 7, 9]) if rnd.random() < 0.9 else rnd.randint(1, 13) for _ in range(ndim)]
+    strides = [0] * ndim; strides[-1] = 1
+    span = max(shape[-1], 1)
+    for ax in range(ndim - 2, -1, -1):    # C layout with gaps (elements never overlap when writing); reads may overlap
+        gap = rnd.choice([0, 0, 1, 3]) if writes else rnd.choice([-1000, 0, 0, 1, 3])
+        st = -(-span // step) * step + gap * step if gap >= 0 else rnd.choice([1, 2, 3, 5]) * step
+        strides[ax] = max(st, step)
+        span = strides[ax] * max(shape[ax], 1)
+    offset = rnd.randint(0, 5)
+    last_bit = (offset * 8 + sum((s - 1) * st * nbits for s, st in zip(shape, strides)) + nbits) if all(s > 0 for s in shape) else offset * 8
+    nbytes = (last_bit + 7) // 8 + rnd.randint(0, 3)
+    data = bytes(rnd.getrandbits(8) for _ in range(nbytes))
+    case = dict(dtype=name, hex=data.hex(), shape=shape, strides=strides, offset=offset)
+    if writes:
+        case["writes"] = write_values(name, 1, int(np.prod(shape)))
+    return case
+
+
+def make_zero_d_case(name):
+    comp, ncomp, esize = T[name] if name in T else (None, 1, 1)
+    offset_el = rnd.randint(0, 4)
+    offset = offset_el * esize if name in T else offset_el
+    n = offset + (esize if name in T else 1) + rnd.randint(0, 3)
+    return dict(dtype=name, hex=bytes(rnd.getrandbits(8) for _ in range(n)).hex(), shape=[], strides=[], offset=offset, zero_d=True)
+
+
 def make_case(name, writes):
+    if name in PACKED: return make_packed_case(name, writes)
     comp, ncomp, esize = T[name]
     ndim = rnd.randint(1, 4)
     shape = [rnd.choice([0, 1, 1, 2, 3, 4, 5, 7]) if rnd.random() < 0.9 else rnd.randint(1, 9) for _ in range(ndim)]
@@ -56,23 +106,28 @@ def make_case(name, writes):
         for i in range(len(data)): data[i] &= MASK[name]
     case = dict(dtype=name, hex=bytes(data).hex(), shape=shape, strides=strides, offset=offset_el * esize)
     if writes:
-        vals = []
-        for _ in range(int(np.prod(shape))):
-            def one():
-                r = rnd.random()
-                if name == "Bool": return rnd.random() < 0.5
-                if name.startswith(("Int", "UInt")):
-                    return rnd.choice([rnd.randint(-2**63, 2**63 - 1), rnd.randint(-300, 300), rnd.randint(-70000, 70000)])
-                if r < 0.04: return rnd.choice(["nan", "inf", "-inf"])
-                if r < 0.08: return bits(rnd.choice([0.0, -0.0, 5e-324, 1.7976931348623157e308]))
-                return bits(rnd.choice([-1, 1]) * 2.0 ** rnd.uniform(-30, 30) * rnd.uniform(1, 2))
-            vals.append([one(), one()] if ncomp == 2 else one())
-        case["writes"] = vals
+        case["writes"] = write_values(name, ncomp, int(np.prod(shape)))
     return case
+
+
+def packed_codes(buf, case):
+    """the codes of every element, in C order, extracted with bit operations"""
+    nbits = PACKED[case["dtype"]][1]
+    shape = case["shape"]
+    idx = np.indices(shape, dtype=np.int64)
+    pos = case["offset"] * 8 + sum(idx[i] * case["strides"][i] * nbits for i in range(len(shape)))
+    pos = pos.reshape(-1)
+    arr = np.frombuffer(bytes(buf) + b"\0", dtype=np.uint8).astype(np.uint32)
+    w = arr[pos >> 3] | (arr[(pos >> 3) + 1] << 8)
+    return pos, ((w >> (pos & 7).astype(np.uint32)) & ((1 << nbits) - 1)).astype(np.uint8)
 
 
 def expected_reads(case):
     buf = bytearray.fromhex(case["hex"])
+    if case.get("zero_d"): return []
+    if case["dtype"] in PACKED:
+        pos, codes = packed_codes(buf, case)
+        return [bits(float(x)) for x in codes.view(PACKED[case["dtype"]][0]).astype(np.float64)] if len(codes) else []
     comp, ncomp, esize = T[case["dtype"]]
     csize = esize // ncomp
     tail = np.frombuffer(bytes(buf), dtype=np.uint8)[case["offset"]:]
@@ -98,6 +153,21 @@ def expected_reads(case):
 
 def expected_after(case):
     buf = bytearray.fromhex(case["hex"])
+    if case["dtype"] in PACKED:
+        comp, nbits = PACKED[case["dtype"]]
+        if int(np.prod(case["shape"])) == 0: return bytes(buf).hex()
+        pos, _ = packed_codes(buf, case)
+        def val(w):
+            return {"nan": float("nan"), "inf": float("inf"), "-inf": float("-inf")}[w] if w in ("nan", "inf", "-inf") else struct.unpack(">d", bytes.fromhex(w))[0]
+        codes = np.array([val(w) for w in case["writes"]], dtype=np.float64).astype(comp).view(np.uint8)
+        for p, c in zip(pos.tolist(), codes.tolist()):    # read-modify-write, in the order PHP writes
+            b, sh = p >> 3, p & 7
+            wide = sh + nbits > 8
+            word = buf[b] | ((buf[b + 1] << 8) if wide else 0)
+            word = (word & ~(((1 << nbits) - 1) << sh)) | (c << sh)
+            buf[b] = word & 255
+            if wide: buf[b + 1] = (word >> 8) & 255
+        return bytes(buf).hex()
     comp, ncomp, esize = T[case["dtype"]]
     csize = esize // ncomp
     name = case["dtype"]
@@ -142,12 +212,15 @@ def run(cases):
     return json.loads(r.stdout)
 
 
-names = list(T)
+names = list(T) + list(PACKED)
 cases, kinds = [], []
 for i in range(N):
     name = names[i % len(names)]
     writes = i % 2 == 1
-    cases.append(make_case(name, writes)); kinds.append(writes)
+    if i % 23 == 0:   # a 0-d view of one element
+        cases.append(make_zero_d_case(name)); kinds.append(False)
+    else:
+        cases.append(make_case(name, writes)); kinds.append(writes)
 res = [r for k in range(0, len(cases), 1000) for r in run(cases[k:k + 1000])]
 bad = 0; nread = nwrite = nel = 0
 for case, r, writes in zip(cases, res, kinds):
@@ -158,6 +231,10 @@ for case, r, writes in zip(cases, res, kinds):
         for a, b in zip(er, r["reads"]):
             if a != b: print("   numpy", a, "php", b); break
     nread += 1
+    if case.get("zero_d"):
+        want = dict(ndim=0, shape=[], strides=[], offset=case["offset"], rt=True)
+        if r.get("info") != want:
+            bad += 1; print("0-D MISMATCH", case["dtype"], case["offset"], "expected", want, "php", r.get("info"))
     if writes:
         nwrite += 1
         ea = expected_after(case)

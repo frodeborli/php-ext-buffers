@@ -1,6 +1,8 @@
 <?php
-/* usage: php [-d extension=dlpack.so ...] benchmarks/bench.php [section]    sections: access, dtype, memory
+/* usage: php [-d extension=buffers.so ...] benchmarks/bench.php [section]    sections: access, dtype, props, memory
  * Prints one TSV line per measurement: name <TAB> ns per element access. run.sh runs it with and without the JIT. */
+use Buffers\{DType, ArrayBuffer};
+
 $section = $argv[1] ?? 'all';
 $w = 640; $h = 480; $px = $w * $h; $reps = 12;
 
@@ -75,6 +77,18 @@ if ($section === 'all' || $section === 'dtype') {
         measure("dtype write {$c->name}", fn() => dtype_write($f, $n, $val), $n, 5);
         measure("dtype read  {$c->name}", fn() => dtype_read($f, $n), $n, 5);   // reads what the write left
     }
+}
+
+if ($section === 'all' || $section === 'props') {
+    // properties are computed on read (internal get hooks); creating a sub-view must stay as cheap as it was
+    $pv = (new ArrayBuffer(1024))->view(DType::UInt8, [16, 64]);
+    $n = 1_000_000;
+    measure('prop read ndim',    function () use ($pv, $n) { $s = 0; for ($i = 0; $i < $n; $i++) $s += $pv->ndim; return $s; }, $n, 5);
+    measure('prop read offset',  function () use ($pv, $n) { $s = 0; for ($i = 0; $i < $n; $i++) $s += $pv->offset; return $s; }, $n, 5);
+    measure('prop read dtype',   function () use ($pv, $n) { for ($i = 0; $i < $n; $i++) $x = $pv->dtype; return $x; }, $n, 5);
+    measure('prop read shape',   function () use ($pv, $n) { for ($i = 0; $i < $n; $i++) $x = $pv->shape; return $x; }, $n, 5);
+    measure('prop read strides', function () use ($pv, $n) { for ($i = 0; $i < $n; $i++) $x = $pv->strides; return $x; }, $n, 5);
+    measure('sub-view $v[$i & 15]', function () use ($pv, $n) { for ($i = 0; $i < $n; $i++) $x = $pv[$i & 15]; return $x; }, $n, 5);
 }
 
 if ($section === 'all' || $section === 'memory') {
