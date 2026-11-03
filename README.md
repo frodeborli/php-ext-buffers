@@ -22,7 +22,11 @@ echo $rgba->shape[-1], ' ', $rgba->ndim, ' ', json_encode($rgba->strides);   // 
 $w = $buf->view(DType::Float8E4M3FN, 16);                // 16 one-byte floats
 $w[0] = 1.5;
 
-$weights = Buffer::fromFile('model.bin', 128)->view(DType::BFloat16, [4096, 4096]);   // mapped, read-only, pages load on first touch
+$file = Buffer::createFile('/tmp/model.bin', 128 + 32);                    // a new file, mapped writable (shared)
+$file->view(DType::BFloat16, [4, 4], null, 128)[0][0] = 1.5;
+$file->flush();
+$weights = Buffer::fromFile('/tmp/model.bin', 128)->view(DType::BFloat16, [4, 4]);   // read-only, mapped: pages load on first touch
+echo $weights[0][0];                                     // 1.5
 ```
 
 ## Install
@@ -146,7 +150,11 @@ final class Buffer {
     public Device $device { get; }
     public function __construct(int $byteLength);   // zero-filled host memory; emalloc'd, so it counts toward memory_limit
     public static function fromString(string $data): Buffer;
-    public static function fromFile(string $path, int $offset = 0, ?int $length = null, bool $map = true): Buffer;
+    public static function fromFile(string $path, int $offset = 0, ?int $length = null, bool $map = true, bool $writable = false): Buffer;
+    public static function createFile(string $path, int $byteLength): Buffer;   // creates or truncates; writable, mapped
+    public function flush(): void;                  // pushes a writable mapping's changes to disk; no-op for other buffers
+    public function writeTo($stream, int $offset = 0, ?int $length = null): int;    // memory straight to a stream; bytes written
+    public function readFrom($stream, int $offset = 0, ?int $length = null): int;   // stream straight into memory; bytes read
     public function isWritable(): bool;
     public function isHostAccessible(): bool;       // authoritative for this buffer (a mapped file is, FileDevice is not)
     public function view(DType $type, int|array|null $shape = null, ?array $strides = null, int $offset = 0): Tensor;
@@ -238,20 +246,41 @@ lives; `$buffer->isHostAccessible()` is authoritative for the buffer itself. A `
 `cuda:0` and so on; host-accessible only for the DLPack host kinds CUDA-host, ROCm-host and CUDA-managed). Reading, writing or
 iterating the elements of memory that is not host accessible throws `Error`; making sub-views and reading properties work.
 
-**`Buffer::fromFile($path, $offset = 0, $length = null, $map = true)`** gives a read-only buffer on `FileDevice::get()` over a byte range of a
-file (the range is checked against the file size when the file is opened; `ValueError` if it does not fit).
+**`Buffer::fromFile($path, $offset = 0, $length = null, $map = true, $writable = false)`** gives a buffer on `FileDevice::get()` over a byte range of a
+file (read-only unless `$writable`) (the range is checked against the file size when the file is opened; `ValueError` if it does not fit).
 
 * mapped (`$map = true`, the default): the range is memory-mapped (`mmap`; `CreateFileMapping` + `MapViewOfFile` on Windows, written
   but never run). The buffer is host accessible: element access, `toString()` and the C API work on it directly, and pages load on first touch.
   **Truncating a mapped file from another process crashes the PHP process with SIGBUS on Linux and macOS.** Deleting it does not.
+* writable (`$writable = true`, which needs mapping): a **shared** mapping (`MAP_SHARED` / `FILE_MAP_WRITE`): writes through tensors go to the file,
+  and other processes that map the file see them at once. `flush()` pushes them to disk (`msync` / `FlushViewOfFile`; a no-op for other buffers).
+  `Buffer::createFile($path, $byteLength)` creates (or truncates) a file of that size, zero-filled, and returns a writable mapped buffer.
 * unmapped (`$map = false`, or when the range cannot be mapped, for example a range larger than the address space of 32-bit PHP): a
   storage-only buffer. `isHostAccessible()` is false; element access and `toString()` throw; `Tensor::to(CpuDevice::get())` reads
   the bytes a view needs (`pread` / `ReadFile`). (On 32-bit PHP `byteLength` of a buffer beyond 2 GB throws: it does not fit an int.)
+
+**Byte I/O.** `$buffer->writeTo($stream, $offset = 0, $length = null)` writes bytes straight from the buffer's memory to a PHP stream
+(`php_stream_write`, looping on short writes; a non-blocking stream that stops accepting data ends the loop and the count says how far it got)
+and returns the bytes written; `$buffer->readFrom($stream, $offset = 0, $length = null)` reads from a stream straight into the buffer, stopping at
+the end of the stream (or when a non-blocking stream has nothing more), and returns the bytes read. Both need host-accessible memory; `readFrom()` also
+needs a writable buffer. They are format-agnostic: parsing a header is PHP's job, then `readFrom()` or `fromFile()` with an offset brings the data in.
 
 **`$tensor->to($device)`** returns the tensor itself if its buffer is already on that device; otherwise a C-contiguous copy (packed
 formats: rows padded to whole bytes) in a new `Buffer` on the device. The core copies host-accessible buffers (including mapped files) to
 `CpuDevice` and reads unmapped file buffers. Any other transfer throws `Error("no backend for device 'cuda:0'")` unless an extension
 registered one (`buffers_register_transfer()`): that is how GPU extensions plug in.
+
+### Sharing a buffer between processes
+
+A shared writable mapping is shared memory: `Buffer::createFile('/dev/shm/frames', $bytes)` in one process and
+`Buffer::fromFile('/dev/shm/frames', 0, null, true, true)` (or read-only) in others give tensors over the same bytes; a write is visible to the others at
+once. `/dev/shm` (or any tmpfs) keeps it in memory. **There is no synchronisation in this extension and no atomics.** In particular:
+
+* coordinate with `flock()` (on a lock file) or APCu; a read-modify-write (`$t[$i] += 1`) from two processes loses updates;
+* a packed sub-byte write (int2, int4, float4, float6, ...) rewrites a whole byte: neighbouring elements written by another process race;
+* there are no ordering guarantees between processes (no memory barriers beyond what PHP happens to do), and 16-byte `Complex128` elements, or any
+  element written in several instructions, can tear when read concurrently;
+* one machine only: memory mapped files on network file systems are not coherent.
 
 ## Dtypes
 
@@ -383,7 +412,7 @@ go to the handler: a view is only equal to itself.
 
 A buffer produced asynchronously or lazily can carry a **readiness callback** and a pending flag
 (`buffers_buffer_set_ready_callback()` while the caller holds the only reference, then
-`buffers_buffer_set_pending()`). Element reads and writes, iteration, `Buffer::toString()` and DLPack export
+`buffers_buffer_set_pending()`). Element reads and writes, iteration, `Buffer::toString()`, `writeTo()`, `readFrom()` and DLPack export
 run the callback first while the flag is set; it makes the contents valid and returns `SUCCESS`, or throws and
 returns `FAILURE` (the buffer stays pending, the exception reaches the PHP caller). Making sub-views and reading
 properties never wait. Buffers without a callback and host-accessible memory use the unchanged fast handlers: the

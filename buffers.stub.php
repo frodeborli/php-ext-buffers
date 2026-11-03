@@ -48,9 +48,11 @@ enum DType: string
     public function byteSize(): ?int {}
     /** False for the packed sub-byte formats: their elements are not a whole number of bytes. */
     public function isByteAligned(): bool {}
+    /** True for Int2, Int4, Int8..Int64 and UInt2..UInt64 (the packed ones included). */
     public function isInteger(): bool {}
     /** True for all Float* cases and BFloat16. */
     public function isFloatingPoint(): bool {}
+    /** True for Complex32, Complex64, Complex128 and BComplex32: elements read and write as [re, im]. */
     public function isComplex(): bool {}
 }
 
@@ -74,6 +76,7 @@ interface Device
 final class CpuDevice implements Device
 {
     private function __construct() {}
+    /** The CPU, one object per request. */
     public static function get(): CpuDevice {}
 }
 
@@ -81,6 +84,7 @@ final class CpuDevice implements Device
 final class FileDevice implements Device
 {
     private function __construct() {}
+    /** The device of file buffers, one object per request. */
     public static function get(): FileDevice {}
 }
 
@@ -113,13 +117,17 @@ final class Shape implements \ArrayAccess, \Countable, \IteratorAggregate, \Json
     public function __construct(array $dims) {}
     /** @return list<int|TensorInterface> */
     public function toArray(): array {}
+    /** The number of dimensions. */
     public function count(): int {}
+    /** Whether $offset (an int, negative counts from the end) is a valid index. */
     public function offsetExists(mixed $offset): bool {}
+    /** The dimension at $offset (negative counts from the end); ValueError if out of range, TypeError if not an int. */
     public function offsetGet(mixed $offset): mixed {}
     /** Always throws: a Shape is immutable. */
     public function offsetSet(mixed $offset, mixed $value): void {}
     /** Always throws: a Shape is immutable. */
     public function offsetUnset(mixed $offset): void {}
+    /** Iterates the dimensions. */
     public function getIterator(): \Iterator {}
     /** The dimensions as a list, for json_encode(). Throws Error if a dimension is symbolic (not in this version). */
     public function jsonSerialize(): array {}
@@ -149,6 +157,7 @@ final class Buffer
 {
     /** Zero-filled, 64-byte aligned host memory that counts toward memory_limit. */
     public function __construct(int $byteLength) {}
+    /** A writable host Buffer holding a copy of $data. */
     public static function fromString(string $data): Buffer {}
     /**
      * A buffer on FileDevice over bytes $offset .. $offset + $length of a file ($length null: to the end), read-only unless
@@ -182,6 +191,7 @@ final class Buffer
      * @param resource $stream
      */
     public function readFrom(mixed $stream, int $offset = 0, ?int $length = null): int {}
+    /** False for read-only file buffers, imported read-only tensors and the like: writes through its tensors throw Error. */
     public function isWritable(): bool {}
     /** Whether the bytes can be read and written from PHP: authoritative for this buffer (a mapped file is, its device is not). */
     public function isHostAccessible(): bool {}
@@ -215,10 +225,15 @@ final class Tensor implements TensorInterface, \Countable, \ArrayAccess, \Iterat
 {
     /** The length of the first axis. A 0-d view has no axes: Error. */
     public function count(): int {}
+    /** Whether $offset is a valid index of the first axis. */
     public function offsetExists(mixed $offset): bool {}
+    /** A sub-tensor (a view of the same memory) or, on the last axis, the element. */
     public function offsetGet(mixed $offset): mixed {}
+    /** Writes one element: every axis must be indexed. Error on read-only buffers. */
     public function offsetSet(mixed $offset, mixed $value): void {}
+    /** Always throws: elements cannot be removed. */
     public function offsetUnset(mixed $offset): void {}
+    /** Iterates the first axis (sub-tensors, or elements of a 1-D tensor). */
     public function getIterator(): \Iterator {}
     /**
      * This view if its buffer is already on $device; otherwise a C-contiguous copy (packed sub-byte dtypes: rows padded to
