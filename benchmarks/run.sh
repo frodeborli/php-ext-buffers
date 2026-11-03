@@ -13,7 +13,7 @@ common="-n -d extension=$so $opc -d zend.assertions=-1 -d opcache.enable_cli=1 -
 tmp=$(mktemp -d)
 $php $common -d opcache.jit=off "$here/bench.php" "$section" > "$tmp/interp.tsv"
 $php $common -d opcache.jit=tracing -d opcache.jit_buffer_size=128M "$here/bench.php" "$section" > "$tmp/jit.tsv"
-echo "== $($php -r 'echo PHP_VERSION, PHP_ZTS ? " ZTS" : " NTS";'): ns per element access (best of N), lower is better"
+echo "== $($php -r 'echo PHP_VERSION, PHP_ZTS ? " ZTS" : " NTS";'): $( [ "$section" = memory ] && echo "memory per element" || echo "ns per element access (best of N), lower is better")"
 awk -F'\t' 'FNR==NR { i[$1]=$2; if (!($1 in order)) { order[$1]=++n; names[n]=$1 } next } { j[$1]=$2 } END {
   for (k=1;k<=n;k++) { nm=names[k]; if (nm ~ /^memory/) continue; printf "%-34s interpreter %8.1f   JIT %8.1f\n", nm, i[nm], j[nm] } }' "$tmp/interp.tsv" "$tmp/jit.tsv"
 grep '^memory' "$tmp/jit.tsv" | awk -F'\t' '{ printf "%-34s %8.2f bytes/element\n", $2, $3 }' || true

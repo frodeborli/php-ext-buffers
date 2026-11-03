@@ -60,12 +60,12 @@ if ($section === 'all' || $section === 'access') {
 
 if ($section === 'all' || $section === 'dtype') {
     $n = 1 << 20;
-    $buf = new ArrayBuffer($n * 16);
     foreach (DType::cases() as $c) {
+        $buf = new ArrayBuffer($n * 16);            // fresh memory per dtype: stale bytes of another dtype could be float denormals
         $f = $buf->view($c, $n);
         $val = match (true) { $c === DType::Bool => true, $c->isComplex() => [1.5, -2.5], $c->isFloatingPoint() => 1.5, default => 3 };
-        measure("dtype read  {$c->name}", fn() => dtype_read($f, $n), $n, 5);
         measure("dtype write {$c->name}", fn() => dtype_write($f, $n, $val), $n, 5);
+        measure("dtype read  {$c->name}", fn() => dtype_read($f, $n), $n, 5);   // reads what the write left
     }
 }
 
@@ -86,7 +86,7 @@ if ($section === 'all' || $section === 'memory') {
     $g = $report('PHP string (1 byte/element)', fn() => str_repeat("\0", $n));
 }
 
-if ($jit) {
+if ($jit && $section !== "memory") {
     $st = opcache_get_status(false);
     fprintf(STDERR, "JIT buffer: %d of %d bytes used by this run%s\n", $free0 - $st['jit']['buffer_free'], $st['jit']['buffer_size'],
         $free0 - $st['jit']['buffer_free'] > 0 ? ' - verified: code was compiled' : ' - NOT VERIFIED, NOTHING WAS COMPILED');
