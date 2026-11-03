@@ -61,26 +61,27 @@ default opcache silently refuses to compile files younger than two seconds). Rep
 | access (alpha byte of each pixel)       | interpreter | JIT  | ext-dlpack JIT (same machine) |
 |-----------------------------------------|------------:|-----:|------:|
 | **read, view 1-D idiom** | 23.7 | 9.4 | 9.4 |
-| **read, view 1-D, row base hoisted** | 17.8 | 7.2 | 7.2 |
-| read, view `[$y][$x][$c]` (chained) | 67.2 | 48.2 | 49.0 |
-| read, view `[$y]` hoisted, `[$x][$c]` | 41.2 | 27.5 | 27.7 |
-| read, view 2-D `[$y][$x*4+$c]` | 43.6 | 27.7 | 27.8 |
-| read, PHP array, flat | 20.4 | 3.1 | 3.2 |
+| **read, view 1-D, row base hoisted** | 17.8 | 7.2 | 8.5 |
+| read, view `[$y][$x][$c]` (chained) | 67.4 | 49.4 | 49.1 |
+| read, view `[$y]` hoisted, `[$x][$c]` | 41.2 | 28.1 | 27.7 |
+| read, view 2-D `[$y][$x*4+$c]` | 43.7 | 27.8 | 27.8 |
+| read, PHP array, flat | 20.4 | 3.2 | 3.5 |
 | read, PHP array, nested | 24.9 | 6.1 | 6.1 |
-| read, SplFixedArray, flat | 25.5 | 10.2 | 10.1 |
-| **write, view 1-D idiom** | 22.0 | 8.3 | 8.3 |
+| read, SplFixedArray, flat | 25.6 | 10.2 | 10.2 |
+| **write, view 1-D idiom** | 22.1 | 8.3 | 8.3 |
 | **write, view 1-D, row base hoisted** | 16.9 | 8.0 | 8.2 |
-| write, view chained | 66.5 | 54.9 | 54.3 |
-| write, view `[$y]` hoisted | 39.5 | 29.7 | 29.4 |
-| write, PHP array, flat | 22.7 | 5.0 | 5.0 |
-| write, PHP array, nested | 41.6 | 26.9 | 26.4 |
-| write, SplFixedArray, flat | 25.2 | 11.3 | 11.2 |
-| `+=`, view 1-D idiom | 28.8 | 15.5 | 15.8 |
-| `+=`, view chained | 70.7 | 64.2 | 61.5 |
+| write, view chained | 67.4 | 56.7 | 54.4 |
+| write, view `[$y]` hoisted | 40.3 | 29.7 | 29.4 |
+| write, PHP array, flat | 22.8 | 5.2 | 5.5 |
+| write, PHP array, nested | 42.3 | 26.4 | 26.5 |
+| write, SplFixedArray, flat | 25.3 | 11.3 | 11.2 |
+| `+=`, view 1-D idiom | 29.0 | 15.7 | 15.8 |
+| `+=`, view chained | 70.7 | 62.5 | 61.5 |
 
-Best of three `benchmarks/run.sh` runs of each extension, back to back on the same machine (PHP 8.5.12, JIT buffer verified:
+Median of three `benchmarks/run.sh` runs of each extension, back to back on the same machine (PHP 8.5.12, JIT buffer verified:
 "code was compiled"). The last column is the predecessor, ext-dlpack, built the same way: the 1-D and chained paths did not
-regress (every view row is within about 4%, which is the run-to-run noise).
+regress (every view row is within about 4%, which is the run-to-run noise). The 1-D read idiom is bimodal under the JIT (9.4 ns, and 7.9 ns in
+roughly one run in six, for both extensions: a code-layout effect, not a difference between them).
 
 Other numbers (JIT): a 1-D read costs 7-8 ns and a write 7-11 ns for every integer, float and small-float dtype, including the
 packed formats (read 7.8, write 11.1: a shift and mask, and a read-modify-write); `Complex*` reads cost about 41-47 ns
@@ -423,30 +424,30 @@ without the feature (see Performance).
 
 What has been run, on Linux x86-64 (Ubuntu host, Debian 12 and Alpine containers):
 
-* `tests/` phpt suite (36 files; 28 run and 8 skip with the extension alone, 34 run and 2 skip with the API consumer loaded - the skips
-  are tests that need the consumer, 32-bit-only or 64-bit-only tests) on PHP 8.4 and 8.5, Debian/glibc and Alpine/musl via Docker
-  (`tools/docker-test.sh`), NTS and ZTS images (8.4 and 8.5, Debian and Alpine), plus debug builds of php-src 8.5.13-dev NTS and ZTS
-  (assertions on, which also checks the internal hook functions and the API consumer's arginfo); all pass, no compiler warnings with
-  `-Wall -Wextra`. 32-bit PHP (`linux/386`: Debian, Alpine): all pass, with the 64-bit-only tests skipped and
-  `tests/bits32.phpt` checking the 32-bit rule. aarch64 (little-endian, under QEMU, 8.4 Debian) passed before the integer, `value`, debug
-  and JSON additions and was not re-run for them.
-* The whole suite, both passes, under valgrind with `USE_ZEND_ALLOC=0` (`tools/valgrind.sh`, PHP 8.4 NTS): zero errors, zero leaks, including
-  parked pool objects at shutdown, foreign-tensor deleters, owner references, the readiness contexts and exactly-sized buffers read
-  at their last packed element.
-* `tools/oracle/run.sh decode|encode|doubles|ints`: against ml_dtypes 0.5.4 - every code of every format of at most 16 bits decodes
-  identically; every one of the 2^32 float32 inputs encodes identically for `float8_e4m3fn`, `float8_e5m2` and `float4_e2m1fn` (the
-  other formats were swept for the predecessor and their code is unchanged); 20 million random doubles, exact midpoints and their
-  neighbours per format encode identically; the packed integers (through the extension) decode every code identically to
+* `tests/` phpt suite (44 files; 29 run and 15 skip with the extension alone, 40 run and 4 skip with the API consumer loaded - the skips are
+  tests that need the consumer, or 32-bit-only, 64-bit-only or Linux-only tests) on PHP 8.4 and 8.5, Debian/glibc and Alpine/musl via Docker
+  (`tools/docker-test.sh`), NTS and ZTS (8 images), plus debug builds of php-src 8.5.13-dev NTS and ZTS (assertions on, which also checks the
+  internal hook functions and the API consumer's arginfo); all pass, no compiler warnings with `-Wall -Wextra`. 32-bit PHP (`linux/386`: 8.4 and
+  8.5 Debian, 8.4 Alpine): 28 + 39 pass, the rest skipped as 64-bit-only, and `file32.phpt` (a 5 GB sparse file falls back to an unmapped buffer)
+  and `bits32.phpt` run. aarch64 under QEMU (8.4 Debian): 29 + 40 pass.
+* The whole suite, both passes, under valgrind with `USE_ZEND_ALLOC=0` (`tools/valgrind.sh`, PHP 8.4 NTS): 28 + 39 pass, zero errors, zero leaks,
+  including parked pool objects at shutdown, foreign-tensor deleters, owner references, the readiness contexts, mappings and file descriptors,
+  and exactly-sized buffers read at their last packed element.
+* `tools/oracle/run.sh decode|encode|doubles|ints`, against ml_dtypes 0.5.4: every code of every format of at most 16 bits decodes identically;
+  **every one of the 2^32 float32 inputs encodes identically for each of the 11 floating point formats of at most 8 bits** (float8_e3m4, e4m3,
+  e4m3b11fnuz, e4m3fn, e4m3fnuz, e5m2, e5m2fnuz, e8m0fnu, float6_e2m3fn, float6_e3m2fn, float4_e2m1fn); 20 million random doubles, exact midpoints
+  and their neighbours per format (13 formats) encode identically; the packed integers (through the extension) decode every code identically to
   `int2`/`int4`/`uint2`/`uint4` and wrap writes of -1000..1000 like ml_dtypes' `astype`.
-* `tools/oracle/run-fuzz.sh`: a NumPy differential fuzz (random dtype, bytes, shape, strides, offset; reads through chained offsets and
-  writes compared with NumPy `as_strided` over the same bytes; the packed formats checked with NumPy bit operations - bit positions,
-  extraction, read-modify-write - against ml_dtypes' decode and encode; 0-d views checked for geometry and a DLPack round trip):
-  30000 views, 1.09 million elements, 14348 write passes, no mismatch; 20000 more with the packed integers: 834795 elements, no mismatch.
-  `SCRIPT=view_fuzz.py tools/oracle/run-fuzz.sh`: hostile `view()` arguments (including `[]`, and the packed rules for floats and integers)
-  against an exact big-integer model: 100000 calls, 13024 accepted, 86976 rejected, no mismatch.
-* Not run: macOS, Windows (`config.w32` and the workflows are written but never executed), the GitHub workflows themselves, real
-  multi-threaded ZTS, big-endian machines (s390x needs QEMU binfmt, which is not installed here; no code assumes little-endian and
-  the tests that print element bytes skip on big-endian, but that is untested).
+* `tools/oracle/run-fuzz.sh`: a NumPy differential fuzz (random dtype, bytes, shape, strides, offset; reads through chained offsets and writes
+  compared with NumPy `as_strided` over the same bytes; the packed formats checked with NumPy bit operations against ml_dtypes' decode and encode;
+  0-d views checked for geometry): 30000 views (seed 101), 1.26 million elements, 14348 write passes, no mismatch.
+  `SCRIPT=view_fuzz.py tools/oracle/run-fuzz.sh`: hostile `view()` arguments (including `[]`, and the packed rules) against an exact big-integer
+  model: 100000 calls (seed 102), 12875 accepted, 87125 rejected, no mismatch.
+* Two processes sharing a `/dev/shm` mapping (`proc_open`), `createFile` + `flush` + reopen, and `writeTo`/`readFrom` over `php://memory`, a file and a
+  socket pair (including short writes on a non-blocking socket) are phpt tests.
+* Not run: macOS, Windows (`config.w32`, the `CreateFileMapping`/`MapViewOfFile`/`ReadFile`/`FlushViewOfFile` code and the workflows are written but
+  never executed), the GitHub workflows themselves, real multi-threaded ZTS, big-endian machines (s390x needs QEMU binfmt, which is not installed
+  here; no code assumes little-endian and the tests that print element bytes skip on big-endian, but that is untested).
 
 Commands: `tools/test.sh [8.x]` builds out of tree and runs the suite (twice: with the extension alone, then with the API
 consumer loaded); `tools/valgrind.sh [8.x]`; `tools/docker-test.sh [image ...]` (`DOCKER_PLATFORM=linux/386` for 32-bit);
