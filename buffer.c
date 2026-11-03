@@ -1,4 +1,7 @@
 /* Buffer: bytes on some device. See php_buffers.h for what a buffer can own. */
+#ifndef _FILE_OFFSET_BITS
+# define _FILE_OFFSET_BITS 64   /* files larger than 2 GB on 32-bit systems */
+#endif
 #include "php_buffers.h"
 #include "zend_exceptions.h"
 #include "zend_interfaces.h"
@@ -276,6 +279,9 @@ static intptr_t file_open(const char *path, uint64_t *size)
 		int fd = VCWD_OPEN(path, O_RDONLY
 # ifdef O_CLOEXEC
 			| O_CLOEXEC
+# endif
+# ifdef O_LARGEFILE
+			| O_LARGEFILE
 # endif
 		);
 
