@@ -1,4 +1,4 @@
-"""Differential fuzz of BufferView against NumPy (+ ml_dtypes).
+"""Differential fuzz of Tensor against NumPy (+ ml_dtypes).
 
 Random dtype, buffer bytes, shape, strides and offset; PHP reads every element through chained
 offsets and NumPy (as_strided over the same bytes) must see the same values. A second pass writes

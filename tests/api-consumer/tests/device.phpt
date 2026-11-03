@@ -4,12 +4,12 @@ C API: a Device implemented by another extension; pass-through of device memory
 <?php if (!extension_loaded('buffers_api_test')) die('skip needs the buffers_api_test extension'); ?>
 --FILE--
 <?php
-use Buffers\{DType, BufferView, Device, Buffer};
+use Buffers\{DType, Tensor, Device, Buffer};
 function live() { $c = bat_counts(); return $c['made'] - $c['deleted']; }
 
 $b = bat_device_buffer(64);
-$d = $b->device();
-var_dump(get_class($d), $d instanceof Device, $d->name(), $d->id(), $d->isHostAccessible(), $b->device() === $d);
+$d = $b->device;
+var_dump(get_class($d), $d instanceof Device, $d->name, $d->id, $d->hostAccessible, $b->device === $d);
 $v = $b->view(DType::Float32, [2, 4], null, 16);
 print_r(bat_info($v));
 foreach ([fn() => $v[0][0], fn() => $v[1][1] = 1.0, fn() => foreach_it($v[0])] as $f) {
@@ -23,7 +23,7 @@ print_r(bat_export($v));
 print_r(bat_export($v[1]));
 $i = bat_roundtrip($v);
 $bi = bat_info($i);
-var_dump($bi['device_type'], $bi['device_id'], $bi['byte_offset'], $bi['host_accessible'], $bi['buffer_length'], $i->buffer->device()->name(), get_class($i->buffer->device()));
+var_dump($bi['device_type'], $bi['device_id'], $bi['byte_offset'], $bi['host_accessible'], $bi['buffer_length'], $i->buffer->device->name, get_class($i->buffer->device));
 $j = bat_roundtrip($v);
 var_dump(bat_export($j)['data_is_buffer_base'], bat_export($j)['byte_offset']);
 echo live(), " live\n";

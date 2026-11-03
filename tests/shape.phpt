@@ -4,9 +4,9 @@ Shape: validation, negative indices, immutability, iteration, size
 <?php if (!extension_loaded('buffers')) die('skip buffers extension not loaded'); ?>
 --FILE--
 <?php
-use Buffers\{Shape, Buffer, DType, Tensor};
+use Buffers\{Shape, Buffer, DType, TensorInterface};
 $s = new Shape([2, 3, 4]);
-var_dump(count($s), $s[0], $s[2], $s[-1], $s[-3], $s->toArray(), $s->isConcrete(), $s->size());
+var_dump(count($s), $s[0], $s[2], $s[-1], $s[-3], $s->toArray(), $s->concrete, $s->size);
 var_dump(isset($s[0]), isset($s[-3]), isset($s[3]), isset($s[-4]), isset($s['x']), $s->offsetExists(1));
 foreach ($s as $i => $d) echo "$i=$d ";
 echo "\n";
@@ -14,8 +14,8 @@ var_dump(iterator_to_array($s), $s instanceof ArrayAccess, $s instanceof Countab
 
 echo "empty shape: a scalar\n";
 $e = new Shape([]);
-var_dump(count($e), $e->toArray(), $e->size(), $e->isConcrete(), iterator_to_array($e));
-var_dump(new Shape([0, 5])->size());
+var_dump(count($e), $e->toArray(), $e->size, $e->concrete, iterator_to_array($e));
+var_dump(new Shape([0, 5])->size);
 
 echo "errors\n";
 $cases = [
@@ -39,7 +39,7 @@ $cases = [
     'gap'               => fn() => new Shape([1 => 2]),
     'no arguments'      => fn() => new Shape(),
     'int argument'      => fn() => new Shape(3),
-    'overflow size'     => fn() => (new Shape([PHP_INT_MAX, PHP_INT_MAX, PHP_INT_MAX]))->size(),
+    'overflow size'     => fn() => (new Shape([PHP_INT_MAX, PHP_INT_MAX, PHP_INT_MAX]))->size,
     'clone'             => fn() => clone $s,
     'serialize'         => fn() => serialize($s),
     'dynamic property'  => function () use ($s) { $s->x = 1; },
@@ -57,8 +57,8 @@ var_dump($s != new Shape([2, 3, 4]));
 echo "views have concrete shapes\n";
 $b = new Buffer(48);
 $sh = $b->view(DType::Int16, [2, 3, 4])->shape;
-var_dump($sh->toArray(), $sh->isConcrete(), $sh->size(), $sh->offsetGet(-2));
-var_dump($b->view(DType::Int16, [])->shape->size());
+var_dump($sh->toArray(), $sh->concrete, $sh->size, $sh->offsetGet(-2));
+var_dump($b->view(DType::Int16, [])->shape->size);
 
 echo "a Shape of references\n";
 $a = 5; $d = [&$a, 6];
@@ -120,11 +120,11 @@ assign method    Error: Cannot modify a Shape: it is immutable
 unset            Error: Cannot modify a Shape: it is immutable
 unset method     Error: Cannot modify a Shape: it is immutable
 negative dim     ValueError: Shape dimension 1 must not be negative, -1 given
-float dim        TypeError: Shape dimension 0 must be of type int|Buffers\Tensor, float given
-string dim       TypeError: Shape dimension 0 must be of type int|Buffers\Tensor, string given
-object dim       TypeError: Shape dimension 0 must be of type int|Buffers\Tensor, stdClass given
-null dim         TypeError: Shape dimension 0 must be of type int|Buffers\Tensor, null given
-nested array     TypeError: Shape dimension 0 must be of type int|Buffers\Tensor, array given
+float dim        TypeError: Shape dimension 0 must be of type int|Buffers\TensorInterface, float given
+string dim       TypeError: Shape dimension 0 must be of type int|Buffers\TensorInterface, string given
+object dim       TypeError: Shape dimension 0 must be of type int|Buffers\TensorInterface, stdClass given
+null dim         TypeError: Shape dimension 0 must be of type int|Buffers\TensorInterface, null given
+nested array     TypeError: Shape dimension 0 must be of type int|Buffers\TensorInterface, array given
 not a list       ValueError: Buffers\Shape::__construct(): Argument #1 ($dims) must be a list
 gap              ValueError: Buffers\Shape::__construct(): Argument #1 ($dims) must be a list
 no arguments     ArgumentCountError: Buffers\Shape::__construct() expects exactly 1 argument, 0 given

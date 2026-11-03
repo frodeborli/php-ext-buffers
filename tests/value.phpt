@@ -1,10 +1,10 @@
 --TEST--
-BufferView::$value: the element of a 0-d view, readable and writable
+Tensor::$value: the element of a 0-d view, readable and writable
 --SKIPIF--
 <?php if (!extension_loaded('buffers')) die('skip buffers extension not loaded'); ?>
 --FILE--
 <?php
-use Buffers\{Buffer, DType, BufferView};
+use Buffers\{Buffer, DType, Tensor};
 $b = new Buffer(32);
 foreach (DType::cases() as $t) {
     if (in_array($t, [DType::Int64, DType::UInt64, DType::UInt32])) continue;   // not viewable on 32-bit PHP: checked below on 64-bit
@@ -96,11 +96,11 @@ int(77)
 int(1)
 int(5)
 conversion errors
-TypeError: Cannot write string to a BufferView of dtype Int32
-TypeError: Cannot write array to a BufferView of dtype Int32
-TypeError: Cannot write null to a BufferView of dtype Int32
-TypeError: Cannot write int to a BufferView of dtype Bool
-TypeError: Cannot write string to a BufferView of dtype Float32
+TypeError: Cannot write string to a Tensor of dtype Int32
+TypeError: Cannot write array to a Tensor of dtype Int32
+TypeError: Cannot write null to a Tensor of dtype Int32
+TypeError: Cannot write int to a Tensor of dtype Bool
+TypeError: Cannot write string to a Tensor of dtype Float32
 views with axes
 Error: value is only available on 0-d views; index the view instead
 Error: value is only available on 0-d views; index the view instead
@@ -128,12 +128,12 @@ array(7) {
 }
 int(9)
 bool(false)
-Error: Indirect modification of Buffers\BufferView::$value is not allowed
+Error: Indirect modification of Buffers\Tensor::$value is not allowed
 int(10)
-TypeError: Cannot write string to a BufferView of dtype Int32
+TypeError: Cannot write string to a Tensor of dtype Int32
 read-only memory and memory the host cannot touch (files)
 int(3)
-Error: Cannot write to a read-only BufferView
+Error: Cannot write to a read-only Tensor
 Error: Cannot access the elements of a tensor on device file: its memory is not host accessible; transfer to the host first with to()
-Error: Cannot write to a read-only BufferView
+Error: Cannot write to a read-only Tensor
 end

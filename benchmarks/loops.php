@@ -5,27 +5,27 @@
 
 // ---- reads -------------------------------------------------------------------------------
 
-function read_view_1d(Buffers\BufferView $f, int $w, int $h): int {
+function read_view_1d(Buffers\Tensor $f, int $w, int $h): int {
     $s = 0;
     for ($y = 0; $y < $h; $y++) for ($x = 0; $x < $w; $x++) $s += $f[$y * $w * 4 + $x * 4 + 3];
     return $s;
 }
-function read_view_1d_hoisted(Buffers\BufferView $f, int $w, int $h): int {
+function read_view_1d_hoisted(Buffers\Tensor $f, int $w, int $h): int {
     $s = 0;
     for ($y = 0; $y < $h; $y++) { $base = $y * $w * 4 + 3; for ($x = 0; $x < $w; $x++) $s += $f[$base + $x * 4]; }
     return $s;
 }
-function read_view_3d(Buffers\BufferView $v, int $w, int $h): int {
+function read_view_3d(Buffers\Tensor $v, int $w, int $h): int {
     $s = 0;
     for ($y = 0; $y < $h; $y++) for ($x = 0; $x < $w; $x++) $s += $v[$y][$x][3];
     return $s;
 }
-function read_view_3d_rowhoisted(Buffers\BufferView $v, int $w, int $h): int {
+function read_view_3d_rowhoisted(Buffers\Tensor $v, int $w, int $h): int {
     $s = 0;
     for ($y = 0; $y < $h; $y++) { $row = $v[$y]; for ($x = 0; $x < $w; $x++) $s += $row[$x][3]; }
     return $s;
 }
-function read_view_2d(Buffers\BufferView $v, int $w, int $h): int {
+function read_view_2d(Buffers\Tensor $v, int $w, int $h): int {
     $s = 0;
     for ($y = 0; $y < $h; $y++) for ($x = 0; $x < $w; $x++) $s += $v[$y][$x * 4 + 3];
     return $s;
@@ -53,23 +53,23 @@ function read_spl_1d(SplFixedArray $f, int $w, int $h): int {
 
 // ---- writes ------------------------------------------------------------------------------
 
-function write_view_1d(Buffers\BufferView $f, int $w, int $h): int {
+function write_view_1d(Buffers\Tensor $f, int $w, int $h): int {
     for ($y = 0; $y < $h; $y++) for ($x = 0; $x < $w; $x++) $f[$y * $w * 4 + $x * 4 + 3] = $x ^ $y;
     return 0;
 }
-function write_view_1d_hoisted(Buffers\BufferView $f, int $w, int $h): int {
+function write_view_1d_hoisted(Buffers\Tensor $f, int $w, int $h): int {
     for ($y = 0; $y < $h; $y++) { $base = $y * $w * 4 + 3; for ($x = 0; $x < $w; $x++) $f[$base + $x * 4] = $x ^ $y; }
     return 0;
 }
-function write_view_3d(Buffers\BufferView $v, int $w, int $h): int {
+function write_view_3d(Buffers\Tensor $v, int $w, int $h): int {
     for ($y = 0; $y < $h; $y++) for ($x = 0; $x < $w; $x++) $v[$y][$x][3] = $x ^ $y;
     return 0;
 }
-function write_view_3d_rowhoisted(Buffers\BufferView $v, int $w, int $h): int {
+function write_view_3d_rowhoisted(Buffers\Tensor $v, int $w, int $h): int {
     for ($y = 0; $y < $h; $y++) { $row = $v[$y]; for ($x = 0; $x < $w; $x++) $row[$x][3] = $x ^ $y; }
     return 0;
 }
-function write_view_2d(Buffers\BufferView $v, int $w, int $h): int {
+function write_view_2d(Buffers\Tensor $v, int $w, int $h): int {
     for ($y = 0; $y < $h; $y++) for ($x = 0; $x < $w; $x++) $v[$y][$x * 4 + 3] = $x ^ $y;
     return 0;
 }
@@ -98,11 +98,11 @@ function write_spl_1d(SplFixedArray $f, int $w, int $h): int {
 
 // ---- read-modify-write (+=) --------------------------------------------------------------
 
-function add_view_1d(Buffers\BufferView $f, int $w, int $h): int {
+function add_view_1d(Buffers\Tensor $f, int $w, int $h): int {
     for ($y = 0; $y < $h; $y++) for ($x = 0; $x < $w; $x++) $f[$y * $w * 4 + $x * 4 + 3] += 1;
     return 0;
 }
-function add_view_3d(Buffers\BufferView $v, int $w, int $h): int {
+function add_view_3d(Buffers\Tensor $v, int $w, int $h): int {
     for ($y = 0; $y < $h; $y++) for ($x = 0; $x < $w; $x++) $v[$y][$x][3] += 1;
     return 0;
 }
@@ -121,12 +121,12 @@ function add_array_nested(int $w, int $h, int $reps): int {
 
 // ---- per dtype: n sequential 1-D accesses ------------------------------------------------
 
-function dtype_read(Buffers\BufferView $f, int $n) {
+function dtype_read(Buffers\Tensor $f, int $n) {
     $x = null;
     for ($i = 0; $i < $n; $i++) $x = $f[$i];
     return $x;
 }
-function dtype_write(Buffers\BufferView $f, int $n, $val): int {
+function dtype_write(Buffers\Tensor $f, int $n, $val): int {
     for ($i = 0; $i < $n; $i++) $f[$i] = $val;
     return 0;
 }

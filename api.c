@@ -20,8 +20,8 @@ zend_class_entry *buffers_get_class(int which)
 	switch (which) {
 	case BUFFERS_CE_DTYPE: return buf_ce_dtype;
 	case BUFFERS_CE_BUFFER: return buf_ce_buffer;
-	case BUFFERS_CE_VIEW: return buf_ce_view;
 	case BUFFERS_CE_TENSOR: return buf_ce_tensor;
+	case BUFFERS_CE_TENSOR_INTERFACE: return buf_ce_tensor_if;
 	case BUFFERS_CE_SHAPE: return buf_ce_shape;
 	case BUFFERS_CE_DEVICE: return buf_ce_device_if;
 	case BUFFERS_CE_CPU_DEVICE: return buf_ce_cpudevice;
@@ -131,17 +131,17 @@ zend_result buffers_buffer_ensure_ready(zend_object *buffer)
 
 /* ---- views ---- */
 
-bool buffers_is_view(const zend_object *o)
+bool buffers_is_tensor(const zend_object *o)
 {
-	return o && o->ce == buf_ce_view;
+	return o && o->ce == buf_ce_tensor;
 }
 
-zend_result buffers_view_get_info(zend_object *view, buffers_view_info *out)
+zend_result buffers_tensor_get_info(zend_object *view, buffers_tensor_info *out)
 {
 	buf_view *v;
 
-	if (!buffers_is_view(view) || !buf_view_from(view)->buf) {
-		zend_type_error("Expected a BufferView");
+	if (!buffers_is_tensor(view) || !buf_view_from(view)->buf) {
+		zend_type_error("Expected a Tensor");
 		return FAILURE;
 	}
 	v = buf_view_from(view);
@@ -156,7 +156,7 @@ zend_result buffers_view_get_info(zend_object *view, buffers_view_info *out)
 	return SUCCESS;
 }
 
-zend_object *buffers_view_create(zend_object *buffer, int dtype, int ndim, const int64_t *shape,
+zend_object *buffers_tensor_create(zend_object *buffer, int dtype, int ndim, const int64_t *shape,
 	const int64_t *strides, int64_t byte_offset)
 {
 	char err[256];

@@ -4,30 +4,30 @@ Devices of imported DLPack tensors: any device, host accessibility, pass-through
 <?php if (!extension_loaded('buffers_api_test')) die('skip needs the buffers_api_test extension'); ?>
 --FILE--
 <?php
-use Buffers\{Buffer, DType, BufferView, Device, CpuDevice, ForeignDevice};
+use Buffers\{Buffer, DType, Tensor, Device, CpuDevice, ForeignDevice};
 function live() { $c = bat_counts(); return $c['tensors_made'] - $c['tensors_deleted']; }
 
 $cpu = CpuDevice::get();
 try { new ForeignDevice; } catch (Error $e) { echo $e->getMessage(), "\n"; }
 echo "an imported CPU tensor is on the CpuDevice\n";
 $v = bat_import(1, 8, 1, [4], [1]);
-var_dump($v->buffer->device() === $cpu, $v->buffer->device());
+var_dump($v->buffer->device === $cpu, $v->buffer->device);
 unset($v);
 
 echo "other devices\n";
 $types = [2 => 'cuda', 3 => 'cuda_host', 4 => 'opencl', 7 => 'vulkan', 8 => 'metal', 10 => 'rocm', 11 => 'rocm_host', 13 => 'cuda_managed', 15 => 'webgpu', 99 => 'unknown'];
 foreach ($types as $t => $n) {
     $v = bat_import(1, 8, 1, [4], [1], 0, $t, 0, 3, 1, 7);
-    $d = $v->buffer->device();
-    printf("%-3d %-13s %-14s type=%d id=%d host=%d %s same=%d\n", $t, $n, $d->name(), bat_export($v)['device_type'], $d->id(), $d->isHostAccessible(),
-        get_class($d), $v->buffer->device() === $d);
+    $d = $v->buffer->device;
+    printf("%-3d %-13s %-14s type=%d id=%d host=%d %s same=%d\n", $t, $n, $d->name, bat_export($v)['device_type'], $d->id, $d->hostAccessible,
+        get_class($d), $v->buffer->device === $d);
     unset($v);
 }
 echo live(), " live\n";
 
 echo "memory the host cannot touch\n";
 $v = bat_import(2, 32, 1, [2, 3], [3, 1], 0, 2, 0, 3, 1, 1);   // float32 [2, 3] on cuda:1
-var_dump($v->dtype, $v->shape->toArray(), $v->strides, $v->offset, count($v), $v->buffer->byteLength(), $v->buffer->isWritable());
+var_dump($v->dtype, $v->shape->toArray(), $v->strides, $v->offset, count($v), $v->buffer->byteLength, $v->buffer->isWritable());
 $row = $v[1];
 var_dump($row->shape->toArray());
 $cases = [
@@ -56,7 +56,7 @@ unset($h);
 echo "passing through: the export has the same device and the deleter runs once\n";
 $before = live();
 $w = bat_roundtrip($v);
-var_dump(bat_export($w)['device_type'], $w->buffer->device()->id(), $w->buffer->device()->name(), $w->shape->toArray(), $w->strides, $w->dtype);
+var_dump(bat_export($w)['device_type'], $w->buffer->device->id, $w->buffer->device->name, $w->shape->toArray(), $w->strides, $w->dtype);
 var_dump($w->buffer === $v->buffer);
 echo live() - $before, " new tensors\n";
 unset($v, $row, $w, $r, $d, $e, $f, $cases);

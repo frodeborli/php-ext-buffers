@@ -4,7 +4,7 @@ Packed sub-byte storage: float6 and float4 elements are bits apart, little-bit-e
 <?php if (!extension_loaded('buffers')) die('skip buffers extension not loaded'); ?>
 --FILE--
 <?php
-use Buffers\{Buffer, DType, BufferView};
+use Buffers\{Buffer, DType, Tensor};
 mt_srand(7);
 
 /** the bytes of $codes packed little-bit-endian, $bits per element */
@@ -259,9 +259,9 @@ fp4 huge stride       ValueError: (too large)
 errors on elements
 ValueError: Index 8 is out of range for an axis of length 8
 ValueError: Index -1 is out of range for an axis of length 8
-TypeError: Cannot write string to a BufferView of dtype Float4E2M1FN
-TypeError: Cannot write array to a BufferView of dtype Float4E2M1FN
-TypeError: BufferView offset must be of type int, string given
+TypeError: Cannot write string to a Tensor of dtype Float4E2M1FN
+TypeError: Cannot write array to a Tensor of dtype Float4E2M1FN
+TypeError: Tensor offset must be of type int, string given
 float(1)
 float(6)
 float(6)

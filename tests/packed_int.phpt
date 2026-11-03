@@ -4,7 +4,7 @@ Packed integers: Int2, Int4, UInt2 and UInt4 are bits apart, little-bit-endian, 
 <?php if (!extension_loaded('buffers')) die('skip buffers extension not loaded'); ?>
 --FILE--
 <?php
-use Buffers\{Buffer, DType, BufferView};
+use Buffers\{Buffer, DType, Tensor};
 mt_srand(11);
 function pack_codes(array $codes, int $bits): string {
     $out = array_fill(0, intdiv(count($codes) * $bits + 7, 8), 0);
@@ -88,8 +88,8 @@ Int2: bits=2 byteSize=NULL aligned=false integer=true float=false
   read n=17 mismatches 0
   read n=64 mismatches 0
   write fuzz: mismatches 0
-  Cannot write string to a BufferView of dtype Int2
-  Cannot write bool to a BufferView of dtype Int2
+  Cannot write string to a Tensor of dtype Int2
+  Cannot write bool to a Tensor of dtype Int2
 int(0)
 int(0)
 Int4: bits=4 byteSize=NULL aligned=false integer=true float=false
@@ -102,8 +102,8 @@ Int4: bits=4 byteSize=NULL aligned=false integer=true float=false
   read n=17 mismatches 0
   read n=64 mismatches 0
   write fuzz: mismatches 0
-  Cannot write string to a BufferView of dtype Int4
-  Cannot write bool to a BufferView of dtype Int4
+  Cannot write string to a Tensor of dtype Int4
+  Cannot write bool to a Tensor of dtype Int4
 int(0)
 int(0)
 UInt2: bits=2 byteSize=NULL aligned=false integer=true float=false
@@ -116,8 +116,8 @@ UInt2: bits=2 byteSize=NULL aligned=false integer=true float=false
   read n=17 mismatches 0
   read n=64 mismatches 0
   write fuzz: mismatches 0
-  Cannot write string to a BufferView of dtype UInt2
-  Cannot write bool to a BufferView of dtype UInt2
+  Cannot write string to a Tensor of dtype UInt2
+  Cannot write bool to a Tensor of dtype UInt2
 int(0)
 int(0)
 UInt4: bits=4 byteSize=NULL aligned=false integer=true float=false
@@ -130,8 +130,8 @@ UInt4: bits=4 byteSize=NULL aligned=false integer=true float=false
   read n=17 mismatches 0
   read n=64 mismatches 0
   write fuzz: mismatches 0
-  Cannot write string to a BufferView of dtype UInt4
-  Cannot write bool to a BufferView of dtype UInt4
+  Cannot write string to a Tensor of dtype UInt4
+  Cannot write bool to a Tensor of dtype UInt4
 int(0)
 int(0)
 bytes

@@ -1,6 +1,6 @@
 {
     "name": "phasync/ext-buffers",
-    "description": "PHP extension: the shared representation of n-dimensional typed data - ArrayBuffer, BufferView, DType, Shape, Tensor and Device - with all ML dtypes, zero-copy DLPack exchange and a C API for other extensions.",
+    "description": "PHP extension: the shared representation of n-dimensional typed data - ArrayBuffer, Tensor, DType, Shape, TensorInterface and Device - with all ML dtypes, zero-copy DLPack exchange and a C API for other extensions.",
     "type": "php-ext",
     "license": "MIT",
     "keywords": ["buffers", "dlpack", "tensor", "ndarray", "typed array", "buffer", "bfloat16", "float8", "extension"],

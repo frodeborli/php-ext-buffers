@@ -1,16 +1,16 @@
 --TEST--
-BufferView: chained offsets, sub-views, aliasing, offset errors
+Tensor: chained offsets, sub-views, aliasing, offset errors
 --SKIPIF--
 <?php if (!extension_loaded('buffers')) die('skip buffers extension not loaded'); ?>
 --FILE--
 <?php
-use Buffers\{DType, Buffer, BufferView};
+use Buffers\{DType, Buffer, Tensor};
 $b = new Buffer(24);
 $v = $b->view(DType::UInt8, [2, 3, 4]);
 for ($i = 0; $i < 24; $i++) $b->view(DType::UInt8)[$i] = $i;
 var_dump($v[1][2][3], $v[0][0][0], $v[1][0][0]);
 $plane = $v[1];                       // sub-view
-var_dump($plane instanceof BufferView, $plane->shape->toArray(), $plane->strides, $plane->offset, $plane[2][1]);
+var_dump($plane instanceof Tensor, $plane->shape->toArray(), $plane->strides, $plane->offset, $plane[2][1]);
 $row = $v[1][2];
 var_dump($row->shape->toArray(), $row->offset, $row[3], count($row));
 $row[0] = 200;                        // writes through to the root
@@ -32,7 +32,7 @@ foreach ([
     function() use ($v) { $v[] = 1; }, function() use ($v) { $v[0] = 1; }, function() use ($v) { $v[0][0] = 1; },
     function() use ($v) { $v[9][0][0] = 1; }, function() use ($v) { $v[0][0][9] = 1; }, function() use ($v) { $v[[0,0,0]] = 1; },
     function() use ($v) { unset($v[0][0][0]); }, function() use ($v) { unset($v[0]); },
-    function() use ($v) { $v->foo = 1; }, fn() => clone $v, fn() => serialize($v), fn() => new BufferView(),
+    function() use ($v) { $v->foo = 1; }, fn() => clone $v, fn() => serialize($v), fn() => new Tensor(),
 ] as $i => $f) {
     try { $f(); echo "$i: no error\n"; } catch (Throwable $e) { echo "$i: ", get_class($e), ": ", str_replace([(string)PHP_INT_MAX, (string)PHP_INT_MIN], ["INT_MAX", "INT_MIN"], $e->getMessage()), "\n"; }
 }
@@ -90,23 +90,23 @@ int(23)
 3: ValueError: Index 4 is out of range for an axis of length 4
 4: ValueError: Index INT_MAX is out of range for an axis of length 2
 5: ValueError: Index INT_MIN is out of range for an axis of length 2
-6: TypeError: BufferView offset must be of type int, array given
-7: TypeError: BufferView offset must be of type int, string given
-8: TypeError: BufferView offset must be of type int, float given
-9: TypeError: BufferView offset must be of type int, null given
-10: TypeError: BufferView offset must be of type int, bool given
-11: TypeError: BufferView offset must be of type int, stdClass given
-12: Error: Cannot append to a BufferView
+6: TypeError: Tensor offset must be of type int, array given
+7: TypeError: Tensor offset must be of type int, string given
+8: TypeError: Tensor offset must be of type int, float given
+9: TypeError: Tensor offset must be of type int, null given
+10: TypeError: Tensor offset must be of type int, bool given
+11: TypeError: Tensor offset must be of type int, stdClass given
+12: Error: Cannot append to a Tensor
 13: Error: Cannot assign to a sub-view; index every axis down to one element
 14: Error: Cannot assign to a sub-view; index every axis down to one element
 15: ValueError: Index 9 is out of range for an axis of length 2
 16: ValueError: Index 9 is out of range for an axis of length 4
-17: TypeError: BufferView offset must be of type int, array given
-18: Error: Cannot unset an element of a BufferView
-19: Error: Cannot unset an element of a BufferView
-20: Error: Cannot create dynamic property Buffers\BufferView::$foo
-21: Error: Trying to clone an uncloneable object of class Buffers\BufferView
-22: Exception: Serialization of 'Buffers\BufferView' is not allowed
-23: Error: BufferView cannot be instantiated; use Buffer::view()
-notice: Indirect modification of overloaded element of Buffers\BufferView has no effect
+17: TypeError: Tensor offset must be of type int, array given
+18: Error: Cannot unset an element of a Tensor
+19: Error: Cannot unset an element of a Tensor
+20: Error: Cannot create dynamic property Buffers\Tensor::$foo
+21: Error: Trying to clone an uncloneable object of class Buffers\Tensor
+22: Exception: Serialization of 'Buffers\Tensor' is not allowed
+23: Error: Tensor cannot be instantiated; use Buffer::view()
+notice: Indirect modification of overloaded element of Buffers\Tensor has no effect
 done

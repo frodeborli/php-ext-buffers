@@ -4,7 +4,7 @@ Integer dtypes: wrapping, float conversion, type errors
 <?php if (!extension_loaded('buffers')) die('skip buffers extension not loaded'); if (PHP_INT_SIZE !== 8) die('skip 64-bit PHP only: tests Int64, UInt64 and UInt32'); ?>
 --FILE--
 <?php
-use Buffers\{DType, Buffer, BufferView};
+use Buffers\{DType, Buffer, Tensor};
 $b = new Buffer(64);
 foreach (['Int8','Int16','Int32','Int64','UInt8','UInt16','UInt32','UInt64'] as $name) {
     $v = $b->view(constant("Buffers\\DType::$name"), 4);
@@ -64,16 +64,16 @@ bool(false)
 bool(false)
 bool(true)
 type errors
-Cannot write null to a BufferView of dtype Int8
-Cannot write string to a BufferView of dtype Int8
-Cannot write array to a BufferView of dtype Int8
-Cannot write bool to a BufferView of dtype Int8
-Cannot write bool to a BufferView of dtype Int8
-Cannot write stdClass to a BufferView of dtype Int8
-Cannot write string to a BufferView of dtype Int8
-Cannot write int to a BufferView of dtype Bool
-Cannot write int to a BufferView of dtype Bool
-Cannot write float to a BufferView of dtype Bool
-Cannot write string to a BufferView of dtype Bool
-Cannot write null to a BufferView of dtype Bool
-Cannot write array to a BufferView of dtype Bool
+Cannot write null to a Tensor of dtype Int8
+Cannot write string to a Tensor of dtype Int8
+Cannot write array to a Tensor of dtype Int8
+Cannot write bool to a Tensor of dtype Int8
+Cannot write bool to a Tensor of dtype Int8
+Cannot write stdClass to a Tensor of dtype Int8
+Cannot write string to a Tensor of dtype Int8
+Cannot write int to a Tensor of dtype Bool
+Cannot write int to a Tensor of dtype Bool
+Cannot write float to a Tensor of dtype Bool
+Cannot write string to a Tensor of dtype Bool
+Cannot write null to a Tensor of dtype Bool
+Cannot write array to a Tensor of dtype Bool

@@ -1,4 +1,4 @@
-/* Shape: the dimensions of a tensor, each an int or a 0-d Tensor (a symbolic dimension, for
+/* Shape: the dimensions of a tensor, each an int or a 0-d TensorInterface (a symbolic dimension, for
  * extensions that build deferred computations). Immutable. */
 #include "php_buffers.h"
 #include "zend_exceptions.h"
@@ -44,14 +44,14 @@ static bool dim_ok(zval *z, uint32_t pos)
 		}
 		return true;
 	}
-	if (Z_TYPE_P(z) != IS_OBJECT || !instanceof_function(Z_OBJCE_P(z), buf_ce_tensor)) {
-		zend_type_error("Shape dimension %u must be of type int|Buffers\\Tensor, %s given", pos, zend_zval_type_name(z));
+	if (Z_TYPE_P(z) != IS_OBJECT || !instanceof_function(Z_OBJCE_P(z), buf_ce_tensor_if)) {
+		zend_type_error("Shape dimension %u must be of type int|Buffers\\TensorInterface, %s given", pos, zend_zval_type_name(z));
 		return false;
 	}
 	nd = zend_read_property(Z_OBJCE_P(z), Z_OBJ_P(z), "ndim", sizeof("ndim") - 1, 0, &rv);
 	if (EG(exception)) return false;
 	if (Z_TYPE_P(nd) != IS_LONG || Z_LVAL_P(nd) != 0) {
-		zend_value_error("Shape dimension %u must be a 0-d Tensor", pos);
+		zend_value_error("Shape dimension %u must be a 0-d TensorInterface", pos);
 		return false;
 	}
 	return true;
@@ -145,10 +145,17 @@ static bool shape_concrete(const buf_shape *s)
 	return true;
 }
 
-PHP_METHOD(Buffers_Shape, isConcrete) { ZEND_PARSE_PARAMETERS_NONE(); RETURN_BOOL(shape_concrete(SELF)); }
 PHP_METHOD(Buffers_Shape, count) { ZEND_PARSE_PARAMETERS_NONE(); RETURN_LONG(SELF->n); }
 
-PHP_METHOD(Buffers_Shape, size)
+/* $concrete and $size: read-only virtual properties (internal get hooks, see props.c) */
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(ai_shape_concrete, 0, 0, _IS_BOOL, 0)
+ZEND_END_ARG_INFO()
+ZEND_BEGIN_ARG_WITH_RETURN_OBJ_TYPE_MASK_EX(ai_shape_size, 0, 0, Buffers\\TensorInterface, MAY_BE_LONG)
+ZEND_END_ARG_INFO()
+
+static ZEND_NAMED_FUNCTION(hook_concrete) { ZEND_PARSE_PARAMETERS_NONE(); RETURN_BOOL(shape_concrete(SELF)); }
+
+static ZEND_NAMED_FUNCTION(hook_size)
 {
 	buf_shape *s = SELF;
 	int64_t p = 1;
@@ -389,6 +396,13 @@ void buf_shape_minit(void)
 	buf_ce_shape = zend_register_internal_class_ex(&ce, NULL);
 	buf_ce_shape->ce_flags |= ZEND_ACC_FINAL | ZEND_ACC_NO_DYNAMIC_PROPERTIES | ZEND_ACC_NOT_SERIALIZABLE;
 	buf_ce_shape->create_object = shape_create;
+	{
+		const buf_prop_def props[] = {
+			{ "concrete", (zend_type) ZEND_TYPE_INIT_MASK(MAY_BE_BOOL), hook_concrete, ai_shape_concrete, 0 },
+			{ "size", (zend_type) ZEND_TYPE_INIT_CLASS_MASK(zend_string_init("Buffers\\TensorInterface", sizeof("Buffers\\TensorInterface") - 1, 1), MAY_BE_LONG), hook_size, ai_shape_size, 0 },
+		};
+		buf_declare_hooked_props(buf_ce_shape, props, 2);
+	}
 	zend_class_implements(buf_ce_shape, 3, zend_ce_arrayaccess, zend_ce_countable, zend_ce_aggregate);
 	buf_ce_shape->get_iterator = shape_get_iterator;
 	if (buf_json_serializable()) {

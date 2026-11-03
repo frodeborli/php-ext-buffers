@@ -405,7 +405,7 @@ PHP_METHOD(Buffers_Buffer, fromFile)
 		b->slow = false;
 		buf_file_close(file);   /* the mapping keeps the file */
 	} else {
-		b->host = false;        /* storage only: BufferView::to() reads it */
+		b->host = false;        /* storage only: Tensor::to() reads it */
 		b->slow = true;
 		b->file = file;
 		b->file_off = (uint64_t)offset;
@@ -420,7 +420,7 @@ PHP_METHOD(Buffers_Buffer, toString)
 	if (!b->host) {
 		zend_string *n = buf_device_name(b->dev_type, b->dev_id);
 
-		zend_throw_error(NULL, "Cannot read the bytes of a buffer on device %s: its memory is not host accessible; transfer to the host first with BufferView::to()", ZSTR_VAL(n));
+		zend_throw_error(NULL, "Cannot read the bytes of a buffer on device %s: its memory is not host accessible; transfer to the host first with Tensor::to()", ZSTR_VAL(n));
 		zend_string_release(n);
 		RETURN_THROWS();
 	}
@@ -434,7 +434,18 @@ PHP_METHOD(Buffers_Buffer, toString)
 	RETURN_STRINGL((const char *)b->base, (size_t)b->len);
 }
 
-PHP_METHOD(Buffers_Buffer, byteLength)
+PHP_METHOD(Buffers_Buffer, isWritable) { ZEND_PARSE_PARAMETERS_NONE(); RETURN_BOOL(BUF->writable); }
+PHP_METHOD(Buffers_Buffer, isHostAccessible) { ZEND_PARSE_PARAMETERS_NONE(); RETURN_BOOL(BUF->host); }
+
+PHP_METHOD(Buffers_Buffer, view) { buf_buffer_view_impl(Z_OBJ_P(ZEND_THIS), INTERNAL_FUNCTION_PARAM_PASSTHRU); }
+
+/* $byteLength and $device: read-only virtual properties (internal get hooks, see props.c) */
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(ai_buf_int, 0, 0, IS_LONG, 0)
+ZEND_END_ARG_INFO()
+ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(ai_buf_device, 0, 0, Buffers\\Device, 0)
+ZEND_END_ARG_INFO()
+
+static ZEND_NAMED_FUNCTION(hook_byte_length)
 {
 	buf_buffer *b = BUF;
 
@@ -446,10 +457,7 @@ PHP_METHOD(Buffers_Buffer, byteLength)
 	RETURN_LONG((zend_long)b->len);
 }
 
-PHP_METHOD(Buffers_Buffer, isWritable) { ZEND_PARSE_PARAMETERS_NONE(); RETURN_BOOL(BUF->writable); }
-PHP_METHOD(Buffers_Buffer, isHostAccessible) { ZEND_PARSE_PARAMETERS_NONE(); RETURN_BOOL(BUF->host); }
-
-PHP_METHOD(Buffers_Buffer, device)
+static ZEND_NAMED_FUNCTION(hook_device)
 {
 	buf_buffer *b = BUF;
 
@@ -457,19 +465,44 @@ PHP_METHOD(Buffers_Buffer, device)
 	RETURN_OBJ_COPY(b->device ? b->device : buffers_cpu_device());
 }
 
-PHP_METHOD(Buffers_Buffer, view) { buf_buffer_view_impl(Z_OBJ_P(ZEND_THIS), INTERNAL_FUNCTION_PARAM_PASSTHRU); }
+/* var_dump(): the size, the device by name, and the flags */
+static HashTable *buffer_debug_info(zend_object *o, int *is_temp)
+{
+	buf_buffer *b = buf_buffer_from(o);
+	HashTable *ht;
+	zval z;
+
+	ALLOC_HASHTABLE(ht);
+	zend_hash_init(ht, 4, NULL, ZVAL_PTR_DTOR, 0);
+	if (b->len > (uint64_t)ZEND_LONG_MAX) ZVAL_STR(&z, zend_strpprintf(0, "%" PRIu64, b->len)); else ZVAL_LONG(&z, (zend_long)b->len);
+	zend_hash_str_add_new(ht, "byteLength", sizeof("byteLength") - 1, &z);
+	ZVAL_STR(&z, buf_device_name(b->dev_type, b->dev_id));
+	zend_hash_str_add_new(ht, "device", sizeof("device") - 1, &z);
+	ZVAL_BOOL(&z, b->writable);
+	zend_hash_str_add_new(ht, "writable", sizeof("writable") - 1, &z);
+	ZVAL_BOOL(&z, b->host);
+	zend_hash_str_add_new(ht, "hostAccessible", sizeof("hostAccessible") - 1, &z);
+	*is_temp = 1;
+	return ht;
+}
 
 void buf_buffer_minit(void)
 {
 	zend_class_entry ce;
+	const buf_prop_def props[] = {
+		{ "byteLength", (zend_type) ZEND_TYPE_INIT_MASK(MAY_BE_LONG), hook_byte_length, ai_buf_int, 0 },
+		{ "device", (zend_type) ZEND_TYPE_INIT_CLASS(zend_string_init("Buffers\\Device", sizeof("Buffers\\Device") - 1, 1), 0, 0), hook_device, ai_buf_device, 0 },
+	};
 
 	INIT_CLASS_ENTRY(ce, "Buffers\\Buffer", class_Buffers_Buffer_methods);
 	buf_ce_buffer = zend_register_internal_class_ex(&ce, NULL);
 	buf_ce_buffer->ce_flags |= ZEND_ACC_FINAL | ZEND_ACC_NO_DYNAMIC_PROPERTIES | ZEND_ACC_NOT_SERIALIZABLE;
 	buf_ce_buffer->create_object = buffer_create;
+	buf_declare_hooked_props(buf_ce_buffer, props, 2);
 	memcpy(&buffer_handlers, &std_object_handlers, sizeof buffer_handlers);
 	buffer_handlers.offset = XtOffsetOf(buf_buffer, std);
 	buffer_handlers.free_obj = buffer_free;
 	buffer_handlers.clone_obj = NULL;
 	buffer_handlers.compare = buf_compare_identity;
+	buffer_handlers.get_debug_info = buffer_debug_info;
 }

@@ -14,14 +14,14 @@ exec('truncate -s 5G ' . escapeshellarg($path), $o, $rc);
 if ($rc) { echo "no sparse file support\n"; unlink($path); return; }
 echo "5 GB sparse file, whole: more than the address space, so not mapped\n";
 $b = Buffer::fromFile($path);
-var_dump($b->isHostAccessible(), $b->device() === FileDevice::get(), $b->isWritable());
-try { $b->byteLength(); } catch (Error $e) { echo $e->getMessage(), "\n"; }
+var_dump($b->isHostAccessible(), $b->device === FileDevice::get(), $b->isWritable());
+try { $b->byteLength; } catch (Error $e) { echo $e->getMessage(), "\n"; }
 try { $b->toString(); } catch (Error $e) { echo get_class($e), "\n"; }
 $b = Buffer::fromFile($path, 100);
 var_dump($b->isHostAccessible());
 echo "a range that fits is mapped\n";
 $m = Buffer::fromFile($path, 1 << 20, 1 << 20);
-var_dump($m->isHostAccessible(), $m->byteLength(), $m->view(DType::UInt8, 4, null, 100)->to(CpuDevice::get())->jsonSerialize());
+var_dump($m->isHostAccessible(), $m->byteLength, $m->view(DType::UInt8, 4, null, 100)->to(CpuDevice::get())->jsonSerialize());
 echo "an unmapped file buffer is read by to()\n";
 $u = Buffer::fromFile($path, 0, null, false);
 var_dump($u->isHostAccessible());

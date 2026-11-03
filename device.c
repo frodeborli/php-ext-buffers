@@ -135,16 +135,19 @@ bool buf_device_query(zend_object *dev, int32_t *type, int32_t *id, bool *host)
 			break;
 		}
 	}
-	zend_call_method_with_0_params(dev, dev->ce, NULL, "id", &rv);
-	if (EG(exception) || Z_TYPE(rv) != IS_LONG) goto fail;
-	*id = (int32_t)Z_LVAL(rv);
-	zend_call_method_with_0_params(dev, dev->ce, NULL, "isHostAccessible", &rv);
-	if (EG(exception) || (Z_TYPE(rv) != IS_TRUE && Z_TYPE(rv) != IS_FALSE)) goto fail;
-	*host = Z_TYPE(rv) == IS_TRUE;
+	{
+		zval *p = zend_read_property(dev->ce, dev, "id", sizeof("id") - 1, 1, &rv);
+
+		if (EG(exception) || Z_TYPE_P(p) != IS_LONG) goto fail;
+		*id = (int32_t)Z_LVAL_P(p);
+		p = zend_read_property(dev->ce, dev, "hostAccessible", sizeof("hostAccessible") - 1, 1, &rv);
+		if (EG(exception) || (Z_TYPE_P(p) != IS_TRUE && Z_TYPE_P(p) != IS_FALSE)) goto fail;
+		*host = Z_TYPE_P(p) == IS_TRUE;
+	}
 	return true;
 fail:
 	if (!EG(exception)) {
-		zend_throw_error(NULL, "%s::id() and isHostAccessible() must return int and bool", ZSTR_VAL(dev->ce->name));
+		zend_throw_error(NULL, "%s::$id and ::$hostAccessible must be an int and a bool", ZSTR_VAL(dev->ce->name));
 	}
 	return false;
 }
@@ -181,9 +184,6 @@ void buf_device_rshutdown(void)
 
 PHP_METHOD(Buffers_FileDevice, __construct) { ZEND_PARSE_PARAMETERS_NONE(); }
 PHP_METHOD(Buffers_FileDevice, get) { ZEND_PARSE_PARAMETERS_NONE(); RETURN_OBJ_COPY(buf_file_device()); }
-PHP_METHOD(Buffers_FileDevice, name) { ZEND_PARSE_PARAMETERS_NONE(); RETURN_STRING("file"); }
-PHP_METHOD(Buffers_FileDevice, id) { ZEND_PARSE_PARAMETERS_NONE(); RETURN_LONG(0); }
-PHP_METHOD(Buffers_FileDevice, isHostAccessible) { ZEND_PARSE_PARAMETERS_NONE(); RETURN_FALSE; }
 
 zend_object *buf_file_device(void)
 {
@@ -193,17 +193,41 @@ zend_object *buf_file_device(void)
 	return BUFG(file_device);
 }
 
-#define DEVICE_METHODS(cls) \
-	PHP_METHOD(cls, name) { \
-		buf_device *d = SELF; const char *n = buf_device_type_name(d->type); \
-		ZEND_PARSE_PARAMETERS_NONE(); \
-		if (d->type == kDLCPU) RETURN_STRING("cpu"); \
-		if (n) RETURN_NEW_STR(zend_strpprintf(0, "%s:%d", n, (int)d->id)); \
-		RETURN_NEW_STR(zend_strpprintf(0, "device%d:%d", (int)d->type, (int)d->id)); } \
-	PHP_METHOD(cls, id) { ZEND_PARSE_PARAMETERS_NONE(); RETURN_LONG(SELF->id); } \
-	PHP_METHOD(cls, isHostAccessible) { ZEND_PARSE_PARAMETERS_NONE(); RETURN_BOOL(host_accessible(SELF->type)); }
-DEVICE_METHODS(Buffers_CpuDevice)
-DEVICE_METHODS(Buffers_ForeignDevice)
+/* The facts of a device are read-only virtual properties (internal get hooks, see props.c): $name, $id, $hostAccessible.
+ * One set of hooks serves CpuDevice, FileDevice and ForeignDevice: they all carry a DLPack-style type and id. */
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(ai_dev_name, 0, 0, IS_STRING, 0)
+ZEND_END_ARG_INFO()
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(ai_dev_id, 0, 0, IS_LONG, 0)
+ZEND_END_ARG_INFO()
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(ai_dev_host, 0, 0, _IS_BOOL, 0)
+ZEND_END_ARG_INFO()
+
+static ZEND_NAMED_FUNCTION(hook_device_name)
+{
+	buf_device *d = SELF;
+
+	ZEND_PARSE_PARAMETERS_NONE();
+	RETURN_STR(buf_device_name(d->type, d->id));
+}
+static ZEND_NAMED_FUNCTION(hook_device_id) { ZEND_PARSE_PARAMETERS_NONE(); RETURN_LONG(SELF->id); }
+static ZEND_NAMED_FUNCTION(hook_device_host) { ZEND_PARSE_PARAMETERS_NONE(); RETURN_BOOL(host_accessible(SELF->type)); }
+
+static void declare_device_props(zend_class_entry *ce, zif_handler name, zif_handler id, zif_handler host)
+{
+	const buf_prop_def defs[] = {
+		{ "name", (zend_type) ZEND_TYPE_INIT_MASK(MAY_BE_STRING), name, ai_dev_name, 0 },
+		{ "id", (zend_type) ZEND_TYPE_INIT_MASK(MAY_BE_LONG), id, ai_dev_id, 0 },
+		{ "hostAccessible", (zend_type) ZEND_TYPE_INIT_MASK(MAY_BE_BOOL), host, ai_dev_host, 0 },
+	};
+
+	buf_declare_hooked_props(ce, defs, 3);
+}
+
+void buffers_implement_device(zend_class_entry *ce, zif_handler get_name, zif_handler get_id, zif_handler get_host_accessible)
+{
+	declare_device_props(ce, get_name, get_id, get_host_accessible);
+	zend_class_implements(ce, 1, buf_ce_device_if);
+}
 
 static void init_handlers(zend_object_handlers *h)
 {
@@ -217,13 +241,15 @@ void buf_device_minit(void)
 {
 	zend_class_entry ce;
 
-	INIT_CLASS_ENTRY(ce, "Buffers\\Device", class_Buffers_Device_methods);
+	INIT_CLASS_ENTRY(ce, "Buffers\\Device", NULL);
 	buf_ce_device_if = zend_register_internal_interface(&ce);
+	declare_device_props(buf_ce_device_if, NULL, NULL, NULL);
 
 	INIT_CLASS_ENTRY(ce, "Buffers\\CpuDevice", class_Buffers_CpuDevice_methods);
 	buf_ce_cpudevice = zend_register_internal_class_ex(&ce, NULL);
 	buf_ce_cpudevice->ce_flags |= ZEND_ACC_FINAL | ZEND_ACC_NO_DYNAMIC_PROPERTIES | ZEND_ACC_NOT_SERIALIZABLE;
 	buf_ce_cpudevice->create_object = cpudevice_create;
+	declare_device_props(buf_ce_cpudevice, hook_device_name, hook_device_id, hook_device_host);
 	zend_class_implements(buf_ce_cpudevice, 1, buf_ce_device_if);
 	init_handlers(&device_handlers);
 
@@ -231,12 +257,14 @@ void buf_device_minit(void)
 	buf_ce_filedevice = zend_register_internal_class_ex(&ce, NULL);
 	buf_ce_filedevice->ce_flags |= ZEND_ACC_FINAL | ZEND_ACC_NO_DYNAMIC_PROPERTIES | ZEND_ACC_NOT_SERIALIZABLE;
 	buf_ce_filedevice->create_object = filedevice_create;
+	declare_device_props(buf_ce_filedevice, hook_device_name, hook_device_id, hook_device_host);
 	zend_class_implements(buf_ce_filedevice, 1, buf_ce_device_if);
 
-	INIT_CLASS_ENTRY(ce, "Buffers\\ForeignDevice", class_Buffers_ForeignDevice_methods);
+	INIT_CLASS_ENTRY(ce, "Buffers\\ForeignDevice", NULL);
 	buf_ce_foreigndevice = zend_register_internal_class_ex(&ce, NULL);
 	buf_ce_foreigndevice->ce_flags |= ZEND_ACC_FINAL | ZEND_ACC_NO_DYNAMIC_PROPERTIES | ZEND_ACC_NOT_SERIALIZABLE;
 	buf_ce_foreigndevice->create_object = foreigndevice_create;
+	declare_device_props(buf_ce_foreigndevice, hook_device_name, hook_device_id, hook_device_host);
 	zend_class_implements(buf_ce_foreigndevice, 1, buf_ce_device_if);
 	init_handlers(&foreign_device_handlers);
 	foreign_device_handlers.get_constructor = foreign_no_constructor;

@@ -1,10 +1,10 @@
 --TEST--
-JSON: BufferView and Shape are JsonSerializable
+JSON: Tensor and Shape are JsonSerializable
 --SKIPIF--
 <?php if (!extension_loaded('buffers')) die('skip buffers extension not loaded'); ?>
 --FILE--
 <?php
-use Buffers\{Buffer, DType, BufferView, Shape, ForeignDevice};
+use Buffers\{Buffer, DType, Tensor, Shape, ForeignDevice};
 $b = new Buffer(64);
 $raw = $b->view(DType::UInt8); for ($i = 0; $i < 64; $i++) $raw[$i] = $i;
 var_dump($v = $b->view(DType::UInt8, [2, 3], [4, 1], 1) instanceof JsonSerializable);

@@ -210,12 +210,12 @@ zend_object *buf_view_import(DLManagedTensorVersioned *t)
 		}
 		extent += last;
 		if (!d->data) {
-			IMPORT_FAIL("Tensor data pointer is NULL");
+			IMPORT_FAIL("TensorInterface data pointer is NULL");
 		}
 	}
 	host = dtype_dev == kDLCPU || dtype_dev == kDLCUDAHost || dtype_dev == kDLROCMHost || dtype_dev == kDLCUDAManaged;
 	if (host && !packed && ((uintptr_t)d->data + d->byte_offset) % size) {
-		IMPORT_FAIL("Tensor data is not aligned to the element size (%d bytes)", (int)size);
+		IMPORT_FAIL("TensorInterface data is not aligned to the element size (%d bytes)", (int)size);
 	}
 	if (d->byte_offset > (uint64_t)INT64_MAX || (uint64_t)extent > (uint64_t)INT64_MAX - d->byte_offset) {
 		IMPORT_FAIL("The tensor is too large");

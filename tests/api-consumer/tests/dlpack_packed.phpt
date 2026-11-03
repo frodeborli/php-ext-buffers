@@ -4,14 +4,14 @@ DLPack through the C API: packed formats (unpadded), 0-d tensors
 <?php if (!extension_loaded('buffers_api_test')) die('skip needs the buffers_api_test extension'); ?>
 --FILE--
 <?php
-use Buffers\{Buffer, DType, BufferView};
+use Buffers\{Buffer, DType, Tensor};
 const PADDED = 4;
 echo "packed formats round trip\n";
 foreach ([[0, 2], [0, 4], [1, 2], [1, 4], [15, 6], [16, 6], [17, 4]] as [$code, $bits]) {
     $v = bat_import($code, $bits, 1, [2, 8], [8, 1]);
     $x = bat_roundtrip($v);
     $e = bat_export($x);
-    echo "$code/$bits => ", $v->dtype->name, " ", $v->buffer->byteLength(), " bytes strides ", json_encode($v->strides), " round trip ", $x->dtype->name, " ", json_encode($x->shape->toArray()), " flags ", $e['flags'], " bits ", $e['bits'], "\n";
+    echo "$code/$bits => ", $v->dtype->name, " ", $v->buffer->byteLength, " bytes strides ", json_encode($v->strides), " round trip ", $x->dtype->name, " ", json_encode($x->shape->toArray()), " flags ", $e['flags'], " bits ", $e['bits'], "\n";
 }
 echo "rejections\n";
 foreach ([[0, 4, [4], [1], PADDED], [1, 2, [4], [1], PADDED], [15, 6, [4], [1], PADDED], [0, 3, [4], [1], 0], [0, 4, [2, 3], [3, 1], 0], [1, 2, [4], [2], 0], [15, 6, [2, 3], [3, 1], 0]] as $i => [$code, $bits, $shape, $strides, $flags]) {
@@ -22,14 +22,14 @@ echo "0-d\n";
 $b = new Buffer(16);
 $s = $b->view(DType::Int32, [], null, 4);
 $i = bat_roundtrip($s);
-var_dump($i->ndim, $i->shape->toArray(), $i->strides, $i->offset, $i->dtype, $i->buffer->byteLength());
+var_dump($i->ndim, $i->shape->toArray(), $i->strides, $i->offset, $i->dtype, $i->buffer->byteLength);
 print_r(bat_export($s));
 $p = bat_import(2, 32, 1, []);
-var_dump($p->ndim, $p->dtype, $p->buffer->byteLength());
+var_dump($p->ndim, $p->dtype, $p->buffer->byteLength);
 $p2 = bat_import(0, 32, 1, [], null, 0, 1, 0, 1);   // DLPack 1.1: NULL strides, still a scalar
 var_dump($p2->ndim, $p2->dtype);
 $f4 = bat_import(17, 4, 1, []);
-var_dump($f4->ndim, $f4->dtype, $f4->buffer->byteLength());
+var_dump($f4->ndim, $f4->dtype, $f4->buffer->byteLength);
 unset($p, $p2, $f4, $i, $s, $v, $x, $e, $b);
 $c = bat_counts(); echo $c['tensors_made'] === $c['tensors_deleted'] ? "deleters ran exactly once\n" : "DELETER COUNT WRONG\n";
 echo "end\n";

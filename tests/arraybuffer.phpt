@@ -6,11 +6,11 @@ Buffer: construction, zero fill, strings, errors
 <?php
 use Buffers\{DType, Buffer};
 $b = new Buffer(10);
-var_dump($b->byteLength(), $b->isWritable(), $b instanceof Buffer, bin2hex($b->toString()));
+var_dump($b->byteLength, $b->isWritable(), $b instanceof Buffer, bin2hex($b->toString()));
 $z = new Buffer(0);
-var_dump($z->byteLength(), $z->toString());
+var_dump($z->byteLength, $z->toString());
 $s = Buffer::fromString("héllo\0x");
-var_dump($s->byteLength(), bin2hex($s->toString()));
+var_dump($s->byteLength, bin2hex($s->toString()));
 $v = $s->view(DType::UInt8);
 $v[0] = 72;
 var_dump($s->toString() === "H\xc3\xa9llo\0x");

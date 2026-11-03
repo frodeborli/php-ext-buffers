@@ -1,10 +1,10 @@
 --TEST--
-var_dump, print_r and var_export of BufferView, Shape and friends
+var_dump, print_r and var_export of Tensor, Shape and friends
 --SKIPIF--
 <?php if (!extension_loaded('buffers')) die('skip buffers extension not loaded'); ?>
 --FILE--
 <?php
-use Buffers\{Buffer, DType, BufferView, Shape};
+use Buffers\{Buffer, DType, Tensor, Shape};
 $b = new Buffer(64);
 $raw = $b->view(DType::UInt8); for ($i = 0; $i < 64; $i++) $raw[$i] = $i;
 $v = $b->view(DType::Int16, [2, 3], [4, 1], 2);
@@ -27,7 +27,7 @@ $big = (new Buffer(2000))->view(DType::UInt8, 1000);
 var_dump(count($big), is_array(array_values((array)$big)));
 ob_start(); var_dump($big); $out = ob_get_clean(); echo strlen($out) > 5000 ? "1000 shown\n" : "NOT SHOWN\n";
 var_dump((new Buffer(2000))->view(DType::UInt8, 1001));
-var_dump((new Buffer(2000))->view(DType::UInt8, [10, 100]) instanceof BufferView);
+var_dump((new Buffer(2000))->view(DType::UInt8, [10, 100]) instanceof Tensor);
 ob_start(); var_dump((new Buffer(1100))->view(DType::UInt8, [10, 100])); $o2 = ob_get_clean(); echo substr_count($o2, 'int('), " ints in the output of 1000 elements\n";
 echo "read-only, files: mapped (host memory) and storage only\n";
 $file = tempnam(sys_get_temp_dir(), 'buf'); file_put_contents($file, "\x00\x01\x02\x03");
@@ -44,7 +44,7 @@ echo "debug output leaves the view usable\n";
 var_dump($v[1][2], $v->offset);
 echo "end\n";
 --EXPECTF--
-object(Buffers\BufferView)#%d (7) {
+object(Buffers\Tensor)#%d (7) {
   ["dtype"]=>
   enum(Buffers\DType::Int16)
   ["shape"]=>
@@ -89,7 +89,7 @@ object(Buffers\BufferView)#%d (7) {
     }
   }
 }
-Buffers\BufferView Object
+Buffers\Tensor Object
 (
     [dtype] => Buffers\DType Enum:string
         (
@@ -132,7 +132,7 @@ Buffers\BufferView Object
 
 )
 
-\Buffers\BufferView::__set_state(array(
+\Buffers\Tensor::__set_state(array(
    'dtype' => 
   \Buffers\DType::Int16,
    'shape' => 
@@ -152,10 +152,17 @@ Buffers\BufferView Object
    'offset' => 2,
    'buffer' => 
   \Buffers\Buffer::__set_state(array(
+     'byteLength' => 64,
+     'device' => 
+    \Buffers\CpuDevice::__set_state(array(
+       'name' => 'cpu',
+       'id' => 0,
+       'hostAccessible' => true,
+    )),
   )),
 ))
 0-d
-object(Buffers\BufferView)#%d (7) {
+object(Buffers\Tensor)#%d (7) {
   ["dtype"]=>
   enum(Buffers\DType::UInt8)
   ["shape"]=>
@@ -174,7 +181,7 @@ object(Buffers\BufferView)#%d (7) {
   int(0)
 }
 packed
-object(Buffers\BufferView)#%d (7) {
+object(Buffers\Tensor)#%d (7) {
   ["dtype"]=>
   enum(Buffers\DType::Float4E2M1FN)
   ["shape"]=>
@@ -223,7 +230,7 @@ object(Buffers\BufferView)#%d (7) {
     }
   }
 }
-object(Buffers\BufferView)#%d (7) {
+object(Buffers\Tensor)#%d (7) {
   ["dtype"]=>
   enum(Buffers\DType::Int4)
   ["shape"]=>
@@ -259,7 +266,7 @@ object(Buffers\BufferView)#%d (7) {
   }
 }
 complex
-object(Buffers\BufferView)#%d (7) {
+object(Buffers\Tensor)#%d (7) {
   ["dtype"]=>
   enum(Buffers\DType::Complex64)
   ["shape"]=>
@@ -297,7 +304,7 @@ object(Buffers\BufferView)#%d (7) {
   }
 }
 empty
-object(Buffers\BufferView)#%d (7) {
+object(Buffers\Tensor)#%d (7) {
   ["dtype"]=>
   enum(Buffers\DType::UInt8)
   ["shape"]=>
@@ -328,7 +335,7 @@ boundary: 1000 elements are shown, 1001 are not
 int(1000)
 bool(true)
 1000 shown
-object(Buffers\BufferView)#%d (7) {
+object(Buffers\Tensor)#%d (7) {
   ["dtype"]=>
   enum(Buffers\DType::UInt8)
   ["shape"]=>
@@ -353,7 +360,7 @@ object(Buffers\BufferView)#%d (7) {
 bool(true)
 1005 ints in the output of 1000 elements
 read-only, files: mapped (host memory) and storage only
-object(Buffers\BufferView)#%d (7) {
+object(Buffers\Tensor)#%d (7) {
   ["dtype"]=>
   enum(Buffers\DType::UInt8)
   ["shape"]=>
@@ -380,7 +387,7 @@ object(Buffers\BufferView)#%d (7) {
     int(3)
   }
 }
-object(Buffers\BufferView)#%d (7) {
+object(Buffers\Tensor)#%d (7) {
   ["dtype"]=>
   enum(Buffers\DType::UInt8)
   ["shape"]=>

@@ -4,13 +4,13 @@
 <?php if (!extension_loaded('buffers')) die('skip buffers extension not loaded'); ?>
 --FILE--
 <?php
-use Buffers\{Buffer, DType, BufferView};
+use Buffers\{Buffer, DType, Tensor};
 $b = new Buffer(16);
 $raw = $b->view(DType::UInt8);
 for ($i = 0; $i < 16; $i++) $raw[$i] = $i + 1;
 
 $s = $b->view(DType::Int32, [], null, 4);
-var_dump($s->ndim, $s->shape->toArray(), $s->strides, $s->offset, $s->dtype, $s->shape->size(), $s->shape->isConcrete());
+var_dump($s->ndim, $s->shape->toArray(), $s->strides, $s->offset, $s->dtype, $s->shape->size, $s->shape->concrete);
 $s2 = $b->view(DType::Float64, [], []);
 var_dump($s2->ndim, $s2->strides);
 

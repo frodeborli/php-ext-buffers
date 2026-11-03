@@ -1,14 +1,14 @@
 --TEST--
-BufferView properties: read-only, computed when read, no storage per view
+Tensor properties: read-only, computed when read, no storage per view
 --SKIPIF--
 <?php if (!extension_loaded('buffers')) die('skip buffers extension not loaded'); ?>
 --FILE--
 <?php
-use Buffers\{Buffer, DType, BufferView, Tensor, Shape};
+use Buffers\{Buffer, DType, Tensor, TensorInterface, Shape};
 $b = new Buffer(96);
 $v = $b->view(DType::Int16, [3, 4], [8, 2], 6);
 var_dump($v->dtype, $v->shape instanceof Shape, $v->shape->toArray(), $v->ndim, $v->strides, $v->offset, $v->buffer === $b);
-var_dump($v instanceof Tensor, $v instanceof BufferView);
+var_dump($v instanceof TensorInterface, $v instanceof Tensor);
 
 echo "sub-views\n";
 $r = $v[1];
@@ -30,20 +30,20 @@ try { $v->nope = 1; } catch (Error $e) { echo get_class($e), ': ', $e->getMessag
 var_dump(@$v->nope);
 
 echo "isset, property_exists, enumeration\n";
-var_dump(isset($v->ndim), isset($v->nope), property_exists($v, 'shape'), property_exists(BufferView::class, 'offset'));
+var_dump(isset($v->ndim), isset($v->nope), property_exists($v, 'shape'), property_exists(Tensor::class, 'offset'));
 var_dump(array_keys(get_object_vars($v)));
 echo json_encode($v), "\n";   // JsonSerializable: the data (see json.phpt)
 var_dump(array_keys((array)$v) === array_keys(get_object_vars($v)), array_key_exists('value', get_object_vars($v)));
 
 echo "reflection\n";
 foreach (['dtype', 'shape', 'ndim', 'strides', 'offset', 'buffer', 'value'] as $prop) {
-    $rp = new ReflectionProperty(BufferView::class, $prop);
+    $rp = new ReflectionProperty(Tensor::class, $prop);
     printf("%-8s %s virtual=%d public=%d hooks=%s\n", $prop, $rp->getType(), $rp->isVirtual(), $rp->isPublic(), json_encode(array_keys(array_filter(['get' => $rp->getHook(PropertyHookType::Get), 'set' => $rp->getHook(PropertyHookType::Set)]))));
 }
-foreach ((new ReflectionClass(Tensor::class))->getProperties() as $rp) {
-    printf("Tensor::$%s %s abstract=%d\n", $rp->getName(), $rp->getType(), $rp->isAbstract());
+foreach ((new ReflectionClass(TensorInterface::class))->getProperties() as $rp) {
+    printf("TensorInterface::$%s %s abstract=%d\n", $rp->getName(), $rp->getType(), $rp->isAbstract());
 }
-var_dump((new ReflectionClass(Tensor::class))->isInterface(), (new ReflectionClass(BufferView::class))->isAbstract());
+var_dump((new ReflectionClass(TensorInterface::class))->isInterface(), (new ReflectionClass(Tensor::class))->isAbstract());
 
 echo "creating sub-views allocates nothing\n";
 for ($i = 0; $i < 100; $i++) { $s = $v[$i % 3]; $t = $v[1][2]; }   // warm up the pool
@@ -94,16 +94,16 @@ bool(true)
 bool(false)
 bool(true)
 read-only
-Error: Property Buffers\BufferView::$dtype is read-only
-Error: Property Buffers\BufferView::$shape is read-only
-Error: Property Buffers\BufferView::$ndim is read-only
-Error: Property Buffers\BufferView::$strides is read-only
-Error: Property Buffers\BufferView::$offset is read-only
-Error: Property Buffers\BufferView::$buffer is read-only
-Error: Cannot unset hooked property Buffers\BufferView::$ndim
+Error: Property Buffers\Tensor::$dtype is read-only
+Error: Property Buffers\Tensor::$shape is read-only
+Error: Property Buffers\Tensor::$ndim is read-only
+Error: Property Buffers\Tensor::$strides is read-only
+Error: Property Buffers\Tensor::$offset is read-only
+Error: Property Buffers\Tensor::$buffer is read-only
+Error: Cannot unset hooked property Buffers\Tensor::$ndim
 Error: Cannot modify a Shape: it is immutable
-Error: Indirect modification of Buffers\BufferView::$strides is not allowed
-Error: Cannot create dynamic property Buffers\BufferView::$nope
+Error: Indirect modification of Buffers\Tensor::$strides is not allowed
+Error: Cannot create dynamic property Buffers\Tensor::$nope
 NULL
 isset, property_exists, enumeration
 bool(true)
@@ -135,9 +135,9 @@ strides  array virtual=1 public=1 hooks=["get"]
 offset   int virtual=1 public=1 hooks=["get"]
 buffer   Buffers\Buffer virtual=1 public=1 hooks=["get"]
 value    mixed virtual=1 public=1 hooks=["get","set"]
-Tensor::$dtype ?Buffers\DType abstract=1
-Tensor::$shape Buffers\Shape abstract=1
-Tensor::$ndim int abstract=1
+TensorInterface::$dtype ?Buffers\DType abstract=1
+TensorInterface::$shape Buffers\Shape abstract=1
+TensorInterface::$ndim int abstract=1
 bool(true)
 bool(false)
 creating sub-views allocates nothing

@@ -4,7 +4,7 @@
 <?php if (!extension_loaded('buffers')) die('skip buffers extension not loaded'); if (PHP_INT_SIZE !== 4) die('skip 32-bit PHP only'); ?>
 --FILE--
 <?php
-use Buffers\{Buffer, DType, BufferView};
+use Buffers\{Buffer, DType, Tensor};
 $b = new Buffer(64);
 foreach (DType::cases() as $t) {
     try { $v = $b->view($t, [1]); $v[0] = $t === DType::Bool ? true : 1; echo str_pad($t->name, 18), "ok ", var_export($v[0], true), "\n"; }

@@ -1,4 +1,4 @@
-/* BufferView: an n-dimensional window onto a buffer.
+/* Tensor: an n-dimensional window onto a buffer.
  *
  * Element access is a chain of single integer offsets, $v[$x][$y][$z]. All but the last offset
  * hand out sub-views, which come from a small pool and cost no allocation in steady state.
@@ -11,7 +11,7 @@
 #include "zend_interfaces.h"
 #include "buffers_arginfo.h"
 
-zend_class_entry *buf_ce_view, *buf_ce_tensor;
+zend_class_entry *buf_ce_tensor, *buf_ce_tensor_if;
 extern double buf_tab[][256];
 
 typedef zval *(*read_fn)(zend_object *, zval *, int, zval *);
@@ -178,7 +178,7 @@ static zend_result buf_view_do_operation(uint8_t opcode, zval *result, zval *op1
 
 static int64_t view_elements(const buf_view *v);
 
-/* ---- extent and copies (BufferView::to()) ---------------------------------------------------------- */
+/* ---- extent and copies (Tensor::to()) ---------------------------------------------------------- */
 
 void buf_view_extent(const buf_view *v, uint64_t *first, uint64_t *len)
 {
@@ -284,8 +284,8 @@ static zend_always_inline zend_object *view_alloc(zend_object *buf, int dt, int 
 		v = buf_view_from(o);
 		GC_DEL_FLAGS(o, IS_OBJ_DESTRUCTOR_CALLED); /* refcount is 1, handed to the caller */
 	} else {
-		v = zend_object_alloc(sizeof(buf_view), buf_ce_view);
-		zend_object_std_init(&v->std, buf_ce_view);
+		v = zend_object_alloc(sizeof(buf_view), buf_ce_tensor);
+		zend_object_std_init(&v->std, buf_ce_tensor);
 		o = &v->std;
 	}
 	GC_ADDREF(buf);
@@ -380,9 +380,9 @@ static zend_never_inline zval *buf_bad_offset(zval *off, int type, zval *rv)
 		return rv;
 	}
 	if (!off) {
-		zend_throw_error(NULL, "Cannot append to a BufferView");
+		zend_throw_error(NULL, "Cannot append to a Tensor");
 	} else {
-		zend_type_error("BufferView offset must be of type int, %s given", zend_zval_type_name(off));
+		zend_type_error("Tensor offset must be of type int, %s given", zend_zval_type_name(off));
 	}
 	return NULL;
 }
@@ -400,21 +400,21 @@ static zend_never_inline zval *buf_out_of_range(buf_view *v, zend_long i, int ty
 static zend_never_inline void buf_bad_write(zval *off, zval *val, buf_view *v)
 {
 	if (!off) {
-		zend_throw_error(NULL, "Cannot append to a BufferView");
+		zend_throw_error(NULL, "Cannot append to a Tensor");
 	} else if (Z_TYPE_P(off) != IS_LONG) {
-		zend_type_error("BufferView offset must be of type int, %s given", zend_zval_type_name(off));
+		zend_type_error("Tensor offset must be of type int, %s given", zend_zval_type_name(off));
 	} else if (v->ndim > 1) {
 		zend_throw_error(NULL, "Cannot assign to a sub-view; index every axis down to one element");
 	} else if (Z_TYPE_P(off) == IS_LONG && (zend_ulong)Z_LVAL_P(off) >= (zend_ulong)v->shape[0]) {
 		zend_value_error("Index " ZEND_LONG_FMT " is out of range for an axis of length " ZEND_LONG_FMT, Z_LVAL_P(off), (zend_long)v->shape[0]);
 	} else {
-		zend_type_error("Cannot write %s to a BufferView of dtype %s", zend_zval_type_name(val), buf_dtypes[v->dt].name);
+		zend_type_error("Cannot write %s to a Tensor of dtype %s", zend_zval_type_name(val), buf_dtypes[v->dt].name);
 	}
 }
 
 static void buf_write_ro(zend_object *o, zval *off, zval *val)
 {
-	zend_throw_error(NULL, "Cannot write to a read-only BufferView");
+	zend_throw_error(NULL, "Cannot write to a read-only Tensor");
 }
 
 /* ---- per-dtype handlers ----------------------------------------------------------- */
@@ -575,7 +575,7 @@ static int view_has_dimension(zend_object *o, zval *off, int check_empty)
 
 static void view_unset_dimension(zend_object *o, zval *off)
 {
-	zend_throw_error(NULL, "Cannot unset an element of a BufferView");
+	zend_throw_error(NULL, "Cannot unset an element of a Tensor");
 }
 
 static zend_result view_count_elements(zend_object *o, zend_long *count)
@@ -586,7 +586,7 @@ static zend_result view_count_elements(zend_object *o, zend_long *count)
 
 static zend_function *view_no_constructor(zend_object *o)
 {
-	zend_throw_error(NULL, "BufferView cannot be instantiated; use Buffer::view()");
+	zend_throw_error(NULL, "Tensor cannot be instantiated; use Buffer::view()");
 	return NULL;
 }
 
@@ -666,7 +666,7 @@ static zend_object_iterator *view_get_iterator(zend_class_entry *ce, zval *objec
 
 #define VIEW buf_view_from(Z_OBJ_P(ZEND_THIS))
 
-PHP_METHOD(Buffers_BufferView, count)
+PHP_METHOD(Buffers_Tensor, count)
 {
 	buf_view *v = VIEW;
 
@@ -678,7 +678,7 @@ PHP_METHOD(Buffers_BufferView, count)
 	RETURN_LONG(v->shape[0]);
 }
 
-PHP_METHOD(Buffers_BufferView, offsetExists)
+PHP_METHOD(Buffers_Tensor, offsetExists)
 {
 	zval *off;
 	zend_object *o = Z_OBJ_P(ZEND_THIS);
@@ -687,7 +687,7 @@ PHP_METHOD(Buffers_BufferView, offsetExists)
 	RETURN_BOOL(o->handlers->has_dimension(o, off, 0));
 }
 
-PHP_METHOD(Buffers_BufferView, offsetGet)
+PHP_METHOD(Buffers_Tensor, offsetGet)
 {
 	zval *off;
 	zend_object *o = Z_OBJ_P(ZEND_THIS);
@@ -696,7 +696,7 @@ PHP_METHOD(Buffers_BufferView, offsetGet)
 	if (!o->handlers->read_dimension(o, off, BP_VAR_R, return_value)) RETURN_THROWS();
 }
 
-PHP_METHOD(Buffers_BufferView, offsetSet)
+PHP_METHOD(Buffers_Tensor, offsetSet)
 {
 	zval *off, *val;
 	zend_object *o = Z_OBJ_P(ZEND_THIS);
@@ -705,7 +705,7 @@ PHP_METHOD(Buffers_BufferView, offsetSet)
 	o->handlers->write_dimension(o, Z_TYPE_P(off) == IS_NULL ? NULL : off, val);
 }
 
-PHP_METHOD(Buffers_BufferView, offsetUnset)
+PHP_METHOD(Buffers_Tensor, offsetUnset)
 {
 	zval *off;
 	zend_object *o = Z_OBJ_P(ZEND_THIS);
@@ -714,7 +714,7 @@ PHP_METHOD(Buffers_BufferView, offsetUnset)
 	o->handlers->unset_dimension(o, off);
 }
 
-PHP_METHOD(Buffers_BufferView, getIterator)
+PHP_METHOD(Buffers_Tensor, getIterator)
 {
 	ZEND_PARSE_PARAMETERS_NONE();
 	zend_create_internal_iterator_zval(return_value, ZEND_THIS);
@@ -941,7 +941,7 @@ void buf_buffer_view_impl(zend_object *bufobj, INTERNAL_FUNCTION_PARAMETERS)
 	RETURN_OBJ(v);
 }
 
-/* `new BufferView` must produce a valid object before get_constructor refuses it */
+/* `new Tensor` must produce a valid object before get_constructor refuses it */
 static zend_object *view_create_blank(zend_class_entry *ce)
 {
 	buf_view *v = zend_object_alloc(sizeof(buf_view), ce);
@@ -1076,7 +1076,7 @@ static HashTable *view_get_debug_info(zend_object *o, int *is_temp)
 	return view_props_array(o, true);
 }
 
-PHP_METHOD(Buffers_BufferView, jsonSerialize)
+PHP_METHOD(Buffers_Tensor, jsonSerialize)
 {
 	buf_view *v = VIEW;
 	buf_buffer *b = buf_buffer_from(v->buf);
@@ -1180,7 +1180,7 @@ static ZEND_NAMED_FUNCTION(hook_value_set)
 		RETURN_THROWS();
 	}
 	if (!v->writable) {
-		zend_throw_error(NULL, "Cannot write to a read-only BufferView");
+		zend_throw_error(NULL, "Cannot write to a read-only Tensor");
 		RETURN_THROWS();
 	}
 	if (v->slow && !view_slow_check(v)) {
@@ -1188,7 +1188,7 @@ static ZEND_NAMED_FUNCTION(hook_value_set)
 	}
 	ZVAL_DEREF(val);
 	if (!fns[v->dt].poke(v, val)) {
-		zend_type_error("Cannot write %s to a BufferView of dtype %s", zend_zval_type_name(val), buf_dtypes[v->dt].name);
+		zend_type_error("Cannot write %s to a Tensor of dtype %s", zend_zval_type_name(val), buf_dtypes[v->dt].name);
 		RETURN_THROWS();
 	}
 }
@@ -1207,7 +1207,7 @@ static zend_result tensor_implemented(zend_class_entry *iface, zend_class_entry 
 	return SUCCESS;
 }
 
-void buffers_implement_tensor(zend_class_entry *ce, zif_handler get_dtype,
+void buffers_implement_tensor_interface(zend_class_entry *ce, zif_handler get_dtype,
 	zif_handler get_shape, zif_handler get_ndim)
 {
 	const buf_prop_def defs[] = {
@@ -1217,7 +1217,7 @@ void buffers_implement_tensor(zend_class_entry *ce, zif_handler get_dtype,
 	};
 
 	buf_declare_hooked_props(ce, defs, 3);
-	zend_class_implements(ce, 1, buf_ce_tensor);
+	zend_class_implements(ce, 1, buf_ce_tensor_if);
 }
 
 /* ---- registration --------------------------------------------------------------------------- */
@@ -1254,21 +1254,21 @@ void buf_view_minit(void)
 		{ "value", (zend_type) ZEND_TYPE_INIT_MASK(MAY_BE_ANY), hook_value_get, ai_get_mixed, 0, hook_value_set, ai_set_value },
 	};
 
-	INIT_CLASS_ENTRY(ce, "Buffers\\Tensor", NULL);
-	buf_ce_tensor = zend_register_internal_interface(&ce);
-	buf_declare_hooked_props(buf_ce_tensor, tensor_props, 3);
-	buf_ce_tensor->interface_gets_implemented = tensor_implemented;
+	INIT_CLASS_ENTRY(ce, "Buffers\\TensorInterface", NULL);
+	buf_ce_tensor_if = zend_register_internal_interface(&ce);
+	buf_declare_hooked_props(buf_ce_tensor_if, tensor_props, 3);
+	buf_ce_tensor_if->interface_gets_implemented = tensor_implemented;
 
-	INIT_CLASS_ENTRY(ce, "Buffers\\BufferView", class_Buffers_BufferView_methods);
-	buf_ce_view = zend_register_internal_class_ex(&ce, NULL);
-	buf_ce_view->ce_flags |= ZEND_ACC_FINAL | ZEND_ACC_NO_DYNAMIC_PROPERTIES | ZEND_ACC_NOT_SERIALIZABLE;
-	buf_ce_view->create_object = view_create_blank; /* real instances come from buf_view_new() */
-	buf_declare_hooked_props(buf_ce_view, view_props, 7); /* before the interface that requires them */
-	zend_class_implements(buf_ce_view, 4, buf_ce_tensor, zend_ce_countable, zend_ce_arrayaccess, zend_ce_aggregate);
+	INIT_CLASS_ENTRY(ce, "Buffers\\Tensor", class_Buffers_Tensor_methods);
+	buf_ce_tensor = zend_register_internal_class_ex(&ce, NULL);
+	buf_ce_tensor->ce_flags |= ZEND_ACC_FINAL | ZEND_ACC_NO_DYNAMIC_PROPERTIES | ZEND_ACC_NOT_SERIALIZABLE;
+	buf_ce_tensor->create_object = view_create_blank; /* real instances come from buf_view_new() */
+	buf_declare_hooked_props(buf_ce_tensor, view_props, 7); /* before the interface that requires them */
+	zend_class_implements(buf_ce_tensor, 4, buf_ce_tensor_if, zend_ce_countable, zend_ce_arrayaccess, zend_ce_aggregate);
 	if (buf_json_serializable()) {
-		zend_class_implements(buf_ce_view, 1, buf_json_serializable());
+		zend_class_implements(buf_ce_tensor, 1, buf_json_serializable());
 	}
-	buf_ce_view->get_iterator = view_get_iterator;
+	buf_ce_tensor->get_iterator = view_get_iterator;
 
 	for (int dt = 0; dt < BUF_NTYPES; dt++) {
 		for (int contig = 0; contig < 2; contig++) {

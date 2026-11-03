@@ -70,23 +70,28 @@ BUFFERS_API int buffers_dtype_from_dlpack(int code, int bits);
 /* ---- classes --------------------------------------------------------------------------- */
 
 enum {
-	BUFFERS_CE_DTYPE, BUFFERS_CE_BUFFER, BUFFERS_CE_VIEW, BUFFERS_CE_TENSOR, BUFFERS_CE_SHAPE,
+	BUFFERS_CE_DTYPE, BUFFERS_CE_BUFFER, BUFFERS_CE_TENSOR, BUFFERS_CE_TENSOR_INTERFACE, BUFFERS_CE_SHAPE,
 	BUFFERS_CE_DEVICE, BUFFERS_CE_CPU_DEVICE, BUFFERS_CE_FILE_DEVICE
 };
-/* The class entries, for extensions that implement Device or Tensor (usable from MINIT on). NULL if which is invalid. */
+/* The class entries, for extensions that implement Device or TensorInterface (usable from MINIT on). NULL if which is invalid. */
 BUFFERS_API zend_class_entry *buffers_get_class(int which);
 
-/* Makes an internal class implement Buffers\Tensor. The interface's properties are virtual and read-only
+/* Makes an internal class implement Buffers\TensorInterface. The interface's properties are virtual and read-only
  * (`$dtype` ?DType, `$shape` Shape, `$ndim` int); the class declares them with these three get hooks, which
  * are internal functions called with the object as $this (ZEND_THIS) and returning the value, so the
  * object stores nothing for them. Call it from MINIT, once per class, before the class is used. Userland
- * classes cannot implement Tensor. */
-BUFFERS_API void buffers_implement_tensor(zend_class_entry *ce,
+ * classes cannot implement TensorInterface. */
+BUFFERS_API void buffers_implement_tensor_interface(zend_class_entry *ce,
 	zif_handler get_dtype,
 	zif_handler get_shape,
 	zif_handler get_ndim);
 
 /* ---- devices --------------------------------------------------------------------------- */
+
+/* Makes an internal class implement Buffers\Device. The interface's properties are virtual and read-only
+ * (`$name` string, `$id` int, `$hostAccessible` bool); the class declares them with these three get hooks: internal
+ * functions called with the device object as $this (ZEND_THIS) that return the value. Call it from MINIT, once per class. */
+BUFFERS_API void buffers_implement_device(zend_class_entry *ce, zif_handler get_name, zif_handler get_id, zif_handler get_host_accessible);
 
 /* The CpuDevice and FileDevice singletons of this request (borrowed: not owned by the caller) */
 BUFFERS_API zend_object *buffers_cpu_device(void);
@@ -156,35 +161,35 @@ typedef struct {
 	int64_t byte_offset;
 	zend_object *buffer;                 /* borrowed */
 	bool writable;
-} buffers_view_info;
+} buffers_tensor_info;
 
-BUFFERS_API bool buffers_is_view(const zend_object *o);
+BUFFERS_API bool buffers_is_tensor(const zend_object *o);
 /* Does not wait for readiness: call buffers_buffer_ensure_ready(info.buffer) before reading the data. */
-BUFFERS_API zend_result buffers_view_get_info(zend_object *view, buffers_view_info *out);
+BUFFERS_API zend_result buffers_tensor_get_info(zend_object *view, buffers_tensor_info *out);
 
-/* A BufferView over `buffer`, validated exactly like Buffer::view(): `strides` in elements
+/* A Tensor over `buffer`, validated exactly like Buffer::view(): `strides` in elements
  * (NULL = C-contiguous), `byte_offset` in bytes, ndim 0 gives a 0-d view. Returns a new reference. */
-BUFFERS_API zend_object *buffers_view_create(zend_object *buffer, int dtype, int ndim, const int64_t *shape,
+BUFFERS_API zend_object *buffers_tensor_create(zend_object *buffer, int dtype, int ndim, const int64_t *shape,
 	const int64_t *strides, int64_t byte_offset);
 
 /* ---- shapes ---------------------------------------------------------------------------- */
 
-/* A Shape from `n` zvals, each an int >= 0 or a 0-d Tensor object. Returns a new reference. */
+/* A Shape from `n` zvals, each an int >= 0 or a 0-d TensorInterface object. Returns a new reference. */
 BUFFERS_API zend_object *buffers_shape_create(uint32_t n, const zval *dims);
 /* The dimensions of a Shape (borrowed) */
 BUFFERS_API const zval *buffers_shape_dims(zend_object *shape, uint32_t *n);
 
 /* ---- transfers ------------------------------------------------------------------------- */
 
-/* BufferView::to($device) returns the view itself if its buffer is on that device; otherwise a C-contiguous copy in a new
+/* Tensor::to($device) returns the view itself if its buffer is on that device; otherwise a C-contiguous copy in a new
  * Buffer on the device. The core can copy host-accessible buffers to CpuDevice and read unmapped file buffers; for any other
  * transfer an extension registers a function for its Device class (and its subclasses). It is called with the view and
  * the target device when either the target or the source device is an instance of that class, and returns a new reference to the
- * resulting BufferView, or NULL after throwing. Register from MINIT; one per class; FAILURE if the table is full or the class has one. */
+ * resulting Tensor, or NULL after throwing. Register from MINIT; one per class; FAILURE if the table is full or the class has one. */
 typedef zend_object *(*buffers_transfer_fn)(zend_object *view, zend_object *device);
 BUFFERS_API zend_result buffers_register_transfer(zend_class_entry *device_ce, buffers_transfer_fn fn);
-/* the same as BufferView::to(); a new reference, or NULL after throwing */
-BUFFERS_API zend_object *buffers_view_to(zend_object *view, zend_object *device);
+/* the same as Tensor::to(); a new reference, or NULL after throwing */
+BUFFERS_API zend_object *buffers_tensor_to(zend_object *view, zend_object *device);
 
 /* ---- DLPack ---------------------------------------------------------------------------- */
 
@@ -192,13 +197,13 @@ BUFFERS_API zend_object *buffers_view_to(zend_object *view, zend_object *device)
  * Waits for readiness first. The view's buffer is held until the deleter runs. */
 BUFFERS_API zend_result buffers_dlpack_export(zend_object *view, DLManagedTensorVersioned **out);
 /* Imports a tensor of any device. On success the tensor is owned by the returned view's Buffer (its
- * deleter runs when that buffer is freed) and a new BufferView reference is returned; on failure an
+ * deleter runs when that buffer is freed) and a new Tensor reference is returned; on failure an
  * exception is thrown, NULL is returned and the caller still owns the tensor. */
 BUFFERS_API zend_object *buffers_dlpack_import(DLManagedTensorVersioned *tensor);
 
 /* ---- operators ------------------------------------------------------------------------- */
 
-/* Called for an arithmetic or bitwise operator when either operand is a BufferView: opcode is one of
+/* Called for an arithmetic or bitwise operator when either operand is a Tensor: opcode is one of
  * ZEND_ADD, ZEND_SUB, ZEND_MUL, ZEND_DIV, ZEND_MOD, ZEND_POW, ZEND_SL, ZEND_SR, ZEND_BW_OR, ZEND_BW_AND,
  * ZEND_BW_XOR, ZEND_BW_NOT (op2 is then unused). Like zend_object_handlers.do_operation: write the
  * result to `result` and return SUCCESS, or return FAILURE (without an exception) to leave the

@@ -4,7 +4,7 @@ DLPack import of foreign tensors; the deleter runs exactly once
 <?php if (!extension_loaded('buffers_api_test')) die('skip needs the buffers_api_test extension'); if (PHP_INT_SIZE !== 8) die('skip 64-bit PHP only: imports Int64, UInt64 and UInt32 tensors (tests/bits32.phpt covers 32-bit)'); ?>
 --FILE--
 <?php
-use Buffers\{DType, BufferView, Buffer, Tensor};
+use Buffers\{DType, Tensor, Buffer, TensorInterface};
 function counts() { $c = bat_counts(); return "{$c['tensors_made']}/{$c['tensors_deleted']}"; }
 const INT = 0, UINT = 1, FLOAT = 2, BFLOAT = 4, COMPLEX = 5, BOOL = 6, BCOMPLEX = 18;
 const READ_ONLY = 1, PADDED = 4;
@@ -12,13 +12,13 @@ const READ_ONLY = 1, PADDED = 4;
 echo "contiguous uint8 2x3: "; 
 $v = bat_import(UINT, 8, 1, [2, 3], [3, 1]);
 var_dump($v->dtype, $v->shape->toArray(), $v->strides, $v->offset, $v[1][2], $v->buffer instanceof Buffer, $v->buffer instanceof Buffer);
-var_dump($v->buffer->isWritable(), $v->buffer->byteLength());
+var_dump($v->buffer->isWritable(), $v->buffer->byteLength);
 $v[1][2] = 77; var_dump($v[1][2]);
 echo counts(), "\n"; unset($v); echo counts(), "\n";
 
 echo "byte offset and strides\n";
 $v = bat_import(INT, 16, 1, [2, 2], [1, 2], 0, 1, 2);
-var_dump($v->offset, $v->strides, dechex($v[0][0]), dechex($v[0][1]), dechex($v[1][0]), $v->buffer->byteLength());
+var_dump($v->offset, $v->strides, dechex($v[0][0]), dechex($v[0][1]), dechex($v[1][0]), $v->buffer->byteLength);
 unset($v);
 
 echo "dtype mapping\n";
@@ -29,7 +29,7 @@ foreach ([[INT,8],[INT,16],[INT,32],[INT,64],[UINT,8],[UINT,64],[FLOAT,16],[BFLO
 }
 foreach ([[15,6],[16,6],[17,4]] as [$code, $bits]) {
     $v = bat_import($code, $bits, 1, [8], [1]);
-    echo "$code/$bits packed => ", $v->dtype->name, " ", $v->buffer->byteLength(), " bytes, strides ", json_encode($v->strides), "\n";
+    echo "$code/$bits packed => ", $v->dtype->name, " ", $v->buffer->byteLength, " bytes, strides ", json_encode($v->strides), "\n";
 }
 unset($v);
 
@@ -45,7 +45,7 @@ unset($v, $s, $m);
 
 echo "empty tensor\n";
 $v = bat_import(FLOAT, 32, 1, [0, 3], [3, 1]);
-var_dump($v->shape->toArray(), count($v), $v->buffer->byteLength());
+var_dump($v->shape->toArray(), count($v), $v->buffer->byteLength);
 unset($v);
 
 echo "legacy NULL strides (DLPack < 1.2) mean compact row-major\n";
@@ -161,9 +161,9 @@ dtype mapping
 read-only
 bool(false)
 int(3)
-Cannot write to a read-only BufferView
-Cannot write to a read-only BufferView
-Cannot write to a read-only BufferView
+Cannot write to a read-only Tensor
+Cannot write to a read-only Tensor
+Cannot write to a read-only Tensor
 empty tensor
 array(2) {
   [0]=>
@@ -198,8 +198,8 @@ NULL strides 1.3   ValueError: Tensors without strides are illegal since DLPack 
 negative dim       ValueError: Negative dimension in shape
 zero stride        ValueError: Zero and negative strides are not supported
 negative stride    ValueError: Zero and negative strides are not supported
-misaligned offset  ValueError: Tensor data is not aligned to the element size (2 bytes)
-misaligned f64     ValueError: Tensor data is not aligned to the element size (8 bytes)
+misaligned offset  ValueError: TensorInterface data is not aligned to the element size (2 bytes)
+misaligned f64     ValueError: TensorInterface data is not aligned to the element size (8 bytes)
 major version 2    ValueError: Unsupported DLPack major version 2 (expected 1)
 major version 0    ValueError: Unsupported DLPack major version 0 (expected 1)
 an imported tensor is released when its view is

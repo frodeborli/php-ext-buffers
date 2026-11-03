@@ -56,16 +56,18 @@ enum DType: string
 
 /**
  * Where a buffer's memory lives, identified by name and id. Implemented by CpuDevice, FileDevice and by the
- * devices of tensors imported through the C API's DLPack functions; other extensions implement it from C.
+ * devices of tensors imported through the C API's DLPack functions; other extensions implement it from C
+ * (buffers_implement_device()). The facts are read-only properties (declared by the extension at startup: stubs cannot
+ * express them):
+ *
+ * @property-read string $name A human readable name: "cpu", "file", "cuda:0".
+ * @property-read int $id The device number: 0 for the CPU and for files.
+ * @property-read bool $hostAccessible Whether PHP can read and write the memory of the device in general: true only
+ *     for memory the CPU can address. Buffer::isHostAccessible() is authoritative for a particular buffer (a mapped
+ *     file is host accessible, its device is not).
  */
 interface Device
 {
-    /** A human readable name such as "cpu" or "cuda:0". */
-    public function name(): string;
-    /** The device number: 0 for the CPU and for files. */
-    public function id(): int;
-    /** Whether element access from PHP is possible: true only for memory the CPU can address. */
-    public function isHostAccessible(): bool;
 }
 
 /** The host CPU. */
@@ -73,9 +75,6 @@ final class CpuDevice implements Device
 {
     private function __construct() {}
     public static function get(): CpuDevice {}
-    public function name(): string {}
-    public function id(): int {}
-    public function isHostAccessible(): bool {}
 }
 
 /** Files: the device of Buffer::fromFile() buffers. Storage; its buffers are host accessible only when mapped. */
@@ -83,9 +82,6 @@ final class FileDevice implements Device
 {
     private function __construct() {}
     public static function get(): FileDevice {}
-    public function name(): string {}
-    public function id(): int {}
-    public function isHostAccessible(): bool {}
 }
 
 /**
@@ -95,32 +91,27 @@ final class FileDevice implements Device
  */
 final class ForeignDevice implements Device
 {
-    public function name(): string {}
-    public function id(): int {}
-    public function isHostAccessible(): bool {}
 }
 
 /**
- * The shape of a tensor: a list of dimensions, each an int >= 0 or a 0-d Tensor (a symbolic
+ * The shape of a tensor: a list of dimensions, each an int >= 0 or a 0-d TensorInterface (a symbolic
  * dimension, for extensions that build deferred computations). Immutable. Negative indices count from
- * the end. The shape of a BufferView is always concrete.
+ * the end. The shape of a Tensor is always concrete.
  *
- * @implements \ArrayAccess<int, int|Tensor>
- * @implements \IteratorAggregate<int, int|Tensor>
+ * @property-read bool $concrete True if every dimension is an int.
+ * @property-read int|TensorInterface $size The number of elements: the product of the dimensions (1 for the empty
+ *     shape). Reading it throws a ValueError if the product exceeds PHP_INT_MAX and an Error for a shape that is not
+ *     concrete: computing a symbolic product needs an extension that builds deferred computations, and none is loaded
+ *     in this version.
+ *
+ * @implements \ArrayAccess<int, int|TensorInterface>
+ * @implements \IteratorAggregate<int, int|TensorInterface>
  */
 final class Shape implements \ArrayAccess, \Countable, \IteratorAggregate, \JsonSerializable
 {
     /** $dims is a list of non-negative ints and 0-d Tensors. */
     public function __construct(array $dims) {}
-    /** True if every dimension is an int. */
-    public function isConcrete(): bool {}
-    /**
-     * The number of elements: the product of the dimensions (1 for the empty shape). Throws a ValueError
-     * if it exceeds PHP_INT_MAX and an Error for a shape that is not concrete: computing a symbolic
-     * product needs an extension that builds deferred computations, and none is loaded in this version.
-     */
-    public function size(): int|Tensor {}
-    /** @return list<int|Tensor> */
+    /** @return list<int|TensorInterface> */
     public function toArray(): array {}
     public function count(): int {}
     public function offsetExists(mixed $offset): bool {}
@@ -135,13 +126,13 @@ final class Shape implements \ArrayAccess, \Countable, \IteratorAggregate, \Json
 }
 
 /**
- * Anything with a dtype and a shape. Implemented by BufferView, and by classes of other extensions
+ * Anything with a dtype and a shape. Implemented by Tensor, and by classes of other extensions
  * (for example a deferred tensor). Only internal classes can implement it: the interface cannot be
  * implemented in PHP code. The properties are read-only and computed when they are read.
  *
  * (The properties are declared by the extension at startup: stubs cannot express them.)
  */
-interface Tensor
+interface TensorInterface
 {
 }
 
@@ -150,6 +141,9 @@ interface Tensor
  * deleter, a PHP object that is kept alive, or a file mapping) and optionally a readiness callback. Views are made
  * over it. Buffers come from the constructor, fromString(), fromFile() and other extensions through the
  * C API (foreign memory, memory owned by a PHP object, DLPack import).
+ *
+ * @property-read int $byteLength
+ * @property-read Device $device
  */
 final class Buffer
 {
@@ -161,13 +155,11 @@ final class Buffer
      * With $map true the range is memory-mapped: the buffer is host accessible and pages load on first touch (truncating
      * the file from another process while it is mapped crashes the process with SIGBUS on Linux and macOS). With $map
      * false, or when the range cannot be mapped (larger than the address space of 32-bit PHP, for example), the buffer
-     * is storage only: isHostAccessible() is false and BufferView::to(CpuDevice::get()) reads it. The range is checked
+     * is storage only: isHostAccessible() is false and Tensor::to(CpuDevice::get()) reads it. The range is checked
      * against the file size when the file is opened.
      */
     public static function fromFile(string $path, int $offset = 0, ?int $length = null, bool $map = true): Buffer {}
-    public function byteLength(): int {}
     public function isWritable(): bool {}
-    public function device(): Device {}
     /** Whether the bytes can be read and written from PHP: authoritative for this buffer (a mapped file is, its device is not). */
     public function isHostAccessible(): bool {}
     /**
@@ -175,7 +167,7 @@ final class Buffer
      * dimensions ([] makes a 0-d view of one element). $strides are in elements, each at least 1 (null is
      * C-contiguous). $offset is in bytes. Packed sub-byte dtypes have extra rules, see the README.
      */
-    public function view(DType $type, int|array|null $shape = null, ?array $strides = null, int $offset = 0): BufferView {}
+    public function view(DType $type, int|array|null $shape = null, ?array $strides = null, int $offset = 0): Tensor {}
     /** A copy of the bytes. Throws Error unless the buffer is host accessible. */
     public function toString(): string {}
 }
@@ -196,7 +188,7 @@ final class Buffer
  * @implements \ArrayAccess<int, mixed>
  * @implements \IteratorAggregate<int, mixed>
  */
-final class BufferView implements Tensor, \Countable, \ArrayAccess, \IteratorAggregate, \JsonSerializable
+final class Tensor implements TensorInterface, \Countable, \ArrayAccess, \IteratorAggregate, \JsonSerializable
 {
     /** The length of the first axis. A 0-d view has no axes: Error. */
     public function count(): int {}
@@ -210,7 +202,7 @@ final class BufferView implements Tensor, \Countable, \ArrayAccess, \IteratorAgg
      * whole bytes) in a new Buffer on $device. The core copies host-accessible buffers to CpuDevice and reads unmapped file
      * buffers; any other transfer needs an extension that registered it (buffers_register_transfer()), else Error.
      */
-    public function to(Device $device): BufferView {}
+    public function to(Device $device): Tensor {}
     /**
      * The whole contents as nested arrays (a 0-d view: the scalar; complex elements: [re, im]), for json_encode().
      * json_encode() fails for NaN and INF, as for any PHP value. Throws Error for memory that is not host accessible.

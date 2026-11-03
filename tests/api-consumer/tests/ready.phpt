@@ -4,7 +4,7 @@ C API: readiness hook - pending buffers are made ready before data is touched
 <?php if (!extension_loaded('buffers_api_test')) die('skip needs the buffers_api_test extension'); ?>
 --FILE--
 <?php
-use Buffers\{DType, BufferView};
+use Buffers\{DType, Tensor};
 function calls() { return bat_counts()['ready_calls']; }
 
 $b = bat_make_pending(8, 7);

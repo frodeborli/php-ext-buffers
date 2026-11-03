@@ -1,4 +1,4 @@
-/* BufferView::to(): moving a view's data to another device. The core knows host memory and files; other devices
+/* Tensor::to(): moving a view's data to another device. The core knows host memory and files; other devices
  * are the business of the extensions that own them, which register a transfer (buffers_register_transfer()). */
 #include "php_buffers.h"
 #include "zend_exceptions.h"
@@ -21,12 +21,12 @@ zend_result buffers_register_transfer(zend_class_entry *device_ce, buffers_trans
 	return SUCCESS;
 }
 
-static zend_object *transfer_find(zend_object *device, zend_object *view, bool *found)
+static zend_object *transfer_find(zend_object *match, zend_object *target, zend_object *view, bool *found)
 {
 	for (int i = 0; i < ntransfers; i++) {
-		if (instanceof_function(device->ce, transfers[i].ce)) {
+		if (instanceof_function(match->ce, transfers[i].ce)) {
 			*found = true;
-			return transfers[i].fn(view, device);
+			return transfers[i].fn(view, target);
 		}
 	}
 	*found = false;
@@ -83,9 +83,9 @@ zend_object *buf_view_to(zend_object *vo, zend_object *device)
 	if (target_cpu && (b->host || b->file != -1)) {
 		return to_host(vo);
 	}
-	res = transfer_find(device, vo, &found);   /* the extension that owns the target ... */
+	res = transfer_find(device, device, vo, &found);   /* the extension that owns the target ... */
 	if (found) return res;
-	res = transfer_find(src_dev, vo, &found);  /* ... or the one that owns the source (device to host) */
+	res = transfer_find(src_dev, device, vo, &found);  /* ... or the one that owns the source (device to host) */
 	if (found) return res;
 	n = target_cpu ? buf_device_name(b->dev_type, b->dev_id) : buf_device_name(ttype, tid);
 	zend_throw_error(NULL, "no backend for device '%s'", ZSTR_VAL(n));
@@ -93,16 +93,16 @@ zend_object *buf_view_to(zend_object *vo, zend_object *device)
 	return NULL;
 }
 
-zend_object *buffers_view_to(zend_object *view, zend_object *device)
+zend_object *buffers_tensor_to(zend_object *view, zend_object *device)
 {
-	if (!buffers_is_view(view) || !buf_view_from(view)->buf) {
-		zend_type_error("Expected a BufferView");
+	if (!buffers_is_tensor(view) || !buf_view_from(view)->buf) {
+		zend_type_error("Expected a Tensor");
 		return NULL;
 	}
 	return buf_view_to(view, device);
 }
 
-PHP_METHOD(Buffers_BufferView, to)
+PHP_METHOD(Buffers_Tensor, to)
 {
 	zend_object *dev, *res;
 

@@ -36,7 +36,7 @@ foreach ($ops as $name => $f) {
 echo "the variable now holds the result of +=\n";
 $u = $v;
 $u += 1;
-var_dump($u, $v instanceof Buffers\BufferView);
+var_dump($u, $v instanceof Buffers\Tensor);
 $u = $w; $u *= $u;
 var_dump($u);
 
@@ -59,8 +59,8 @@ echo "end\n";
 ~    not(view<Float32 2x3>)
 -x   mul(view<Int16 4>, int(-1))
 0-d  add(view<Int16>, view<Int16>)
-**   TypeError: Unsupported operand types: Buffers\BufferView ** int
-.    Error: Object of class Buffers\BufferView could not be converted to string
+**   TypeError: Unsupported operand types: Buffers\Tensor ** int
+.    Error: Object of class Buffers\Tensor could not be converted to string
 +=   add(view<Float32 2x3>, int(5))
 ++   null
 []+  add(view<Float32 3>, int(1))

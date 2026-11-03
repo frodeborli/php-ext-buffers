@@ -4,13 +4,13 @@ C API: a buffer over memory owned by a PHP object (the owner stays alive while v
 <?php if (!extension_loaded('buffers_api_test')) die('skip needs the buffers_api_test extension'); ?>
 --FILE--
 <?php
-use Buffers\{DType, BufferView};
+use Buffers\{DType, Tensor};
 function owners() { $c = bat_counts(); return "made " . $c['owners_made'] . " freed " . $c['owners_freed']; }
 
 $m = new BatMatrix(3, 4);
 $wr = WeakReference::create($m);
 $v = $m->toView();
-var_dump($v->dtype, $v->shape->toArray(), $v->strides, $v->offset, $v->buffer->byteLength(), $v->buffer->isWritable(), $v->buffer->device() === Buffers\CpuDevice::get());
+var_dump($v->dtype, $v->shape->toArray(), $v->strides, $v->offset, $v->buffer->byteLength, $v->buffer->isWritable(), $v->buffer->device === Buffers\CpuDevice::get());
 var_dump($v[0][0], $v[1][2], $v[2][3], $m->get(1 * 4 + 2) === $v[1][2]);
 echo "writes through a read-only view\n";
 foreach ([fn() => $v[0][0] = 1.0, fn() => $v[0] = 1.0, fn() => $v->buffer->view(DType::Float64, 12)[0] = 1.0] as $f) {
@@ -78,9 +78,9 @@ float(6.5)
 float(11.5)
 bool(true)
 writes through a read-only view
-Error: Cannot write to a read-only BufferView
-Error: Cannot write to a read-only BufferView
-Error: Cannot write to a read-only BufferView
+Error: Cannot write to a read-only Tensor
+Error: Cannot write to a read-only Tensor
+Error: Cannot write to a read-only Tensor
 float(0.5)
 the owner lives as long as a view does
 bool(true)

@@ -95,7 +95,7 @@ static inline bool buf_dtype_fits_php_int(int dt)
 
 /* Buffer: bytes on some device. The memory is ext-buffers' own allocation (alloc), foreign memory with a deleter,
  * memory kept alive by a PHP object (owner), or a file: mapped (map_base; host accessible) or only opened (file;
- * storage, read by BufferView::to()). */
+ * storage, read by Tensor::to()). */
 typedef struct {
 	uint8_t *base;
 	uint64_t len;                        /* 64 bits: an unmapped file can be larger than the address space of 32-bit PHP */
@@ -128,7 +128,7 @@ typedef struct {
 	zend_object std;
 } buf_view;
 
-/* Shape: n dimensions, each an int or a 0-d Tensor object */
+/* Shape: n dimensions, each an int or a 0-d TensorInterface object */
 typedef struct {
 	uint32_t n;
 	zval *dims;
@@ -157,7 +157,7 @@ ZEND_EXTERN_MODULE_GLOBALS(buffers)
 #endif
 
 extern zend_class_entry *buf_ce_dtype, *buf_ce_buffer, *buf_ce_filedevice,
-	*buf_ce_view, *buf_ce_tensor, *buf_ce_shape, *buf_ce_device_if, *buf_ce_cpudevice,
+	*buf_ce_tensor, *buf_ce_tensor_if, *buf_ce_shape, *buf_ce_device_if, *buf_ce_cpudevice,
 	*buf_ce_foreigndevice;
 
 static inline buf_buffer *buf_buffer_from(zend_object *o) { return (buf_buffer *)((char *)o - XtOffsetOf(buf_buffer, std)); }

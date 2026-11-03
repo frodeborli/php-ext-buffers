@@ -7,7 +7,7 @@ Lifetime: views keep their buffer alive, sub-view pooling, cycles and shutdown
 use Buffers\{DType, Buffer};
 function make() { $b = new Buffer(16); $v = $b->view(DType::UInt8, [4, 4]); $v[3][3] = 9; return $v; }
 $v = make();
-var_dump($v[3][3], $v->buffer->byteLength());
+var_dump($v[3][3], $v->buffer->byteLength);
 $row = $v[3];
 unset($v);
 gc_collect_cycles();

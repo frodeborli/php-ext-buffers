@@ -1,17 +1,18 @@
 # ext-buffers
 
-The shared representation of n-dimensional typed data for PHP: `Buffers\Buffer` memory, `Buffers\BufferView`
-windows onto it (n-D, strided, every machine-learning dtype including bfloat16, float8, packed float6, float4 and
-int2/int4/uint2/uint4, and complex), `Buffers\Shape`, the `Buffers\Tensor` and `Buffers\Device` interfaces, zero-copy
-[DLPack](https://github.com/dmlc/dlpack) exchange, and a versioned C API (`php_buffers_api.h`) with operator and
-readiness hooks for other extensions. Written in C, no dependencies, PHP 8.4 - 8.5 (NTS and ZTS) on Linux; macOS and
-Windows build files are included but untested (see [Verification](#verification)).
+The shared representation of n-dimensional typed data for PHP: `Buffers\Buffer` (bytes on some device: allocated memory,
+a memory-mapped file, memory of other extensions), `Buffers\Tensor` windows onto it (n-D, strided, every machine-learning
+dtype including bfloat16, float8, packed float6, float4 and int2/int4/uint2/uint4, and complex), `Buffers\Shape`, the
+`Buffers\TensorInterface` and `Buffers\Device` interfaces, and a versioned C API (`php_buffers_api.h`) with operator,
+readiness and transfer hooks and [DLPack](https://github.com/dmlc/dlpack) import and export for other extensions. Written in C,
+no dependencies, PHP 8.4 - 8.5 (NTS and ZTS) on Linux; macOS and Windows build files are included but untested (see
+[Verification](#verification)).
 
 ```php
 use Buffers\{Buffer, DType};
 
-$buf   = new Buffer(640 * 480 * 4);                 // zero-filled, 64-byte aligned, counts toward memory_limit
-$rgba  = $buf->view(DType::UInt8, [480, 640, 4]);        // shape [rows, cols, channels]
+$buf   = new Buffer(640 * 480 * 4);                      // zero-filled, 64-byte aligned, counts toward memory_limit
+$rgba  = $buf->view(DType::UInt8, [480, 640, 4]);        // a Tensor: shape [rows, cols, channels]
 $rgba[10][20][3] = 255;                                  // chained single-int offsets
 echo $rgba[10][20][3];                                   // 255
 $row = $rgba[10];                                        // a sub-view of the same memory
@@ -20,7 +21,8 @@ echo $rgba->shape[-1], ' ', $rgba->ndim, ' ', json_encode($rgba->strides);   // 
 
 $w = $buf->view(DType::Float8E4M3FN, 16);                // 16 one-byte floats
 $w[0] = 1.5;
-$torch_ready = $rgba->toDLPack();                        // zero-copy export, see "DLPack"
+
+$weights = Buffer::fromFile('model.bin', 128)->view(DType::BFloat16, [4096, 4096]);   // mapped, read-only, pages load on first touch
 ```
 
 ## Install
@@ -31,8 +33,7 @@ phpize && ./configure --enable-buffers && make && make install     # then extens
 ```
 
 `make install` also installs `php_buffers_api.h` and `dlpack.h` under `ext/buffers/` for extensions that build on
-this one (see [C API](#c-api)). Add `--enable-buffers-testing` to build the test-only helpers the DLPack tests use
-(`buffers_test_make()`, `buffers_test_counts()`); never needed in production.
+this one (see [C API](#c-api)).
 
 ## Performance
 
@@ -99,6 +100,9 @@ setup code, not for inner loops. Making a sub-view stores nothing for them.
 
 Everything lives in the namespace `Buffers\`. `buffers.stub.php` has the full signatures with docblocks.
 
+**Properties and methods:** facts that do not change are read-only *properties*; state that can change, and anything computed on request,
+is a *method*. (Enums cannot have properties, so `DType` has methods.)
+
 ```php
 namespace Buffers;
 
@@ -106,55 +110,55 @@ enum DType: string { case Bool, Int2, Int4, Int8, Int16, Int32, Int64, UInt2, UI
     Float16, Float32, Float64, BFloat16, Float8E3M4, Float8E4M3, Float8E4M3B11FNUZ, Float8E4M3FN, Float8E4M3FNUZ,
     Float8E5M2, Float8E5M2FNUZ, Float8E8M0FNU, Float6E2M3FN, Float6E3M2FN, Float4E2M1FN,
     Complex32, Complex64, Complex128, BComplex32;
-    public function bits(): int;             // width of one element: 4, 6, 8 ... 128
+    public function bits(): int;             // width of one element: 2, 4, 6, 8 ... 128
     public function byteSize(): ?int;        // bytes per element; null for the packed formats Int2, Int4, UInt2, UInt4, Float6*, Float4*
     public function isByteAligned(): bool;   // false for the packed formats
     public function isInteger(): bool;       // Int*, UInt* (including the packed ones)
     public function isFloatingPoint(): bool; // all Float*, BFloat16 and the small formats
     public function isComplex(): bool;
-    public function dlpack(): array;         // ['code' => int, 'bits' => int, 'lanes' => 1]
 }
 
-interface Tensor {                           // only internal classes can implement it (see "Tensor")
+interface TensorInterface {                  // only internal classes can implement it (see "TensorInterface")
     public ?DType $dtype { get; }
     public Shape $shape { get; }
     public int $ndim { get; }
 }
 
 final class Shape implements ArrayAccess, Countable, IteratorAggregate, JsonSerializable {
-    public function __construct(array $dims);        // list of ints >= 0 and 0-d Tensors
-    public function isConcrete(): bool;              // every dimension is an int
-    public function size(): int|Tensor;              // product; Error if not concrete (see "Shape")
+    public bool $concrete { get; }                  // every dimension is an int
+    public int|TensorInterface $size { get; }       // product; Error if not concrete (see "Shape")
+    public function __construct(array $dims);       // list of ints >= 0 and 0-d TensorInterfaces
+    public function count(): int;
     public function toArray(): array;
 }
 
-interface Device { name(): string; dlpackType(): int; id(): int; isHostAccessible(): bool; }
+interface Device {                                  // identified by name and id
+    public string $name { get; }                    // "cpu", "file", "cuda:0"
+    public int $id { get; }
+    public bool $hostAccessible { get; }            // the device's general capability: memory the CPU can address
+}
 final class CpuDevice implements Device { public static function get(): CpuDevice; }
+final class FileDevice implements Device { public static function get(): FileDevice; }
+final class ForeignDevice implements Device {}      // the device of a tensor imported through the C API that is not on the CPU
 
-interface Buffer {
-    public function byteLength(): int;
-    public function isWritable(): bool;
-    public function device(): Device;
-    public function view(DType $type, int|array|null $shape = null, ?array $strides = null, int $offset = 0): BufferView;
-}
-final class Buffer implements Buffer {
-    public function __construct(int $byteLength);              // zero-filled; emalloc'd, so it counts toward memory_limit
+final class Buffer {
+    public int $byteLength { get; }
+    public Device $device { get; }
+    public function __construct(int $byteLength);   // zero-filled host memory; emalloc'd, so it counts toward memory_limit
     public static function fromString(string $data): Buffer;
-    public function toString(): string;                        // a copy of the bytes
+    public static function fromFile(string $path, int $offset = 0, ?int $length = null, bool $map = true): Buffer;
+    public function isWritable(): bool;
+    public function isHostAccessible(): bool;       // authoritative for this buffer (a mapped file is, FileDevice is not)
+    public function view(DType $type, int|array|null $shape = null, ?array $strides = null, int $offset = 0): Tensor;
+    public function toString(): string;             // a copy of the bytes; Error unless host accessible
 }
 
-final class BufferView implements Tensor, Countable, ArrayAccess, IteratorAggregate, JsonSerializable {
-    // read-only properties, computed when read:
-    //   DType $dtype, Shape $shape, int $ndim, list<int> $strides (in elements), int $offset (bytes), Buffer $buffer
-    // and a read-write mixed $value, the element of a 0-d view (Error on views with axes)
-    public function toDLPack(): DLPackCapsule;
-    public static function fromDLPack(DLPackCapsule $capsule): BufferView;
+final class Tensor implements TensorInterface, Countable, ArrayAccess, IteratorAggregate, JsonSerializable {
+    // read-only: DType $dtype, Shape $shape, int $ndim, list<int> $strides (in elements), int $offset (bytes), Buffer $buffer
+    // read-write, 0-d views only: mixed $value
+    public function to(Device $device): Tensor;
     // count() = length of the first axis; foreach iterates the first axis; $v[i], isset($v[i]), $v[i] = x
 }
-
-final class DLPackCapsule {}    // opaque, consumed once
-final class Buffer implements Buffer {}   // memory owned by someone else (imported tensors, other extensions)
-final class ForeignDevice implements Device {}           // the device of an imported tensor that is not on the CPU
 ```
 
 ### `view()`
@@ -168,7 +172,7 @@ final class ForeignDevice implements Device {}           // the device of an imp
 * Everything is validated once, with overflow-safe arithmetic, so element access needs only a bounds check. A view
   keeps its buffer alive. Empty views (a dimension of 0) are valid.
 * On 32-bit PHP, `Int64`, `UInt64` and `UInt32` are rejected with a `ValueError` (their values do not fit a PHP
-  int); the same for DLPack import. Everything else works.
+  int), and so is DLPack import in the C API. Everything else works.
 
 ### Properties
 
@@ -178,7 +182,7 @@ property: the single element of a 0-d view (see below). They are *virtual
 properties with internal get hooks*, exactly what a PHP 8.4 class would declare as `public int $ndim { get => ... }`:
 nothing is stored in the object, so creating a sub-view (`$v[$y]`, served from a pool) allocates no `Shape`, no array
 and nothing else. Reflection, `get_object_vars()`, `(array)` and `var_export()` see them (`value` only on 0-d views of host memory);
-`var_dump()` and `print_r()` show a purpose-built summary (see [Debug output and JSON](#debug-output-and-json)).
+`var_dump()` and `print_r()` show a purpose-built summary (see [Debug output and JSON](#debug-output-and-json)). The same rule gives `Buffer` its `byteLength` and `device` properties, `Shape` its `size` and `concrete`, and every `Device` its `name`, `id` and `hostAccessible`.
 
 ### Element access
 
@@ -196,7 +200,7 @@ is a scalar.
 
 Any non-int offset throws `TypeError`; an out-of-range or negative index throws `ValueError` (`isset()` and `??` just
 say no/null); `$v[] = x`, `unset($v[i])`, writing a sub-view, writing to a read-only view, and a value of the wrong
-type (`TypeError`) all throw. Views, shapes, devices, buffers and capsules cannot be cloned, serialized,
+type (`TypeError`) all throw. Tensors, shapes, devices and buffers cannot be cloned, serialized,
 instantiated by the user or given dynamic properties. Bad `view()` arguments throw `ValueError` naming the
 argument and the reason. Elements of memory that is not host accessible (see Devices) throw `Error`.
 
@@ -204,7 +208,7 @@ argument and the reason. Elements of memory that is not host accessible (see Dev
 
 `$buf->view(DType::Float32, [])` is a view of exactly one element: `ndim` 0, `shape` `[]`, `strides` `[]`. It has no axes, so
 `count()`, `foreach`, `$v[0]`, `isset($v[0])` and friends throw `Error("A 0-d view has no axes")`. It is a
-`Tensor`, shares memory with other views of the buffer, and exports and imports through DLPack.
+`TensorInterface`, shares memory with other views of the buffer, and can be exported and imported through the C API.
 
 Its single element is the read-write property **`$v->value`**: `$v->value` reads it, `$v->value = 3` writes it with the normal
 conversion rules of the dtype (like `$v[$i] = 3` on a 1-D view). It is a virtual property with get and set hooks, so nothing
@@ -214,28 +218,40 @@ instead")`. Read-only buffers, memory that is not host accessible and pending bu
 ### Shape
 
 `new Shape([2, 3])`; `$shape[-1]` counts from the end; an out-of-range index throws `ValueError`; `offsetSet`/`offsetUnset`
-throw `Error` (a Shape is immutable); `==` compares by value. A dimension is an int or a **0-d `Tensor`** (a symbolic
-dimension, for extensions that build deferred computations). `size()` returns the product when the shape is
+throw `Error` (a Shape is immutable); `==` compares by value. A dimension is an int or a **0-d `TensorInterface`** (a symbolic
+dimension, for extensions that build deferred computations). `$shape->size` is the product when the shape is
 concrete (`ValueError` above `PHP_INT_MAX`); for a non-concrete shape it throws `Error` in this version, since no
-extension that could compute a symbolic product exists yet. The shape of a `BufferView` is always concrete.
+extension that could compute a symbolic product exists yet. The shape of a `Tensor` is always concrete.
 
-### Tensor
+### TensorInterface
 
-`Tensor` is the common face of anything with a dtype and a shape. `BufferView` implements it, and so can classes of
-other extensions (a deferred tensor, say) through `buffers_implement_tensor()`. It **cannot be implemented in PHP code**: a
-user class declaring `implements Tensor` is a fatal error ("only internal classes can implement it"), which keeps the
+`TensorInterface` is the common face of anything with a dtype and a shape. `Tensor` implements it, and so can classes of
+other extensions (a deferred tensor, say) through `buffers_implement_tensor_interface()`. It **cannot be implemented in PHP code**: a
+user class declaring `implements TensorInterface` is a fatal error ("only internal classes can implement it"), which keeps the
 set of tensors under the control of extensions that can honour the C API.
 
-### Devices
+### Devices and files
 
-`Buffer::device()` says where the memory lives. `Buffer` is always on `CpuDevice::get()` (dlpackType 1,
-id 0, host accessible). DLPack import accepts **any** device: a tensor that is not on the CPU becomes a view over an
-opaque `Buffer` whose device is a `ForeignDevice` reporting the DLPack device type and id; its
-`isHostAccessible()` is false except for `kDLCUDAHost` (3), `kDLROCMHost` (11) and `kDLCUDAManaged` (13). Reading,
-writing or iterating the elements of memory that is not host accessible throws `Error`; making sub-views, reading the
-properties and exporting work. Exporting such a view again passes the device type, id, data pointer and byte offset
-through unchanged (the pointer is an opaque handle and is never dereferenced), and the original tensor's deleter runs
-exactly once, when the last view of it is gone.
+A device has a `name`, an `id` and a general `hostAccessible` capability (properties). `$buffer->device` says where the buffer
+lives; `$buffer->isHostAccessible()` is authoritative for the buffer itself. A `Buffer` made by the constructor or `fromString()` is on
+`CpuDevice::get()`. Memory of other devices comes through the C API (DLPack import: any device, as a `ForeignDevice` with the name
+`cuda:0` and so on; host-accessible only for the DLPack host kinds CUDA-host, ROCm-host and CUDA-managed). Reading, writing or
+iterating the elements of memory that is not host accessible throws `Error`; making sub-views and reading properties work.
+
+**`Buffer::fromFile($path, $offset = 0, $length = null, $map = true)`** gives a read-only buffer on `FileDevice::get()` over a byte range of a
+file (the range is checked against the file size when the file is opened; `ValueError` if it does not fit).
+
+* mapped (`$map = true`, the default): the range is memory-mapped (`mmap`; `CreateFileMapping` + `MapViewOfFile` on Windows, written
+  but never run). The buffer is host accessible: element access, `toString()` and the C API work on it directly, and pages load on first touch.
+  **Truncating a mapped file from another process crashes the PHP process with SIGBUS on Linux and macOS.** Deleting it does not.
+* unmapped (`$map = false`, or when the range cannot be mapped, for example a range larger than the address space of 32-bit PHP): a
+  storage-only buffer. `isHostAccessible()` is false; element access and `toString()` throw; `Tensor::to(CpuDevice::get())` reads
+  the bytes a view needs (`pread` / `ReadFile`). (On 32-bit PHP `byteLength` of a buffer beyond 2 GB throws: it does not fit an int.)
+
+**`$tensor->to($device)`** returns the tensor itself if its buffer is already on that device; otherwise a C-contiguous copy (packed
+formats: rows padded to whole bytes) in a new `Buffer` on the device. The core copies host-accessible buffers (including mapped files) to
+`CpuDevice` and reads unmapped file buffers. Any other transfer throws `Error("no backend for device 'cuda:0'")` unless an extension
+registered one (`buffers_register_transfer()`): that is how GPU extensions plug in.
 
 ## Dtypes
 
@@ -243,7 +259,7 @@ Follows [ml_dtypes](https://github.com/jax-ml/ml_dtypes) 0.5.4 for every format,
 [Verification](#verification)). Elements are stored in the **host's native byte order**, like NumPy's default, PyTorch,
 DLPack and JavaScript typed arrays (there is no byte-order option); no code assumes little-endian.
 
-| `DType`              | value                | bits | bytes | DLPack code/bits | notes |
+| `DType`              | value                | bits | bytes | DLPack code/bits (C API) | notes |
 |----------------------|----------------------|-----:|------:|------------------|-------|
 | `Bool`               | `bool`               | 8    | 1     | 6 / 8            | |
 | `Int2`, `Int4`       | `int2`, `int4`       | 2, 4 | null  | 0 / bits         | **packed**; sign-extended on read, writes wrap |
@@ -298,65 +314,66 @@ read-modify-write, so neighbours are untouched and no byte outside the view's ex
 
 ## Debug output and JSON
 
-`var_dump()` and `print_r()` of a `BufferView` show `dtype`, `shape` (as an array), `strides`, `offset`, `device` (a name such as `cpu` or
+`var_dump()` and `print_r()` of a `Tensor` show `dtype`, `shape` (as an array), `strides`, `offset`, `device` (a name such as `cpu` or
 `cuda:0`), `writable` and `data`: the contents as nested arrays when the view has at most 1000 elements and its memory is host accessible,
 otherwise a short note (`"(1048576 elements)"`, `"(not host-accessible)"`, `"(pending)"` for a buffer whose readiness hook has not run: dumping
 never triggers a computation). A `Shape` shows its `dims`. `var_export()`, `get_object_vars()` and `(array)` give the properties instead. All of
 this is built on demand by handlers that no element access goes through.
 
-`BufferView` and `Shape` implement `JsonSerializable` (when the json extension is loaded, which it is in every normal PHP build).
+`Tensor` and `Shape` implement `JsonSerializable` (when the json extension is loaded, which it is in every normal PHP build).
 `json_encode($view)` is the **full** data as nested arrays (a 0-d view: the scalar; complex elements: `[re, im]`; `UInt64` as the signed
 pattern); `json_encode($shape)` is the list of dimensions, and throws `Error` for a symbolic dimension in this version. json_encode's own rules
 apply: **NaN and INF make it fail** ("Inf and NaN cannot be JSON encoded", or the partial output / `JsonException` flags you asked for).
 A view whose memory is not host accessible throws `Error`; a pending buffer is made ready first. `DType` encodes as its string value.
 
-## DLPack
+## DLPack (C API only)
 
-DLPack v1.3 (`dlpack.h` is vendored unmodified, Apache-2.0, see `NOTICE`).
+[DLPack](https://github.com/dmlc/dlpack) v1.3 (`dlpack.h` is vendored unmodified, Apache-2.0, see `NOTICE`) is the boundary to native
+libraries, and it is a **C-level** interface: PHP code has no DLPack objects or methods. Another extension imports and exports through
+`buffers_dlpack_import()` and `buffers_dlpack_export()` (and looks codes up with `buffers_dtype_describe()` / `buffers_dtype_from_dlpack()`
+and `buffers_device_dlpack()`).
 
-* `toDLPack()` produces a `DLManagedTensorVersioned` on the buffer's device (`kDLCPU` for an `Buffer`).
-  **Strides are always materialised** (NULL strides are illegal since DLPack 1.2), `byte_offset` is the view's
-  offset, `DLPACK_FLAG_READ_ONLY` mirrors `isWritable()`. Packed float6/float4 views are exported packed (no
-  `IS_SUBBYTE_TYPE_PADDED`), 0-d views with `ndim` 0. The capsule keeps the buffer alive; the tensor's deleter
-  releases it. The capsule is opaque, a PHP object holding the C pointer. Export waits for a pending buffer (see
-  [Readiness](#readiness)).
-* `fromDLPack()` takes a capsule (consuming it once) and wraps the foreign memory in a `Buffer` whose view is
-  the returned `BufferView`; the tensor's deleter runs exactly once, when that buffer is freed. For host-accessible
-  tensors the buffer covers exactly the tensor's extent, so `$v->offset` starts at 0; for other devices the opaque
-  data pointer and byte offset are kept as they are. Any device, one lane, 0-8 dimensions, strides of at least 1 and
-  (for host memory) data aligned to the element size are imported; **padded** float4/float6 are rejected; versions
-  below 1.2 may pass NULL strides (compact row-major). Anything else throws `ValueError` with the reason, and a
-  rejected capsule is not consumed (its deleter still runs once when freed).
-* The C structs are the standard ones; nothing in PHP can see the raw pointer, so exchange with another extension
-  or FFI happens through those C structs (and `buffers_dlpack_export()` / `buffers_dlpack_import()`), not through a
-  PHP-visible protocol.
+* **Export** produces a malloc'd `DLManagedTensorVersioned`; whoever ends up owning it calls its deleter exactly once. **Strides are always
+  materialised** (NULL strides are illegal since DLPack 1.2), `byte_offset` is the view's offset, `DLPACK_FLAG_READ_ONLY` mirrors the
+  buffer, packed sub-byte dtypes (int2, int4, uint2, uint4, float6, float4) are exported packed (no `IS_SUBBYTE_TYPE_PADDED`), 0-d tensors
+  with `ndim` 0. The device is the buffer's: `kDLCPU` for host memory and for a mapped file, a foreign device's own type and id passed through
+  unchanged (the pointer is an opaque handle and is never dereferenced). An unmapped file buffer cannot be exported ("transfer to the host
+  first with to()"). The export holds the buffer; the deleter releases it. A pending buffer is made ready first (see [Readiness](#readiness)).
+* **Import** wraps the foreign memory in a `Buffer` and returns a `Tensor`; the tensor's deleter runs exactly once, when that buffer is
+  freed (and, if the import is rejected, the caller still owns the tensor). For host-accessible tensors the buffer covers exactly the
+  tensor's extent, so `$v->offset` starts at 0; for other devices the opaque data pointer and byte offset are kept. Any device, one lane,
+  0-8 dimensions, strides of at least 1 and (for host memory) data aligned to the element size are imported; **padded** sub-byte tensors
+  are rejected; versions below 1.2 may pass NULL strides (compact row-major). Anything else throws `ValueError` with the reason.
+  Devices that are not on the CPU become a `ForeignDevice` (host-accessible only for CUDA-host, ROCm-host and CUDA-managed).
+* The DLPack device type of the `Device` class of another extension is declared with `buffers_register_device_type()`.
 
 ## C API
 
 `php_buffers_api.h` (installed to `ext/buffers/`, `BUFFERS_API_VERSION` 1, `buffers_api_version()` at run time) is the
-only thing another extension needs; it never sees the layout of buffers or views. The symbols are exported from
+only thing another extension needs; it never sees the layout of buffers or tensors. The symbols are exported from
 `buffers.so` (also in the release binaries, which hide everything else), so load order matters:
 declare `ZEND_MOD_REQUIRED("buffers")`. `tests/api-consumer/` is a complete small extension that uses nothing else
 and has phpt tests; read it as the example.
 
 | Area | Functions |
 |------|-----------|
-| classes, dtypes | `buffers_get_class()`, `buffers_dtype_describe()`, `buffers_dtype_to_zval()`, `buffers_dtype_from_object()`, `buffers_cpu_device()` |
-| views | `buffers_is_view()`, `buffers_view_get_info()` (data pointer, dtype, ndim, shape, strides in elements, byte offset, buffer object, writable), `buffers_view_create()` (validated exactly like `view()`) |
+| classes, dtypes | `buffers_get_class()`, `buffers_dtype_describe()`, `buffers_dtype_to_zval()`, `buffers_dtype_from_object()`, `buffers_dtype_from_dlpack()` |
+| devices | `buffers_cpu_device()`, `buffers_file_device()`, `buffers_implement_device()` (declare `$name`, `$id`, `$hostAccessible` with three get hooks), `buffers_register_device_type()`, `buffers_device_dlpack()`, `buffers_register_transfer()`, `buffers_tensor_to()` |
+| tensors | `buffers_is_tensor()`, `buffers_tensor_get_info()` (data pointer, dtype, ndim, shape, strides in elements, byte offset, buffer object, writable), `buffers_tensor_create()` (validated exactly like `view()`) |
 | buffers | `buffers_is_buffer()`, `buffers_buffer_get_info()` (base, length, writable, host accessible, device), `buffers_buffer_create_foreign()` (memory + deleter + device), `buffers_buffer_create_owned()` (memory kept alive by a PHP object: holds a reference to the owner and releases it on free, no deleter), `buffers_hold()`, `buffers_release()` |
-| shapes, tensors | `buffers_shape_create()`, `buffers_shape_dims()`, `buffers_implement_tensor()` (declare the virtual properties of `Tensor` with three get hooks) |
-| DLPack | `buffers_dlpack_export()`, `buffers_dlpack_import()` |
+| shapes, tensors | `buffers_shape_create()`, `buffers_shape_dims()`, `buffers_implement_tensor_interface()` (declare the virtual properties of `TensorInterface` with three get hooks) |
+| DLPack | `buffers_dlpack_export()`, `buffers_dlpack_import()` (see above) |
 | hooks | `buffers_set_operator_handler()`, `buffers_buffer_set_ready_callback()`, `buffers_buffer_set_pending()`, `buffers_buffer_ensure_ready()` |
 
 **Memory owned by a PHP object** (for example RubixML's Tensor-Ext keeps contiguous row-major float64 data in C): create
 a buffer with `buffers_buffer_create_owned(data, length, writable, NULL, owner_object)` and a view with
-`buffers_view_create(buffer, BUFFERS_DT_FLOAT64, 2, shape, NULL, 0)`; the owner stays alive as long as any view or
+`buffers_tensor_create(buffer, BUFFERS_DT_FLOAT64, 2, shape, NULL, 0)`; the owner stays alive as long as any view or
 buffer does and is released afterwards (`tests/api-consumer/tests/owner.phpt`). Strides are fully supported by views
-(pass them to `buffers_view_create()`); only the `Tensor` interface omits them.
+(pass them to `buffers_tensor_create()`); only the `TensorInterface` interface omits them.
 
 ### Operator hook
 
-`buffers_set_operator_handler(fn)` registers one handler (from `MINIT`; one per process). `BufferView` has a
+`buffers_set_operator_handler(fn)` registers one handler (from `MINIT`; one per process). `Tensor` has a
 `do_operation` handler that passes `+ - * / % ** << >> | & ^ ~` (also as `+=` etc., unary minus is `* -1`) to it when either operand
 is a view; the handler returns `SUCCESS` with the result, or `FAILURE` to leave PHP's default `TypeError`
 ("Unsupported operand types"). With no handler registered behaviour is exactly that `TypeError`. Comparisons never
@@ -409,7 +426,7 @@ consumer loaded); `tools/valgrind.sh [8.x]`; `tools/docker-test.sh [image ...]` 
 
 ## Not in this version
 
-`get()`/`set()` methods, array/tuple offsets, `fill/copy/cast/reshape/transpose/slice/toArray/fromArray`,
+DLPack in PHP (it is C API only), writable file buffers, `get()`/`set()` methods, array/tuple offsets, `fill/copy/cast/reshape/transpose/slice/toArray/fromArray`,
 clamped writes, padded sub-byte layouts, negative or zero strides, arithmetic by the extension itself (the operator hook
 is for other extensions), a byte-order option.
 

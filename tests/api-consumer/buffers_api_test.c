@@ -223,17 +223,17 @@ static void list_i64(zval *arr, const char *key, const int64_t *v, int n)
 	add_assoc_zval(arr, key, &l);
 }
 
-/* bat_info(BufferView $v): everything buffers_view_get_info() reports */
+/* bat_info(Tensor $v): everything buffers_tensor_get_info() reports */
 PHP_FUNCTION(bat_info)
 {
 	zend_object *v;
-	buffers_view_info i;
+	buffers_tensor_info i;
 	buffers_buffer_info bi;
 
 	ZEND_PARSE_PARAMETERS_START(1, 1)
 		Z_PARAM_OBJ(v)
 	ZEND_PARSE_PARAMETERS_END();
-	if (buffers_view_get_info(v, &i) == FAILURE || buffers_buffer_get_info(i.buffer, &bi) == FAILURE) {
+	if (buffers_tensor_get_info(v, &i) == FAILURE || buffers_buffer_get_info(i.buffer, &bi) == FAILURE) {
 		RETURN_THROWS();
 	}
 	array_init(return_value);
@@ -250,7 +250,7 @@ PHP_FUNCTION(bat_info)
 	add_assoc_bool(return_value, "host_accessible", bi.host_accessible);
 	add_assoc_long(return_value, "device_type", bi.device_type);
 	add_assoc_long(return_value, "device_id", bi.device_id);
-	add_assoc_bool(return_value, "is_view", buffers_is_view(v));
+	add_assoc_bool(return_value, "is_view", buffers_is_tensor(v));
 }
 
 /* bat_is(mixed $x): [is_view, is_buffer] */
@@ -262,11 +262,11 @@ PHP_FUNCTION(bat_is)
 		Z_PARAM_ZVAL(x)
 	ZEND_PARSE_PARAMETERS_END();
 	array_init(return_value);
-	add_next_index_bool(return_value, Z_TYPE_P(x) == IS_OBJECT && buffers_is_view(Z_OBJ_P(x)));
+	add_next_index_bool(return_value, Z_TYPE_P(x) == IS_OBJECT && buffers_is_tensor(Z_OBJ_P(x)));
 	add_next_index_bool(return_value, Z_TYPE_P(x) == IS_OBJECT && buffers_is_buffer(Z_OBJ_P(x)));
 }
 
-/* bat_view(BufferInterface $b, int $dtype, array $shape, ?array $strides = null, int $offset = 0): buffers_view_create() */
+/* bat_view(BufferInterface $b, int $dtype, array $shape, ?array $strides = null, int $offset = 0): buffers_tensor_create() */
 PHP_FUNCTION(bat_view)
 {
 	zend_object *b, *v;
@@ -292,7 +292,7 @@ PHP_FUNCTION(bat_view)
 	if (strides) {
 		ZEND_HASH_FOREACH_VAL(strides, z) { st[sn++] = zval_get_long(z); } ZEND_HASH_FOREACH_END();
 	}
-	v = buffers_view_create(b, (int)dtype, (int)n, sh, strides ? st : NULL, offset);
+	v = buffers_tensor_create(b, (int)dtype, (int)n, sh, strides ? st : NULL, offset);
 	if (!v) RETURN_THROWS();
 	RETURN_OBJ(v);
 }
@@ -369,7 +369,7 @@ PHP_METHOD(BatMatrix, __construct)
 	owners_made++;
 }
 
-/* toView(bool $writable = false): BufferView over the matrix's own memory */
+/* toView(bool $writable = false): Tensor over the matrix's own memory */
 PHP_METHOD(BatMatrix, toView)
 {
 	matrix *x = matrix_from(Z_OBJ_P(ZEND_THIS));
@@ -386,7 +386,7 @@ PHP_METHOD(BatMatrix, toView)
 	shape[1] = x->n;
 	buf = buffers_buffer_create_owned(x->data, (size_t)(x->m * x->n) * sizeof(double), writable, NULL, Z_OBJ_P(ZEND_THIS));
 	if (!buf) RETURN_THROWS();
-	view = buffers_view_create(buf, BUFFERS_DT_FLOAT64, 2, shape, NULL, 0);
+	view = buffers_tensor_create(buf, BUFFERS_DT_FLOAT64, 2, shape, NULL, 0);
 	buffers_release(buf); /* the view holds the buffer, the buffer holds the matrix */
 	if (!view) RETURN_THROWS();
 	RETURN_OBJ(view);
@@ -422,19 +422,9 @@ static const zend_function_entry matrix_methods[] = {
 
 /* ---- a Device implemented by another extension: CUDA device 5, not host accessible ------------------- */
 
-PHP_METHOD(BatDevice, name) { ZEND_PARSE_PARAMETERS_NONE(); RETURN_STRING("bat:5"); }
-PHP_METHOD(BatDevice, id) { ZEND_PARSE_PARAMETERS_NONE(); RETURN_LONG(5); }
-PHP_METHOD(BatDevice, isHostAccessible) { ZEND_PARSE_PARAMETERS_NONE(); RETURN_FALSE; }
-
-ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(ai_dev_s, 0, 0, IS_STRING, 0) ZEND_END_ARG_INFO()
-ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(ai_dev_i, 0, 0, IS_LONG, 0) ZEND_END_ARG_INFO()
-ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(ai_dev_b, 0, 0, _IS_BOOL, 0) ZEND_END_ARG_INFO()
-static const zend_function_entry device_methods[] = {
-	PHP_ME(BatDevice, name, ai_dev_s, ZEND_ACC_PUBLIC)
-	PHP_ME(BatDevice, id, ai_dev_i, ZEND_ACC_PUBLIC)
-	PHP_ME(BatDevice, isHostAccessible, ai_dev_b, ZEND_ACC_PUBLIC)
-	PHP_FE_END
-};
+static ZEND_NAMED_FUNCTION(device_get_name) { ZEND_PARSE_PARAMETERS_NONE(); RETURN_STRING("bat:5"); }
+static ZEND_NAMED_FUNCTION(device_get_id) { ZEND_PARSE_PARAMETERS_NONE(); RETURN_LONG(5); }
+static ZEND_NAMED_FUNCTION(device_get_host) { ZEND_PARSE_PARAMETERS_NONE(); RETURN_FALSE; }
 
 /* bat_device_buffer(int $length): memory on a device PHP cannot touch */
 PHP_FUNCTION(bat_device_buffer)
@@ -459,9 +449,9 @@ PHP_FUNCTION(bat_device_buffer)
 	RETURN_OBJ(b);
 }
 
-/* ---- a Tensor implemented by another extension ----------------------------------------------------------
+/* ---- a TensorInterface implemented by another extension ----------------------------------------------------------
  * BatTensor(int $ndim = 0, int $dtype = BUFFERS_DT_INT64): a stand-in for a deferred tensor. It implements
- * Buffers\Tensor from C with get hooks, so it can be used as a symbolic dimension of a Shape (when 0-d). */
+ * Buffers\TensorInterface from C with get hooks, so it can be used as a symbolic dimension of a Shape (when 0-d). */
 
 static zend_class_entry *ce_tensor;
 static zend_object_handlers tensor_handlers;
@@ -533,18 +523,22 @@ static const zend_function_entry tensor_methods[] = {
  * and "downloads" it again. Registered with buffers_register_transfer(). */
 static zend_object *bat_transfer(zend_object *view, zend_object *device)
 {
-	buffers_view_info vi;
+	buffers_tensor_info vi;
 	buffers_buffer_info bi;
 	zend_object *src = view, *buf, *res;
 	bool upload = instanceof_function(device->ce, ce_device);
 	uint8_t *mem;
 
+	if (!upload && device != buffers_cpu_device()) {
+		zend_throw_error(NULL, "bat transfer: only to BatDevice or the CPU");
+		return NULL;
+	}
 	transfers++;
 	if (upload) {   /* the contiguous host copy comes from the core */
-		src = buffers_view_to(view, buffers_cpu_device());
+		src = buffers_tensor_to(view, buffers_cpu_device());
 		if (!src) return NULL;
 	}
-	if (buffers_view_get_info(src, &vi) == FAILURE || buffers_buffer_get_info(vi.buffer, &bi) == FAILURE) {
+	if (buffers_tensor_get_info(src, &vi) == FAILURE || buffers_buffer_get_info(vi.buffer, &bi) == FAILURE) {
 		if (upload) OBJ_RELEASE(src);
 		return NULL;
 	}
@@ -557,7 +551,7 @@ static zend_object *bat_transfer(zend_object *view, zend_object *device)
 		return NULL;
 	}
 	made++;
-	res = buffers_view_create(buf, vi.dtype, vi.ndim, vi.shape, vi.strides, vi.byte_offset);
+	res = buffers_tensor_create(buf, vi.dtype, vi.ndim, vi.shape, vi.strides, vi.byte_offset);
 	OBJ_RELEASE(buf);
 	return res;
 }
@@ -648,19 +642,19 @@ PHP_FUNCTION(bat_import)
 
 /* ---- DLPack ----------------------------------------------------------------------------------- */
 
-/* bat_export(BufferView $v): exports through the C API, describes the tensor, then calls the deleter */
+/* bat_export(Tensor $v): exports through the C API, describes the tensor, then calls the deleter */
 PHP_FUNCTION(bat_export)
 {
 	zend_object *v;
 	DLManagedTensorVersioned *t;
 	DLTensor *d;
-	buffers_view_info vi;
+	buffers_tensor_info vi;
 	buffers_buffer_info bi;
 
 	ZEND_PARSE_PARAMETERS_START(1, 1)
 		Z_PARAM_OBJ(v)
 	ZEND_PARSE_PARAMETERS_END();
-	if (buffers_view_get_info(v, &vi) == FAILURE || buffers_buffer_get_info(vi.buffer, &bi) == FAILURE) RETURN_THROWS();
+	if (buffers_tensor_get_info(v, &vi) == FAILURE || buffers_buffer_get_info(vi.buffer, &bi) == FAILURE) RETURN_THROWS();
 	if (buffers_dlpack_export(v, &t) == FAILURE) RETURN_THROWS();
 	d = &t->dl_tensor;
 	array_init(return_value);
@@ -677,7 +671,7 @@ PHP_FUNCTION(bat_export)
 	t->deleter(t);
 }
 
-/* bat_roundtrip(BufferView $v): export through the C API and import the tensor again */
+/* bat_roundtrip(Tensor $v): export through the C API and import the tensor again */
 PHP_FUNCTION(bat_roundtrip)
 {
 	zend_object *v, *w;
@@ -737,10 +731,10 @@ PHP_FUNCTION(bat_shape_dims)
 
 static void describe(smart_str *s, zval *z)
 {
-	buffers_view_info i;
+	buffers_tensor_info i;
 
 	ZVAL_DEREF(z);
-	if (Z_TYPE_P(z) == IS_OBJECT && buffers_is_view(Z_OBJ_P(z)) && buffers_view_get_info(Z_OBJ_P(z), &i) == SUCCESS) {
+	if (Z_TYPE_P(z) == IS_OBJECT && buffers_is_tensor(Z_OBJ_P(z)) && buffers_tensor_get_info(Z_OBJ_P(z), &i) == SUCCESS) {
 		smart_str_appends(s, "view<");
 		smart_str_appends(s, buffers_dtype_describe(i.dtype)->name);
 		for (int k = 0; k < i.ndim; k++) {
@@ -900,7 +894,7 @@ static PHP_RINIT_FUNCTION(buffers_api_test)
 
 static PHP_MINIT_FUNCTION(buffers_api_test)
 {
-	zend_class_entry ce, *device_if;
+	zend_class_entry ce;
 
 #if defined(ZTS) && defined(COMPILE_DL_BUFFERS_API_TEST)
 	ZEND_TSRMLS_CACHE_UPDATE();
@@ -922,7 +916,6 @@ static PHP_MINIT_FUNCTION(buffers_api_test)
 	matrix_handlers.free_obj = matrix_free;
 	matrix_handlers.clone_obj = NULL;
 
-	device_if = buffers_get_class(BUFFERS_CE_DEVICE);
 	INIT_CLASS_ENTRY(ce, "BatTensor", tensor_methods);
 	ce_tensor = zend_register_internal_class_ex(&ce, NULL);
 	ce_tensor->ce_flags |= ZEND_ACC_FINAL | ZEND_ACC_NO_DYNAMIC_PROPERTIES | ZEND_ACC_NOT_SERIALIZABLE;
@@ -930,12 +923,12 @@ static PHP_MINIT_FUNCTION(buffers_api_test)
 	memcpy(&tensor_handlers, &std_object_handlers, sizeof tensor_handlers);
 	tensor_handlers.offset = XtOffsetOf(bat_tensor, std);
 	tensor_handlers.clone_obj = NULL;
-	buffers_implement_tensor(ce_tensor, tensor_get_dtype, tensor_get_shape, tensor_get_ndim);
+	buffers_implement_tensor_interface(ce_tensor, tensor_get_dtype, tensor_get_shape, tensor_get_ndim);
 
-	INIT_CLASS_ENTRY(ce, "BatDevice", device_methods);
+	INIT_CLASS_ENTRY(ce, "BatDevice", NULL);
 	ce_device = zend_register_internal_class_ex(&ce, NULL);
 	ce_device->ce_flags |= ZEND_ACC_FINAL | ZEND_ACC_NO_DYNAMIC_PROPERTIES | ZEND_ACC_NOT_SERIALIZABLE;
-	zend_class_implements(ce_device, 1, device_if);
+	buffers_implement_device(ce_device, device_get_name, device_get_id, device_get_host);
 	if (buffers_register_device_type(ce_device, kDLCUDA) == FAILURE || buffers_register_transfer(ce_device, bat_transfer) == FAILURE) {
 		return FAILURE;
 	}

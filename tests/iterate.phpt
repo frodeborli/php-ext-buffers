@@ -4,7 +4,7 @@ count, foreach, iterators, ArrayAccess and Countable interfaces
 <?php if (!extension_loaded('buffers')) die('skip buffers extension not loaded'); ?>
 --FILE--
 <?php
-use Buffers\{DType, Buffer, BufferView};
+use Buffers\{DType, Buffer, Tensor};
 $b = new Buffer(24);
 $raw = $b->view(DType::UInt8);
 for ($i = 0; $i < 24; $i++) $raw[$i] = $i;
@@ -44,8 +44,8 @@ bool(true)
 bool(true)
 bool(true)
 bool(true)
-0: Buffers\BufferView [3,4] [4,5,6,7]
-1: Buffers\BufferView [3,4] [16,17,18,19]
+0: Buffers\Tensor [3,4] [4,5,6,7]
+1: Buffers\Tensor [3,4] [16,17,18,19]
 0=16 1=17 2=18 3=19 
 [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23]
 54,70,86
@@ -68,9 +68,9 @@ bool(true)
 bool(false)
 int(50)
 ValueError: Index 99 is out of range for an axis of length 24
-Error: Cannot append to a BufferView
-Error: Cannot unset an element of a BufferView
-TypeError: BufferView offset must be of type int, string given
+Error: Cannot append to a Tensor
+Error: Cannot unset an element of a Tensor
+TypeError: Tensor offset must be of type int, string given
 int(0)
 int(2)
 array(4) {

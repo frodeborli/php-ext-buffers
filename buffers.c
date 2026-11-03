@@ -72,7 +72,7 @@ PHP_MINFO_FUNCTION(buffers)
 }
 
 static const zend_module_dep buffers_deps[] = {
-	ZEND_MOD_OPTIONAL("json")   /* BufferView and Shape implement JsonSerializable when it is there */
+	ZEND_MOD_OPTIONAL("json")   /* Tensor and Shape implement JsonSerializable when it is there */
 	ZEND_MOD_END
 };
 

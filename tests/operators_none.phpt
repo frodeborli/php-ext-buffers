@@ -1,5 +1,5 @@
 --TEST--
-Arithmetic and bitwise operators on a BufferView are a TypeError when no extension handles them
+Arithmetic and bitwise operators on a Tensor are a TypeError when no extension handles them
 --SKIPIF--
 <?php if (!extension_loaded('buffers')) die('skip buffers extension not loaded'); if (function_exists('bat_counts')) die('skip the API consumer registers an operator handler'); ?>
 --FILE--
@@ -33,23 +33,23 @@ echo "comparisons are identity\n";
 var_dump($v == $v, $v == $w, $v === $w, $v != $w, $v <=> $v, (bool)$v, $v == null);
 echo "end\n";
 --EXPECT--
-+   TypeError: Unsupported operand types: Buffers\BufferView + int
-1+  TypeError: Unsupported operand types: int + Buffers\BufferView
--   TypeError: Unsupported operand types: Buffers\BufferView - Buffers\BufferView
-*   TypeError: Unsupported operand types: Buffers\BufferView * float
-/   TypeError: Unsupported operand types: Buffers\BufferView / int
-%   TypeError: Unsupported operand types: Buffers\BufferView % int
-**  TypeError: Unsupported operand types: Buffers\BufferView ** int
-<<  TypeError: Unsupported operand types: Buffers\BufferView << int
->>  TypeError: Unsupported operand types: Buffers\BufferView >> int
-|   TypeError: Unsupported operand types: Buffers\BufferView | int
-&   TypeError: Unsupported operand types: Buffers\BufferView & int
-^   TypeError: Unsupported operand types: Buffers\BufferView ^ int
-~   TypeError: Cannot perform bitwise not on Buffers\BufferView
--x  TypeError: Unsupported operand types: Buffers\BufferView * int
-.   Error: Object of class Buffers\BufferView could not be converted to string
-+=  TypeError: Unsupported operand types: Buffers\BufferView + int
-++  TypeError: Cannot increment Buffers\BufferView
++   TypeError: Unsupported operand types: Buffers\Tensor + int
+1+  TypeError: Unsupported operand types: int + Buffers\Tensor
+-   TypeError: Unsupported operand types: Buffers\Tensor - Buffers\Tensor
+*   TypeError: Unsupported operand types: Buffers\Tensor * float
+/   TypeError: Unsupported operand types: Buffers\Tensor / int
+%   TypeError: Unsupported operand types: Buffers\Tensor % int
+**  TypeError: Unsupported operand types: Buffers\Tensor ** int
+<<  TypeError: Unsupported operand types: Buffers\Tensor << int
+>>  TypeError: Unsupported operand types: Buffers\Tensor >> int
+|   TypeError: Unsupported operand types: Buffers\Tensor | int
+&   TypeError: Unsupported operand types: Buffers\Tensor & int
+^   TypeError: Unsupported operand types: Buffers\Tensor ^ int
+~   TypeError: Cannot perform bitwise not on Buffers\Tensor
+-x  TypeError: Unsupported operand types: Buffers\Tensor * int
+.   Error: Object of class Buffers\Tensor could not be converted to string
++=  TypeError: Unsupported operand types: Buffers\Tensor + int
+++  TypeError: Cannot increment Buffers\Tensor
 comparisons are identity
 bool(true)
 bool(false)

@@ -7,13 +7,13 @@ Devices: CpuDevice and FileDevice, identified by name and id
 use Buffers\{Buffer, DType, Device, CpuDevice, FileDevice, ForeignDevice};
 
 $cpu = CpuDevice::get();
-var_dump($cpu === CpuDevice::get(), $cpu instanceof Device, $cpu->name(), $cpu->id(), $cpu->isHostAccessible());
+var_dump($cpu === CpuDevice::get(), $cpu instanceof Device, $cpu->name, $cpu->id, $cpu->hostAccessible);
 $file = FileDevice::get();
-var_dump($file === FileDevice::get(), $file instanceof Device, $file->name(), $file->id(), $file->isHostAccessible(), $file === $cpu);
-var_dump(method_exists($cpu, 'dlpackType'), method_exists(Device::class, 'dlpackType'), (new ReflectionClass(Device::class))->getMethods() == true);
-echo implode(',', array_map(fn($m) => $m->getName(), (new ReflectionClass(Device::class))->getMethods())), "\n";
+var_dump($file === FileDevice::get(), $file instanceof Device, $file->name, $file->id, $file->hostAccessible, $file === $cpu);
+var_dump(method_exists($cpu, "name"), property_exists($cpu, "hostAccessible"), property_exists(Device::class, "id"));
+echo implode(",", array_map(fn($p) => $p->getName(), (new ReflectionClass(Device::class))->getProperties())), "\n";
 $b = new Buffer(8);
-var_dump($b->device() === $cpu, $b->view(DType::UInt8)->buffer->device() === $cpu, $b->isHostAccessible());
+var_dump($b->device === $cpu, $b->view(DType::UInt8)->buffer->device === $cpu, $b->isHostAccessible());
 foreach ([fn() => new CpuDevice, fn() => new FileDevice, fn() => new ForeignDevice, fn() => clone $cpu, fn() => clone $file, fn() => serialize($cpu), fn() => (function() use ($cpu) { $cpu->x = 1; })()] as $f) {
     try { $f(); echo "no error\n"; } catch (Throwable $e) { echo get_class($e), ': ', $e->getMessage(), "\n"; }
 }
@@ -31,9 +31,9 @@ int(0)
 bool(false)
 bool(false)
 bool(false)
-bool(false)
 bool(true)
-name,id,isHostAccessible
+bool(true)
+name,id,hostAccessible
 bool(true)
 bool(true)
 bool(true)

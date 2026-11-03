@@ -4,7 +4,7 @@ DLPack export and round trip
 <?php if (!extension_loaded('buffers_api_test')) die('skip needs the buffers_api_test extension'); ?>
 --FILE--
 <?php
-use Buffers\{DType, Buffer, BufferView};
+use Buffers\{DType, Buffer, Tensor};
 $b = new Buffer(96);
 $raw = $b->view(DType::UInt8);
 for ($i = 0; $i < 96; $i++) $raw[$i] = $i;
@@ -121,5 +121,5 @@ array(2) {
 }
 read-only tensors stay read-only through a round trip
 bool(false)
-Cannot write to a read-only BufferView
+Cannot write to a read-only Tensor
 end

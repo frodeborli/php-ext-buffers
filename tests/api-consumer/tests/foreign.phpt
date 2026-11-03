@@ -4,11 +4,11 @@ C API: a buffer over foreign memory with a counting deleter; view info; view cre
 <?php if (!extension_loaded('buffers_api_test')) die('skip needs the buffers_api_test extension'); ?>
 --FILE--
 <?php
-use Buffers\{DType, BufferView, Buffer};
+use Buffers\{DType, Tensor, Buffer};
 function live() { $c = bat_counts(); return $c['made'] - $c['deleted']; }
 
 $b = bat_make_buffer(24);
-var_dump($b instanceof Buffer, $b instanceof Buffer, $b->byteLength(), $b->isWritable(), $b->device() === Buffers\CpuDevice::get(), bat_is($b), bat_is($b->view(DType::UInt8)), bat_is(1));
+var_dump($b instanceof Buffer, $b instanceof Buffer, $b->byteLength, $b->isWritable(), $b->device === Buffers\CpuDevice::get(), bat_is($b), bat_is($b->view(DType::UInt8)), bat_is(1));
 $v = $b->view(DType::UInt8);
 var_dump($v[0], $v[23]);
 $v[3] = 99; var_dump(bat_peek($b, 3));
@@ -213,8 +213,8 @@ enum(Buffers\DType::Int16)
 read-only memory
 bool(false)
 int(1)
-Cannot write to a read-only BufferView
-Cannot write to a read-only BufferView
+Cannot write to a read-only Tensor
+Cannot write to a read-only Tensor
 lifetime: the deleter runs once, when the last view and buffer are gone
 1 live
 1 live (the imported view holds it)

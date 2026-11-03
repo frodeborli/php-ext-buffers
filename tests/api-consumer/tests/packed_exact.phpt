@@ -4,7 +4,7 @@ C API: packed views over exactly-sized memory (no byte beyond the end is touched
 <?php if (!extension_loaded('buffers_api_test')) die('skip needs the buffers_api_test extension'); ?>
 --FILE--
 <?php
-use Buffers\{DType, BufferView};
+use Buffers\{DType, Tensor};
 // bat_make_buffer allocates exactly n bytes: valgrind reports any read or write past the end
 foreach ([[DType::Float6E2M3FN, 4, 5], [DType::Float6E3M2FN, 3, 4], [DType::Float6E2M3FN, 6, 8], [DType::Float4E2M1FN, 3, 6], [DType::Float4E2M1FN, 1, 1], [DType::Float6E2M3FN, 1, 1]] as [$t, $len, $n]) {
     $b = bat_make_buffer($len);
@@ -21,7 +21,7 @@ print_r(bat_info($v));
 print_r(bat_export($v));
 print_r(bat_export($v[1]));
 $i = bat_roundtrip($v);
-var_dump($i->dtype, $i->shape->toArray(), $i->strides, $i->offset, $i->buffer->byteLength());
+var_dump($i->dtype, $i->shape->toArray(), $i->strides, $i->offset, $i->buffer->byteLength);
 $i[1][3] = 1.5; var_dump($v[1][3]);
 $f4 = bat_make_buffer(8)->view(DType::Float4E2M1FN, [2, 6], [8, 1], 0);
 print_r(bat_export($f4)['strides']);

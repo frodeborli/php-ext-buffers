@@ -4,7 +4,7 @@ Complex dtypes
 <?php if (!extension_loaded('buffers')) die('skip buffers extension not loaded'); ?>
 --FILE--
 <?php
-use Buffers\{DType, Buffer, BufferView};
+use Buffers\{DType, Buffer, Tensor};
 $b = new Buffer(64);
 foreach (['Complex32', 'BComplex32', 'Complex64', 'Complex128'] as $name) {
     $v = $b->view(constant("Buffers\\DType::$name"), 3);
@@ -22,43 +22,43 @@ Complex32 4 bytes/element
   [1.5,-2.25]
   [3,0]
   [0.5,0]
-  Cannot write array to a BufferView of dtype Complex32
-  Cannot write array to a BufferView of dtype Complex32
-  Cannot write array to a BufferView of dtype Complex32
-  Cannot write array to a BufferView of dtype Complex32
-  Cannot write string to a BufferView of dtype Complex32
-  Cannot write null to a BufferView of dtype Complex32
-  Cannot write array to a BufferView of dtype Complex32
+  Cannot write array to a Tensor of dtype Complex32
+  Cannot write array to a Tensor of dtype Complex32
+  Cannot write array to a Tensor of dtype Complex32
+  Cannot write array to a Tensor of dtype Complex32
+  Cannot write string to a Tensor of dtype Complex32
+  Cannot write null to a Tensor of dtype Complex32
+  Cannot write array to a Tensor of dtype Complex32
 BComplex32 4 bytes/element
   [1.5,-2.25]
   [3,0]
   [0.5,0]
-  Cannot write array to a BufferView of dtype BComplex32
-  Cannot write array to a BufferView of dtype BComplex32
-  Cannot write array to a BufferView of dtype BComplex32
-  Cannot write array to a BufferView of dtype BComplex32
-  Cannot write string to a BufferView of dtype BComplex32
-  Cannot write null to a BufferView of dtype BComplex32
-  Cannot write array to a BufferView of dtype BComplex32
+  Cannot write array to a Tensor of dtype BComplex32
+  Cannot write array to a Tensor of dtype BComplex32
+  Cannot write array to a Tensor of dtype BComplex32
+  Cannot write array to a Tensor of dtype BComplex32
+  Cannot write string to a Tensor of dtype BComplex32
+  Cannot write null to a Tensor of dtype BComplex32
+  Cannot write array to a Tensor of dtype BComplex32
 Complex64 8 bytes/element
   [1.5,-2.25]
   [3,0]
   [0.5,0]
-  Cannot write array to a BufferView of dtype Complex64
-  Cannot write array to a BufferView of dtype Complex64
-  Cannot write array to a BufferView of dtype Complex64
-  Cannot write array to a BufferView of dtype Complex64
-  Cannot write string to a BufferView of dtype Complex64
-  Cannot write null to a BufferView of dtype Complex64
-  Cannot write array to a BufferView of dtype Complex64
+  Cannot write array to a Tensor of dtype Complex64
+  Cannot write array to a Tensor of dtype Complex64
+  Cannot write array to a Tensor of dtype Complex64
+  Cannot write array to a Tensor of dtype Complex64
+  Cannot write string to a Tensor of dtype Complex64
+  Cannot write null to a Tensor of dtype Complex64
+  Cannot write array to a Tensor of dtype Complex64
 Complex128 16 bytes/element
   [1.5,-2.25]
   [3,0]
   [0.5,0]
-  Cannot write array to a BufferView of dtype Complex128
-  Cannot write array to a BufferView of dtype Complex128
-  Cannot write array to a BufferView of dtype Complex128
-  Cannot write array to a BufferView of dtype Complex128
-  Cannot write string to a BufferView of dtype Complex128
-  Cannot write null to a BufferView of dtype Complex128
-  Cannot write array to a BufferView of dtype Complex128
+  Cannot write array to a Tensor of dtype Complex128
+  Cannot write array to a Tensor of dtype Complex128
+  Cannot write array to a Tensor of dtype Complex128
+  Cannot write array to a Tensor of dtype Complex128
+  Cannot write string to a Tensor of dtype Complex128
+  Cannot write null to a Tensor of dtype Complex128
+  Cannot write array to a Tensor of dtype Complex128
