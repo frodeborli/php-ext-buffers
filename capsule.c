@@ -16,6 +16,12 @@ static zend_object *capsule_create(zend_class_entry *ce)
 	return &c->std;
 }
 
+static zend_function *capsule_no_constructor(zend_object *o)
+{
+	zend_throw_error(NULL, "DLPackCapsule cannot be instantiated; use TypedView::toDLPack()");
+	return NULL;
+}
+
 /* An unconsumed capsule that is dropped releases its tensor. */
 static void capsule_free(zend_object *o)
 {
@@ -230,6 +236,7 @@ void dlp_capsule_minit(void)
 	capsule_handlers.offset = XtOffsetOf(dlp_capsule, std);
 	capsule_handlers.free_obj = capsule_free;
 	capsule_handlers.clone_obj = NULL;
+	capsule_handlers.get_constructor = capsule_no_constructor;
 }
 
 #ifdef DLPACK_TESTING
@@ -261,15 +268,16 @@ ZEND_BEGIN_ARG_INFO_EX(arginfo_dlpack_test_make, 0, 0, 4)
 	ZEND_ARG_TYPE_INFO(0, device, IS_LONG, 0)
 	ZEND_ARG_TYPE_INFO(0, byteOffset, IS_LONG, 0)
 	ZEND_ARG_TYPE_INFO(0, minor, IS_LONG, 0)
+	ZEND_ARG_TYPE_INFO(0, major, IS_LONG, 0)
 ZEND_END_ARG_INFO()
 ZEND_BEGIN_ARG_INFO_EX(arginfo_dlpack_test_counts, 0, 0, 0)
 ZEND_END_ARG_INFO()
 
-/* dlpack_test_make(code, bits, lanes, shape, ?strides = null, flags = 0, device = 1, byteOffset = 0, minor = 3)
+/* dlpack_test_make(code, bits, lanes, shape, ?strides = null, flags = 0, device = 1, byteOffset = 0, minor = 3, major = 1)
  * The memory holds the byte pattern i & 0xff, so tests can check what a view reads. */
 PHP_FUNCTION(dlpack_test_make)
 {
-	zend_long code, bits, lanes, flags = 0, device = 1, byte_offset = 0, minor = DLPACK_MINOR_VERSION;
+	zend_long code, bits, lanes, flags = 0, device = 1, byte_offset = 0, minor = DLPACK_MINOR_VERSION, major = DLPACK_MAJOR_VERSION;
 	HashTable *shape, *strides = NULL;
 	test_ctx *c;
 	zval *z;
@@ -277,10 +285,10 @@ PHP_FUNCTION(dlpack_test_make)
 	int64_t extent = 1, esize, acc = 1;
 	size_t total;
 
-	ZEND_PARSE_PARAMETERS_START(4, 9)
+	ZEND_PARSE_PARAMETERS_START(4, 10)
 		Z_PARAM_LONG(code) Z_PARAM_LONG(bits) Z_PARAM_LONG(lanes) Z_PARAM_ARRAY_HT(shape)
 		Z_PARAM_OPTIONAL
-		Z_PARAM_ARRAY_HT_OR_NULL(strides) Z_PARAM_LONG(flags) Z_PARAM_LONG(device) Z_PARAM_LONG(byte_offset) Z_PARAM_LONG(minor)
+		Z_PARAM_ARRAY_HT_OR_NULL(strides) Z_PARAM_LONG(flags) Z_PARAM_LONG(device) Z_PARAM_LONG(byte_offset) Z_PARAM_LONG(minor) Z_PARAM_LONG(major)
 	ZEND_PARSE_PARAMETERS_END();
 
 	c = calloc(1, sizeof *c);
@@ -303,7 +311,7 @@ PHP_FUNCTION(dlpack_test_make)
 	if (posix_memalign(&c->mem, 64, total) != 0) { free(c); RETURN_FALSE; }
 	for (size_t i = 0; i < total; i++) ((uint8_t *)c->mem)[i] = (uint8_t)i;
 
-	c->t.version.major = DLPACK_MAJOR_VERSION;
+	c->t.version.major = (uint32_t)major;
 	c->t.version.minor = (uint32_t)minor;
 	c->t.manager_ctx = c;
 	c->t.deleter = test_deleter;

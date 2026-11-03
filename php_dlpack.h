@@ -110,6 +110,13 @@ static inline dlp_buffer *dlp_buffer_from(zend_object *o) { return (dlp_buffer *
 static inline dlp_view *dlp_view_from(zend_object *o) { return (dlp_view *)((char *)o - XtOffsetOf(dlp_view, std)); }
 static inline dlp_capsule *dlp_capsule_from(zend_object *o) { return (dlp_capsule *)((char *)o - XtOffsetOf(dlp_capsule, std)); }
 
+/* PHP's (int) conversion of a float, without the warning PHP 8.5 added for NaN, INF and out-of-range values */
+#if PHP_VERSION_ID >= 80500
+#define dlp_dval_to_lval zend_dval_to_lval_silent
+#else
+#define dlp_dval_to_lval zend_dval_to_lval
+#endif
+
 /* r = a * b for non-negative a and b; true on overflow */
 static inline bool dlp_mul_ovf(int64_t a, int64_t b, int64_t *r)
 {

@@ -39,7 +39,7 @@ static zend_always_inline bool dlp_dbl(zval *v, double *d)
 static zend_always_inline bool dlp_lval(zval *v, zend_long *l)
 {
 	if (EXPECTED(Z_TYPE_P(v) == IS_LONG)) { *l = Z_LVAL_P(v); return true; }
-	if (Z_TYPE_P(v) == IS_DOUBLE) { *l = zend_dval_to_lval(Z_DVAL_P(v)); return true; }
+	if (Z_TYPE_P(v) == IS_DOUBLE) { *l = dlp_dval_to_lval(Z_DVAL_P(v)); return true; }
 	return false;
 }
 
@@ -426,7 +426,7 @@ PHP_METHOD(TypedView, getIterator)
 /* ---- BufferInterface::view() ------------------------------------------------------------- */
 
 /* shape/strides arrays: 1..8 non-negative integers (strides: at least 1) */
-static bool read_dims(HashTable *ht, int64_t *out, int *n, const char *what, int64_t min)
+static bool read_dims(HashTable *ht, int64_t *out, int *n, uint32_t argn, int64_t min)
 {
 	zval *z;
 	int c = 0;
@@ -434,15 +434,15 @@ static bool read_dims(HashTable *ht, int64_t *out, int *n, const char *what, int
 	ZEND_HASH_FOREACH_VAL(ht, z) {
 		ZVAL_DEREF(z);
 		if (Z_TYPE_P(z) != IS_LONG) {
-			zend_type_error("%s must contain only integers, %s given", what, zend_zval_type_name(z));
+			zend_argument_type_error(argn, "must contain only integers, %s given", zend_zval_type_name(z));
 			return false;
 		}
 		if (c == DLP_MAX_NDIM) {
-			zend_value_error("%s must have at most %d elements", what, DLP_MAX_NDIM);
+			zend_argument_value_error(argn, "must have at most %d elements", DLP_MAX_NDIM);
 			return false;
 		}
 		if (Z_LVAL_P(z) < min) {
-			zend_value_error("%s must be %s", what, min ? "at least 1" : "non-negative");
+			zend_argument_value_error(argn, "must contain only %s", min ? "values of at least 1" : "non-negative values");
 			return false;
 		}
 		out[c++] = Z_LVAL_P(z);
@@ -498,7 +498,7 @@ void dlp_buffer_view_impl(zend_object *bufobj, INTERNAL_FUNCTION_PARAMETERS)
 		shape[0] = Z_LVAL_P(shape_zv);
 		ndim = 1;
 	} else if (Z_TYPE_P(shape_zv) == IS_ARRAY) {
-		if (!read_dims(Z_ARRVAL_P(shape_zv), shape, &ndim, "shape", 0)) RETURN_THROWS();
+		if (!read_dims(Z_ARRVAL_P(shape_zv), shape, &ndim, 2, 0)) RETURN_THROWS();
 		if (ndim == 0) {
 			zend_argument_value_error(2, "must have between 1 and %d elements", DLP_MAX_NDIM);
 			RETURN_THROWS();
@@ -509,7 +509,7 @@ void dlp_buffer_view_impl(zend_object *bufobj, INTERNAL_FUNCTION_PARAMETERS)
 	}
 
 	if (strides_ht) {
-		if (!read_dims(strides_ht, st, &n, "strides", 1)) RETURN_THROWS();
+		if (!read_dims(strides_ht, st, &n, 3, 1)) RETURN_THROWS();
 		if (n != ndim) {
 			zend_argument_value_error(3, "must have one entry per dimension (%d)", ndim);
 			RETURN_THROWS();
@@ -546,7 +546,7 @@ void dlp_buffer_view_impl(zend_object *bufobj, INTERNAL_FUNCTION_PARAMETERS)
 		}
 		fits = fits && last <= INT64_MAX - size && (zend_ulong)offset + (zend_ulong)last + (zend_ulong)size <= b->len;
 		if (!fits) {
-			zend_value_error("The view extends beyond the end of the buffer (%zu bytes)", b->len);
+			zend_argument_value_error(2, "with the given strides and offset extends beyond the end of the buffer (%zu bytes)", b->len);
 			RETURN_THROWS();
 		}
 	}
