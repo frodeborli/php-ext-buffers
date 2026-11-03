@@ -53,7 +53,37 @@ image. Interpreter = `opcache.jit=off`; JIT = `opcache.jit=tracing`, and a JIT c
 opcache's JIT buffer shows that code was actually compiled (`opcache.file_update_protection=0` is required: by
 default opcache silently refuses to compile files younger than two seconds). Reproduce with `benchmarks/run.sh`.
 
-@@BENCH@@
+| access (alpha byte of each pixel)       | interpreter | JIT  | ext-dlpack JIT (same machine) |
+|-----------------------------------------|------------:|-----:|------:|
+| **read, view 1-D idiom** | 23.6 | 7.9 | 9.4 |
+| **read, view 1-D, row base hoisted** | 17.8 | 7.2 | 7.2 |
+| read, view `[$y][$x][$c]` (chained) | 67.6 | 48.3 | 49.1 |
+| read, view `[$y]` hoisted, `[$x][$c]` | 41.3 | 27.6 | 27.7 |
+| read, view 2-D `[$y][$x*4+$c]` | 44.0 | 29.0 | 27.8 |
+| read, PHP array, flat | 20.4 | 3.3 | 3.2 |
+| read, PHP array, nested | 24.9 | 6.1 | 6.1 |
+| read, SplFixedArray, flat | 25.5 | 10.2 | 10.2 |
+| **write, view 1-D idiom** | 22.0 | 8.3 | 8.3 |
+| **write, view 1-D, row base hoisted** | 16.9 | 8.0 | 8.2 |
+| write, view chained | 66.7 | 56.3 | 54.3 |
+| write, view `[$y]` hoisted | 39.6 | 29.8 | 29.4 |
+| write, PHP array, flat | 22.7 | 5.3 | 5.2 |
+| write, PHP array, nested | 43.3 | 29.6 | 32.2 |
+| write, SplFixedArray, flat | 25.3 | 11.3 | 11.2 |
+| `+=`, view 1-D idiom | 28.8 | 15.7 | 15.8 |
+| `+=`, view chained | 71.4 | 62.0 | 61.4 |
+
+Best of three `benchmarks/run.sh` runs of each extension, back to back on the same machine (PHP 8.5.12, JIT buffer verified:
+"code was compiled"). The last column is the predecessor, ext-dlpack, built the same way: the 1-D and chained paths did not
+regress (differences are within the run-to-run noise of about 5%; the 7.9 ns against 9.4 ns for the 1-D read idiom is the
+only visible gap and in the good direction, not something the code changed on purpose).
+
+Other numbers (JIT): a 1-D read costs 7-8 ns and a write 7-11 ns for every integer, float and small-float dtype, including the
+packed `Float6*`/`Float4*` formats (read 7.8, write 11.1: a shift and mask, and a read-modify-write); `Complex*` reads cost about 41-47 ns
+because they allocate an `[re, im]` array. Reading a property of a view costs 39 ns (`ndim`, `offset`) to 102 ns (`strides`, which builds an
+array; `shape` 92 ns builds a `Shape`); making a sub-view with `$v[$i & 15]` costs 23.5 ns in a loop. Memory per element (1M elements):
+`UInt8` 1.01 B, `Float32` 4.00 B, `Float64` 8.00 B, against 16.8 B for a PHP array of ints or floats and 16 B for `SplFixedArray`.
+
 
 What this means, plainly: under the JIT a typed view is about as fast as `SplFixedArray` and roughly 2x slower than
 a plain packed PHP array for flat access (the JIT inlines array access; an object access goes through a handler
@@ -325,7 +355,27 @@ without the feature (see Performance).
 
 What has been run, on Linux x86-64 (Ubuntu host, Debian 12 and Alpine containers):
 
-@@VERIFICATION@@
+* `tests/` phpt suite (32 files; 24 run and 8 skip with the extension alone, 30 run and 2 skip with the API consumer loaded - the skips
+  are tests that need the consumer, 32-bit-only or 64-bit-only tests) on PHP 8.4 and 8.5, Debian/glibc and Alpine/musl via Docker
+  (`tools/docker-test.sh`), NTS and ZTS images (8.4 and 8.5, Debian and Alpine), plus debug builds of php-src 8.5.13-dev NTS and ZTS
+  (assertions on, which also checks the internal hook functions and the API consumer's arginfo); all pass, no compiler warnings with
+  `-Wall -Wextra`. 32-bit PHP (`linux/386`: 8.4 Debian, 8.5 Debian, 8.4 Alpine): all pass, with the 64-bit-only tests skipped and
+  `tests/bits32.phpt` checking the 32-bit rule. aarch64 (little-endian, under QEMU, 8.4 Debian): all pass.
+* The whole suite, both passes, under valgrind with `USE_ZEND_ALLOC=0` (`tools/valgrind.sh`, PHP 8.4 NTS): zero errors, zero leaks, including
+  parked pool objects at shutdown, foreign-tensor deleters, owner references, the readiness contexts and exactly-sized buffers read
+  at their last packed element.
+* `tools/oracle/run.sh decode|encode|doubles`: against ml_dtypes 0.5.4 - every code of every format of at most 16 bits decodes
+  identically; every one of the 2^32 float32 inputs encodes identically for `float8_e4m3fn`, `float8_e5m2` and `float4_e2m1fn` (the
+  other formats were swept for the predecessor and their code is unchanged); 20 million random doubles, exact midpoints and their
+  neighbours per format encode identically.
+* `tools/oracle/run-fuzz.sh`: a NumPy differential fuzz (random dtype, bytes, shape, strides, offset; reads through chained offsets and
+  writes compared with NumPy `as_strided` over the same bytes; the packed formats checked with NumPy bit operations - bit positions,
+  extraction, read-modify-write - against ml_dtypes' decode and encode; 0-d views checked for geometry and a DLPack round trip):
+  30000 views, 1.09 million elements, 14348 write passes, no mismatch. `SCRIPT=view_fuzz.py tools/oracle/run-fuzz.sh`: hostile `view()`
+  arguments (including `[]`, and the packed rules) against an exact big-integer model: 100000 calls, 12155 accepted, 87845 rejected, no mismatch.
+* Not run: macOS, Windows (`config.w32` and the workflows are written but never executed), the GitHub workflows themselves, real
+  multi-threaded ZTS, big-endian machines (s390x needs QEMU binfmt, which is not installed here; no code assumes little-endian and
+  the tests that print element bytes skip on big-endian, but that is untested).
 
 Commands: `tools/test.sh [8.x]` builds out of tree and runs the suite (twice: with the extension alone, then with the API
 consumer loaded); `tools/valgrind.sh [8.x]`; `tools/docker-test.sh [image ...]` (`DOCKER_PLATFORM=linux/386` for 32-bit);
