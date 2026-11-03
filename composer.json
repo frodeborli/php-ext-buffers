@@ -1,0 +1,21 @@
+{
+    "name": "phasync/ext-dlpack",
+    "description": "PHP extension: typed, n-dimensional views over byte buffers (ArrayBuffer, TypedView, DType) with all ML dtypes and zero-copy DLPack exchange.",
+    "type": "php-ext",
+    "license": "MIT",
+    "keywords": ["dlpack", "tensor", "ndarray", "typed array", "buffer", "bfloat16", "float8", "extension"],
+    "authors": [
+        {
+            "name": "Frode Børli",
+            "email": "frode@ennerd.com"
+        }
+    ],
+    "require": {
+        "php": ">=8.2"
+    },
+    "php-ext": {
+        "extension-name": "dlpack",
+        "os-families": ["linux", "darwin", "windows"],
+        "configure-options": []
+    }
+}

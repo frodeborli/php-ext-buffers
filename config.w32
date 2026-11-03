@@ -1,0 +1,6 @@
+ARG_ENABLE("dlpack", "dlpack support", "no");
+
+if (PHP_DLPACK != "no") {
+	EXTENSION("dlpack", "dlpack.c dtype.c buffer.c view.c capsule.c");
+	AC_DEFINE("HAVE_DLPACK", 1, "dlpack support enabled");
+}

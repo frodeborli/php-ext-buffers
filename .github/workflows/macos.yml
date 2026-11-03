@@ -1,0 +1,43 @@
+name: macOS
+
+# Builds and tests on Apple silicon; release.yml calls it, or run it by hand (workflow_dispatch picks one PHP).
+on:
+  workflow_call:
+  workflow_dispatch:
+    inputs:
+      php:
+        description: 'PHP version (empty: all)'
+        default: '8.5'
+
+jobs:
+  matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      php: ${{ steps.m.outputs.php }}
+    steps:
+      - id: m
+        run: |
+          php='${{ inputs.php }}'
+          echo "php=$( [ -n "$php" ] && echo "[\"$php\"]" || echo '["8.2","8.3","8.4","8.5"]')" >> "$GITHUB_OUTPUT"
+
+  build-test:
+    name: PHP ${{ matrix.php }} macOS arm64
+    needs: matrix
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ${{ fromJSON(needs.matrix.outputs.php) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
+        with: { php-version: '${{ matrix.php }}', tools: phpize, coverage: none }
+      - name: Build
+        run: |
+          phpize
+          ./configure --enable-dlpack --enable-dlpack-testing CFLAGS="-g -O2 -Wall -Wextra -Wno-unused-parameter -Wno-missing-field-initializers"
+          make -j"$(sysctl -n hw.ncpu)"
+          php -d extension="$PWD/modules/dlpack.so" -r 'exit(extension_loaded("dlpack") ? 0 : 1);'
+      - name: Test
+        env: { NO_INTERACTION: '1', REPORT_EXIT_STATUS: '1', TEST_PHP_ARGS: '--show-diff' }
+        run: make test TESTS=tests/
