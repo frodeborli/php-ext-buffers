@@ -1,5 +1,5 @@
 /* This is a generated file, edit the .stub.php file instead.
- * Stub hash: 4f788de7dd79a39572482ba3c26e5c10b3e54e19 */
+ * Stub hash: 86d43335151786f24b020d4bed3cebe998c2a2bc */
 
 ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_class_Buffers_DType_bits, 0, 0, IS_LONG, 0)
 ZEND_END_ARG_INFO()
@@ -71,7 +71,24 @@ ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(arginfo_class_Buffers_Buffer_fromFile, 0,
 	ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, offset, IS_LONG, 0, "0")
 	ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, length, IS_LONG, 1, "null")
 	ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, map, _IS_BOOL, 0, "true")
+	ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, writable, _IS_BOOL, 0, "false")
 ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(arginfo_class_Buffers_Buffer_createFile, 0, 2, Buffers\\Buffer, 0)
+	ZEND_ARG_TYPE_INFO(0, path, IS_STRING, 0)
+	ZEND_ARG_TYPE_INFO(0, byteLength, IS_LONG, 0)
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_class_Buffers_Buffer_flush, 0, 0, IS_VOID, 0)
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_class_Buffers_Buffer_writeTo, 0, 1, IS_LONG, 0)
+	ZEND_ARG_TYPE_INFO(0, stream, IS_MIXED, 0)
+	ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, offset, IS_LONG, 0, "0")
+	ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, length, IS_LONG, 1, "null")
+ZEND_END_ARG_INFO()
+
+#define arginfo_class_Buffers_Buffer_readFrom arginfo_class_Buffers_Buffer_writeTo
 
 #define arginfo_class_Buffers_Buffer_isWritable arginfo_class_Buffers_DType_isByteAligned
 
@@ -128,6 +145,10 @@ ZEND_METHOD(Buffers_Shape, jsonSerialize);
 ZEND_METHOD(Buffers_Buffer, __construct);
 ZEND_METHOD(Buffers_Buffer, fromString);
 ZEND_METHOD(Buffers_Buffer, fromFile);
+ZEND_METHOD(Buffers_Buffer, createFile);
+ZEND_METHOD(Buffers_Buffer, flush);
+ZEND_METHOD(Buffers_Buffer, writeTo);
+ZEND_METHOD(Buffers_Buffer, readFrom);
 ZEND_METHOD(Buffers_Buffer, isWritable);
 ZEND_METHOD(Buffers_Buffer, isHostAccessible);
 ZEND_METHOD(Buffers_Buffer, view);
@@ -180,6 +201,10 @@ static const zend_function_entry class_Buffers_Buffer_methods[] = {
 	ZEND_ME(Buffers_Buffer, __construct, arginfo_class_Buffers_Buffer___construct, ZEND_ACC_PUBLIC)
 	ZEND_ME(Buffers_Buffer, fromString, arginfo_class_Buffers_Buffer_fromString, ZEND_ACC_PUBLIC|ZEND_ACC_STATIC)
 	ZEND_ME(Buffers_Buffer, fromFile, arginfo_class_Buffers_Buffer_fromFile, ZEND_ACC_PUBLIC|ZEND_ACC_STATIC)
+	ZEND_ME(Buffers_Buffer, createFile, arginfo_class_Buffers_Buffer_createFile, ZEND_ACC_PUBLIC|ZEND_ACC_STATIC)
+	ZEND_ME(Buffers_Buffer, flush, arginfo_class_Buffers_Buffer_flush, ZEND_ACC_PUBLIC)
+	ZEND_ME(Buffers_Buffer, writeTo, arginfo_class_Buffers_Buffer_writeTo, ZEND_ACC_PUBLIC)
+	ZEND_ME(Buffers_Buffer, readFrom, arginfo_class_Buffers_Buffer_readFrom, ZEND_ACC_PUBLIC)
 	ZEND_ME(Buffers_Buffer, isWritable, arginfo_class_Buffers_Buffer_isWritable, ZEND_ACC_PUBLIC)
 	ZEND_ME(Buffers_Buffer, isHostAccessible, arginfo_class_Buffers_Buffer_isHostAccessible, ZEND_ACC_PUBLIC)
 	ZEND_ME(Buffers_Buffer, view, arginfo_class_Buffers_Buffer_view, ZEND_ACC_PUBLIC)

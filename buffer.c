@@ -7,6 +7,7 @@
 #include "zend_interfaces.h"
 #include "ext/standard/php_filestat.h"
 #include "main/fopen_wrappers.h"
+#include "main/php_streams.h"
 #include "buffers_arginfo.h"
 
 #ifdef _WIN32
@@ -249,8 +250,11 @@ PHP_METHOD(Buffers_Buffer, fromString)
 
 /* ---- files ------------------------------------------------------------------------------------ */
 
-/* Opens `path`; returns the handle (or -1 after throwing) and the file size */
-static intptr_t file_open(const char *path, uint64_t *size)
+enum { FILE_READ, FILE_WRITE, FILE_CREATE };
+
+/* Opens `path` for reading, reading and writing, or creating/truncating (then sized to `create_len`); returns the handle
+ * (or -1 after throwing) and the file size */
+static intptr_t file_open(const char *path, int mode, uint64_t create_len, uint64_t *size)
 {
 	if (php_check_open_basedir_ex(path, 0)) {
 		zend_throw_error(NULL, "Cannot open '%s': open_basedir restriction in effect", path);
@@ -259,11 +263,21 @@ static intptr_t file_open(const char *path, uint64_t *size)
 #ifdef _WIN32
 	{
 		LARGE_INTEGER sz;
-		HANDLE h = CreateFileA(path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+		HANDLE h = CreateFileA(path, mode == FILE_READ ? GENERIC_READ : GENERIC_READ | GENERIC_WRITE,
+			FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL,
+			mode == FILE_CREATE ? CREATE_ALWAYS : OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
 
 		if (h == INVALID_HANDLE_VALUE) {
 			zend_throw_error(NULL, "Cannot open '%s' (error %lu)", path, (unsigned long)GetLastError());
 			return -1;
+		}
+		if (mode == FILE_CREATE) {
+			sz.QuadPart = (LONGLONG)create_len;
+			if (!SetFilePointerEx(h, sz, NULL, FILE_BEGIN) || !SetEndOfFile(h)) {
+				CloseHandle(h);
+				zend_throw_error(NULL, "Cannot size '%s' to " ZEND_LONG_FMT " bytes", path, (zend_long)create_len);
+				return -1;
+			}
 		}
 		if (!GetFileSizeEx(h, &sz)) {
 			CloseHandle(h);
@@ -276,17 +290,23 @@ static intptr_t file_open(const char *path, uint64_t *size)
 #else
 	{
 		struct stat st;
-		int fd = VCWD_OPEN(path, O_RDONLY
+		int flags = (mode == FILE_READ ? O_RDONLY : O_RDWR) | (mode == FILE_CREATE ? O_CREAT | O_TRUNC : 0)
 # ifdef O_CLOEXEC
 			| O_CLOEXEC
 # endif
 # ifdef O_LARGEFILE
 			| O_LARGEFILE
 # endif
-		);
+		;
+		int fd = VCWD_OPEN_MODE(path, flags, 0666);
 
 		if (fd < 0) {
 			zend_throw_error(NULL, "Cannot open '%s': %s", path, strerror(errno));
+			return -1;
+		}
+		if (mode == FILE_CREATE && ftruncate(fd, (off_t)create_len) != 0) {
+			close(fd);
+			zend_throw_error(NULL, "Cannot size '%s' to " ZEND_LONG_FMT " bytes: %s", path, (zend_long)create_len, strerror(errno));
 			return -1;
 		}
 		if (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode)) {
@@ -309,8 +329,9 @@ static void buf_file_close(intptr_t file)
 #endif
 }
 
-/* Maps [offset, offset + len) read-only; false if that is impossible (the caller falls back to an unmapped buffer) */
-static bool file_map(buf_buffer *b, intptr_t file, uint64_t offset, uint64_t len)
+/* Maps [offset, offset + len) (shared: other processes see writes at once, and a writable mapping writes the file);
+ * false if that is impossible (a read-only caller then falls back to an unmapped buffer) */
+static bool file_map(buf_buffer *b, intptr_t file, uint64_t offset, uint64_t len, bool writable)
 {
 	uint64_t gran, aligned, delta;
 	void *p;
@@ -329,15 +350,15 @@ static bool file_map(buf_buffer *b, intptr_t file, uint64_t offset, uint64_t len
 	}
 #ifdef _WIN32
 	{
-		HANDLE m = CreateFileMappingA((HANDLE)file, NULL, PAGE_READONLY, 0, 0, NULL);
+		HANDLE m = CreateFileMappingA((HANDLE)file, NULL, writable ? PAGE_READWRITE : PAGE_READONLY, 0, 0, NULL);
 
 		if (!m) return false;
-		p = MapViewOfFile(m, FILE_MAP_READ, (DWORD)(aligned >> 32), (DWORD)(aligned & 0xffffffffu), (size_t)(len + delta));
+		p = MapViewOfFile(m, writable ? FILE_MAP_WRITE : FILE_MAP_READ, (DWORD)(aligned >> 32), (DWORD)(aligned & 0xffffffffu), (size_t)(len + delta));
 		CloseHandle(m);
 		if (!p) return false;
 	}
 #else
-	p = mmap(NULL, (size_t)(len + delta), PROT_READ, MAP_PRIVATE, (int)file, (off_t)aligned);
+	p = mmap(NULL, (size_t)(len + delta), writable ? PROT_READ | PROT_WRITE : PROT_READ, MAP_SHARED, (int)file, (off_t)aligned);
 	if (p == MAP_FAILED) return false;
 #endif
 	b->map_base = p;
@@ -346,21 +367,59 @@ static bool file_map(buf_buffer *b, intptr_t file, uint64_t offset, uint64_t len
 	return true;
 }
 
+/* a buffer on FileDevice over [offset, offset + len) of `file`, which this takes over (closed unless the buffer keeps it).
+ * Returns false after throwing. */
+static bool file_buffer(zval *rv, intptr_t file, uint64_t offset, uint64_t len, bool map, bool writable)
+{
+	buf_buffer *b;
+
+	object_init_ex(rv, buf_ce_buffer);
+	b = buf_buffer_from(Z_OBJ_P(rv));
+	b->inited = true;
+	b->writable = writable;
+	b->len = len;
+	b->dev_type = BUF_DEV_FILE;
+	b->device = buf_file_device();
+	GC_ADDREF(b->device);
+	if (len == 0) {
+		b->base = &empty_byte;
+		b->host = map;
+		b->slow = !map;
+		buf_file_close(file);
+	} else if (map && file_map(b, file, offset, len, writable)) {
+		b->host = true;
+		b->slow = false;
+		buf_file_close(file);   /* the mapping keeps the file */
+	} else if (writable) {
+		buf_file_close(file);
+		zval_ptr_dtor(rv);
+		ZVAL_UNDEF(rv);
+		zend_throw_error(NULL, "Cannot map the file for writing");
+		return false;
+	} else {
+		b->host = false;        /* storage only: Tensor::to() reads it */
+		b->slow = true;
+		b->file = file;
+		b->file_off = offset;
+	}
+	return true;
+}
+
 PHP_METHOD(Buffers_Buffer, fromFile)
 {
 	zend_string *path;
 	zend_long offset = 0, length = 0;
-	bool length_null = true, map = true;
+	bool length_null = true, map = true, writable = false;
 	uint64_t size, len;
 	intptr_t file;
-	buf_buffer *b;
 
-	ZEND_PARSE_PARAMETERS_START(1, 4)
+	ZEND_PARSE_PARAMETERS_START(1, 5)
 		Z_PARAM_PATH_STR(path)
 		Z_PARAM_OPTIONAL
 		Z_PARAM_LONG(offset)
 		Z_PARAM_LONG_OR_NULL(length, length_null)
 		Z_PARAM_BOOL(map)
+		Z_PARAM_BOOL(writable)
 	ZEND_PARSE_PARAMETERS_END();
 
 	if (offset < 0) {
@@ -371,7 +430,11 @@ PHP_METHOD(Buffers_Buffer, fromFile)
 		zend_argument_value_error(3, "must be greater than or equal to 0");
 		RETURN_THROWS();
 	}
-	file = file_open(ZSTR_VAL(path), &size);
+	if (writable && !map) {
+		zend_argument_value_error(5, "cannot be true with $map false: writable file buffers must be mapped");
+		RETURN_THROWS();
+	}
+	file = file_open(ZSTR_VAL(path), writable ? FILE_WRITE : FILE_READ, 0, &size);
 	if (file == -1) {
 		RETURN_THROWS();
 	}
@@ -386,30 +449,158 @@ PHP_METHOD(Buffers_Buffer, fromFile)
 		zend_argument_value_error(3, "extends beyond the end of the file (%" PRIu64 " bytes, from offset " ZEND_LONG_FMT ")", size, offset);
 		RETURN_THROWS();
 	}
-
-	object_init_ex(return_value, buf_ce_buffer);
-	b = buf_buffer_from(Z_OBJ_P(return_value));
-	b->inited = true;
-	b->writable = false;
-	b->len = len;
-	b->dev_type = BUF_DEV_FILE;
-	b->device = buf_file_device();
-	GC_ADDREF(b->device);
-	if (len == 0) {
-		b->base = &empty_byte;
-		b->host = map;
-		b->slow = !map;
-		buf_file_close(file);
-	} else if (map && file_map(b, file, (uint64_t)offset, len)) {
-		b->host = true;
-		b->slow = false;
-		buf_file_close(file);   /* the mapping keeps the file */
-	} else {
-		b->host = false;        /* storage only: Tensor::to() reads it */
-		b->slow = true;
-		b->file = file;
-		b->file_off = (uint64_t)offset;
+	if (!file_buffer(return_value, file, (uint64_t)offset, len, map, writable)) {
+		RETURN_THROWS();
 	}
+}
+
+PHP_METHOD(Buffers_Buffer, createFile)
+{
+	zend_string *path;
+	zend_long length;
+	uint64_t size;
+	intptr_t file;
+
+	ZEND_PARSE_PARAMETERS_START(2, 2)
+		Z_PARAM_PATH_STR(path)
+		Z_PARAM_LONG(length)
+	ZEND_PARSE_PARAMETERS_END();
+
+	if (length < 0) {
+		zend_argument_value_error(2, "must be greater than or equal to 0");
+		RETURN_THROWS();
+	}
+	if ((uint64_t)length > (uint64_t)SIZE_MAX / 2) {
+		zend_argument_value_error(2, "is too large to map on this platform");
+		RETURN_THROWS();
+	}
+	file = file_open(ZSTR_VAL(path), FILE_CREATE, (uint64_t)length, &size);
+	if (file == -1) {
+		RETURN_THROWS();
+	}
+	if (!file_buffer(return_value, file, 0, (uint64_t)length, true, true)) {
+		RETURN_THROWS();
+	}
+}
+
+PHP_METHOD(Buffers_Buffer, flush)
+{
+	buf_buffer *b = BUF;
+
+	ZEND_PARSE_PARAMETERS_NONE();
+	if (!b->map_base || !b->writable) {
+		return;
+	}
+#ifdef _WIN32
+	if (!FlushViewOfFile(b->map_base, b->map_len)) {
+		zend_throw_error(NULL, "Cannot flush the mapping (error %lu)", (unsigned long)GetLastError());
+	}
+#else
+	if (msync(b->map_base, b->map_len, MS_SYNC) != 0) {
+		zend_throw_error(NULL, "Cannot flush the mapping: %s", strerror(errno));
+	}
+#endif
+}
+
+/* ---- streams ---------------------------------------------------------------------------------- */
+
+/* the memory of a range of a host-accessible buffer; false after throwing */
+static bool stream_range(buf_buffer *b, zend_long offset, bool length_null, zend_long length, bool need_writable, uint8_t **p, size_t *n)
+{
+	uint64_t avail;
+
+	if (!b->host) {
+		zend_string *name = buf_device_name(b->dev_type, b->dev_id);
+
+		zend_throw_error(NULL, "Cannot access the bytes of a buffer on device %s: its memory is not host accessible; transfer to the host first with Tensor::to()", ZSTR_VAL(name));
+		zend_string_release(name);
+		return false;
+	}
+	if (need_writable && !b->writable) {
+		zend_throw_error(NULL, "Cannot write to a read-only Buffer");
+		return false;
+	}
+	if (offset < 0 || (uint64_t)offset > b->len) {
+		zend_argument_value_error(2, "must be between 0 and the byte length of the buffer");
+		return false;
+	}
+	avail = b->len - (uint64_t)offset;
+	if (!length_null && (length < 0 || (uint64_t)length > avail)) {
+		zend_argument_value_error(3, "must be between 0 and the bytes left after the offset (%" PRIu64 ")", avail);
+		return false;
+	}
+	if (buf_buffer_make_ready(b) == FAILURE) {
+		return false;
+	}
+	*n = (size_t)(length_null ? avail : (uint64_t)length);
+	*p = b->base + offset;
+	return true;
+}
+
+PHP_METHOD(Buffers_Buffer, writeTo)
+{
+	zval *zstream;
+	zend_long offset = 0, length = 0;
+	bool length_null = true;
+	php_stream *stream;
+	uint8_t *p;
+	size_t n, done = 0;
+
+	ZEND_PARSE_PARAMETERS_START(1, 3)
+		Z_PARAM_RESOURCE(zstream)
+		Z_PARAM_OPTIONAL
+		Z_PARAM_LONG(offset)
+		Z_PARAM_LONG_OR_NULL(length, length_null)
+	ZEND_PARSE_PARAMETERS_END();
+
+	php_stream_from_zval(stream, zstream);
+	if (!stream_range(BUF, offset, length_null, length, false, &p, &n)) {
+		RETURN_THROWS();
+	}
+	while (done < n) {
+		ssize_t r = php_stream_write(stream, (const char *)p + done, n - done);
+
+		if (r <= 0) {
+			if (!done) {
+				zend_throw_error(NULL, "Cannot write to the stream");
+				RETURN_THROWS();
+			}
+			break;   /* a short write that cannot continue: report what went out */
+		}
+		done += (size_t)r;
+	}
+	RETURN_LONG((zend_long)done);
+}
+
+PHP_METHOD(Buffers_Buffer, readFrom)
+{
+	zval *zstream;
+	zend_long offset = 0, length = 0;
+	bool length_null = true;
+	php_stream *stream;
+	uint8_t *p;
+	size_t n, done = 0;
+
+	ZEND_PARSE_PARAMETERS_START(1, 3)
+		Z_PARAM_RESOURCE(zstream)
+		Z_PARAM_OPTIONAL
+		Z_PARAM_LONG(offset)
+		Z_PARAM_LONG_OR_NULL(length, length_null)
+	ZEND_PARSE_PARAMETERS_END();
+
+	php_stream_from_zval(stream, zstream);
+	if (!stream_range(BUF, offset, length_null, length, true, &p, &n)) {
+		RETURN_THROWS();
+	}
+	while (done < n) {
+		ssize_t r = php_stream_read(stream, (char *)p + done, n - done);
+
+		if (r <= 0) {
+			break;   /* end of the stream */
+		}
+		done += (size_t)r;
+	}
+	RETURN_LONG((zend_long)done);
 }
 
 PHP_METHOD(Buffers_Buffer, toString)

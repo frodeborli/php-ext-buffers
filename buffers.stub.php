@@ -151,14 +151,37 @@ final class Buffer
     public function __construct(int $byteLength) {}
     public static function fromString(string $data): Buffer {}
     /**
-     * A read-only buffer on FileDevice over bytes $offset .. $offset + $length of a file ($length null: to the end).
+     * A buffer on FileDevice over bytes $offset .. $offset + $length of a file ($length null: to the end), read-only unless
+     * $writable. A writable buffer must be mapped; it is a shared mapping: writes go to the file and other processes that map
+     * it see them at once.
      * With $map true the range is memory-mapped: the buffer is host accessible and pages load on first touch (truncating
      * the file from another process while it is mapped crashes the process with SIGBUS on Linux and macOS). With $map
      * false, or when the range cannot be mapped (larger than the address space of 32-bit PHP, for example), the buffer
      * is storage only: isHostAccessible() is false and Tensor::to(CpuDevice::get()) reads it. The range is checked
      * against the file size when the file is opened.
      */
-    public static function fromFile(string $path, int $offset = 0, ?int $length = null, bool $map = true): Buffer {}
+    public static function fromFile(string $path, int $offset = 0, ?int $length = null, bool $map = true, bool $writable = false): Buffer {}
+    /**
+     * Creates the file (or truncates it) at $byteLength bytes of zeros and returns a writable, mapped, host-accessible buffer on
+     * FileDevice. Writes through tensors go to the file (call flush() to push them to disk).
+     */
+    public static function createFile(string $path, int $byteLength): Buffer {}
+    /**
+     * Pushes the changes of a writable file mapping to disk (msync / FlushViewOfFile). Does nothing for other buffers.
+     */
+    public function flush(): void {}
+    /**
+     * Writes bytes $offset .. $offset + $length ($length null: to the end) straight from the buffer's memory to a PHP stream,
+     * looping on short writes, and returns the number of bytes written. The memory must be host accessible.
+     * @param resource $stream
+     */
+    public function writeTo(mixed $stream, int $offset = 0, ?int $length = null): int {}
+    /**
+     * Reads from a PHP stream straight into the buffer at $offset, up to $length bytes ($length null: to the end of the buffer),
+     * stopping at the end of the stream, and returns the number of bytes read. The memory must be host accessible and writable.
+     * @param resource $stream
+     */
+    public function readFrom(mixed $stream, int $offset = 0, ?int $length = null): int {}
     public function isWritable(): bool {}
     /** Whether the bytes can be read and written from PHP: authoritative for this buffer (a mapped file is, its device is not). */
     public function isHostAccessible(): bool {}
