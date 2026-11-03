@@ -17,6 +17,8 @@ extern double buf_tab[][256];
 typedef zval *(*read_fn)(zend_object *, zval *, int, zval *);
 typedef void (*write_fn)(zend_object *, zval *, zval *);
 typedef void (*peek_fn)(const buf_view *, zend_long, zval *);
+typedef void (*leaf_fn)(const uint8_t *, zend_ulong, zval *);   /* one element: a row (packed) or the element's own address */
+typedef bool (*poke_fn)(const buf_view *, zval *);                /* writes the first element of the view */
 
 /* [dtype][1-D contiguous][read-only][slow]; slow = the memory is not host accessible or has a readiness hook,
  * which the generic wrappers handle before delegating to the fast handlers. */
@@ -137,6 +139,16 @@ static zend_always_inline void pk_put(uint8_t *row, zend_ulong i, unsigned bits,
 	static zend_always_inline bool wrp_##ID(uint8_t *row, zend_ulong i, zval *v) { \
 		double d; if (!buf_dbl(v, &d)) return false; pk_put(row, i, E + M + 1, buf_enc_##ID(d)); return true; }
 BUF_SMALL_PACKED(CODEC_PK)
+
+/* packed integers: a code of BITS bits; signed ones are sign-extended on read, writes wrap by truncation like every integer dtype */
+#define CODEC_PKI(ID, BITS, SIGNED) \
+	static zend_always_inline void rdp_##ID(const uint8_t *row, zend_ulong i, zval *z) { \
+		zend_long c = (zend_long)pk_get(row, i, BITS); \
+		if (SIGNED && c >= (1L << (BITS - 1))) c -= 1L << BITS; \
+		ZVAL_LONG(z, c); } \
+	static zend_always_inline bool wrp_##ID(uint8_t *row, zend_ulong i, zval *v) { \
+		zend_long l; if (!buf_lval(v, &l)) return false; pk_put(row, i, BITS, (unsigned)l & ((1u << BITS) - 1)); return true; }
+CODEC_PKI(INT2, 2, 1) CODEC_PKI(INT4, 4, 1) CODEC_PKI(UINT2, 2, 0) CODEC_PKI(UINT4, 4, 0)
 
 /* ---- operators: delegated to the handler another extension registered, if any ------------------- */
 
@@ -352,7 +364,9 @@ static void wrn_##ID(zend_object *o, zval *off, zval *val) \
 	ZVAL_DEREF(val); \
 	if (UNEXPECTED(i >= (zend_ulong)v->shape[0] || !wr_##ID(v->data + (int64_t)i * v->sbytes[0], val))) buf_bad_write(off, val, v); \
 } \
-static void peek_##ID(const buf_view *v, zend_long i, zval *z) { rd_##ID(v->data + i * v->sbytes[0], z); }
+static void peek_##ID(const buf_view *v, zend_long i, zval *z) { rd_##ID(v->data + i * v->sbytes[0], z); } \
+static void leaf_##ID(const uint8_t *p, zend_ulong i, zval *z) { rd_##ID(p, z); } \
+static bool poke_##ID(const buf_view *v, zval *val) { return wr_##ID(v->data, val); }
 
 /* packed dtypes: a 1-D view is always contiguous, so the only n-D handler that can run is the one that makes sub-views */
 #define GENP(ID, NAME, VALUE, KIND, BITS, SIZE, CODE) \
@@ -386,7 +400,9 @@ static void wr1_##ID(zend_object *o, zval *off, zval *val) \
 	if (UNEXPECTED(i >= (zend_ulong)v->shape[0] || !wrp_##ID(v->data, i, val))) buf_bad_write(off, val, v); \
 } \
 static void wrn_##ID(zend_object *o, zval *off, zval *val) { buf_bad_write(off, val, buf_view_from(o)); } \
-static void peek_##ID(const buf_view *v, zend_long i, zval *z) { rdp_##ID(v->data, i, z); }
+static void peek_##ID(const buf_view *v, zend_long i, zval *z) { rdp_##ID(v->data, i, z); } \
+static void leaf_##ID(const uint8_t *row, zend_ulong i, zval *z) { rdp_##ID(row, i, z); } \
+static bool poke_##ID(const buf_view *v, zval *val) { return wrp_##ID(v->data, 0, val); }
 
 #define GENSEL_0 GENP
 #define GENSEL_1 GEN
@@ -400,8 +416,8 @@ static void peek_##ID(const buf_view *v, zend_long i, zval *z) { rdp_##ID(v->dat
 BUF_DTYPES(X)
 #undef X
 
-static const struct { read_fn rd[2]; write_fn wr[2]; peek_fn peek; } fns[BUF_NTYPES] = {
-#define X(id, ...) { { rdn_##id, rd1_##id }, { wrn_##id, wr1_##id }, peek_##id },
+static const struct { read_fn rd[2]; write_fn wr[2]; peek_fn peek; leaf_fn leaf; poke_fn poke; } fns[BUF_NTYPES] = {
+#define X(id, ...) { { rdn_##id, rd1_##id }, { wrn_##id, wr1_##id }, peek_##id, leaf_##id, poke_##id },
 	BUF_DTYPES(X)
 #undef X
 };
@@ -702,7 +718,7 @@ zend_object *buf_view_make(zend_object *bufobj, int dt, int ndim, const int64_t 
 			}
 			if (t % 8) {
 				FAIL(strides_in ? 3 : 2, "axis %d of a packed %s view has a stride of %lld elements = %lld bits, which is not a whole number of bytes; "
-					"pass explicit strides that are multiples of %d elements", i, info->name, (long long)st[i], (long long)t, bits == 6 ? 4 : 2);
+					"pass explicit strides that are multiples of %d elements", i, info->name, (long long)st[i], (long long)t, bits == 4 ? 2 : 4);
 			}
 			sb[i] = t / 8;
 		}
@@ -845,7 +861,149 @@ static zend_object *view_create_blank(zend_class_entry *ce)
 	return &v->std;
 }
 
-/* ---- properties: dtype, shape, ndim, strides, offset, buffer --------------------------------------
+/* ---- whole-view data, the 0-d `value`, debug output and JSON ------------------------------------
+ * None of this is on the element access path. */
+
+/* the number of elements, saturating */
+static int64_t view_elements(const buf_view *v)
+{
+	int64_t n = 1;
+
+	for (int i = 0; i < v->ndim; i++) {
+		if (v->shape[i] == 0) return 0;
+		if (buf_mul_ovf(n, v->shape[i], &n)) return INT64_MAX;
+	}
+	return n;
+}
+
+/* nested arrays of the elements below `p` (the first element of the sub-view on `axis`) */
+static void view_data_axis(const buf_view *v, int axis, const uint8_t *p, zval *out)
+{
+	int64_t n = v->shape[axis];
+	bool last = axis == v->ndim - 1, packed = buf_is_packed(v->dt);
+
+	array_init_size(out, (uint32_t)(n < 1024 ? n : 1024));
+	for (int64_t i = 0; i < n; i++) {
+		zval e;
+
+		if (!last) {
+			view_data_axis(v, axis + 1, p + i * v->sbytes[axis], &e);
+		} else if (packed) {
+			fns[v->dt].leaf(p, (zend_ulong)i, &e);
+		} else {
+			fns[v->dt].leaf(p + i * v->sbytes[axis], 0, &e);
+		}
+		zend_hash_next_index_insert_new(Z_ARRVAL_P(out), &e);
+	}
+}
+
+/* the whole contents; a 0-d view gives the scalar. The memory must be host accessible and ready. */
+static void view_data_zval(const buf_view *v, zval *out)
+{
+	if (v->ndim == 0) {
+		fns[v->dt].leaf(v->data, 0, out);
+	} else {
+		view_data_axis(v, 0, v->data, out);
+	}
+}
+
+static HashTable *view_props_array(zend_object *o, bool debug)
+{
+	buf_view *v = buf_view_from(o);
+	HashTable *ht;
+	zval z, l;
+	int64_t st[BUF_MAX_NDIM];
+
+	ALLOC_HASHTABLE(ht);
+	zend_hash_init(ht, 8, NULL, ZVAL_PTR_DTOR, 0);
+	if (!v->buf) {
+		return ht;
+	}
+	{
+		buf_buffer *b = buf_buffer_from(v->buf);
+
+		buf_dtype_to_zval(v->dt, &z);
+		zend_hash_str_add_new(ht, "dtype", 5, &z);
+		if (debug) {
+			array_init_size(&z, v->ndim);
+			for (int i = 0; i < v->ndim; i++) add_next_index_long(&z, v->shape[i]);
+		} else {
+			ZVAL_OBJ(&z, buf_shape_new_ints(v->ndim, v->shape));
+		}
+		zend_hash_str_add_new(ht, "shape", 5, &z);
+		if (!debug) {
+			ZVAL_LONG(&z, v->ndim);
+			zend_hash_str_add_new(ht, "ndim", 4, &z);
+		}
+		buf_view_strides_elements(v, st);
+		array_init_size(&l, v->ndim);
+		for (int i = 0; i < v->ndim; i++) add_next_index_long(&l, st[i]);
+		zend_hash_str_add_new(ht, "strides", 7, &l);
+		ZVAL_LONG(&z, v->data - b->base);
+		zend_hash_str_add_new(ht, "offset", 6, &z);
+		if (debug) {
+			ZVAL_STR(&z, buf_device_name(b->dev_type, b->dev_id));
+			zend_hash_str_add_new(ht, "device", 6, &z);
+			ZVAL_BOOL(&z, v->writable);
+			zend_hash_str_add_new(ht, "writable", 8, &z);
+			if (!b->host) {
+				ZVAL_STRING(&z, "(not host-accessible)");
+			} else if (b->pending) {
+				ZVAL_STRING(&z, "(pending)");
+			} else if (view_elements(v) > 1000) {
+				ZVAL_STR(&z, zend_strpprintf(0, "(%" PRId64 " elements)", view_elements(v)));
+			} else {
+				view_data_zval(v, &z);
+			}
+			zend_hash_str_add_new(ht, "data", 4, &z);
+		} else {
+			GC_ADDREF(v->buf);
+			ZVAL_OBJ(&z, v->buf);
+			zend_hash_str_add_new(ht, "buffer", 6, &z);
+			if (v->ndim == 0 && b->host && !b->pending) {
+				view_data_zval(v, &z);
+				zend_hash_str_add_new(ht, "value", 5, &z);
+			}
+		}
+	}
+	return ht;
+}
+
+/* var_dump(), print_r(), var_export(), get_object_vars() and (array): the virtual properties are not stored, so the
+ * default would find none (and enumerating the hooks would make `value` throw on views with axes) */
+static HashTable *view_get_properties_for(zend_object *o, zend_prop_purpose purpose)
+{
+	return view_props_array(o, purpose == ZEND_PROP_PURPOSE_DEBUG);
+}
+
+static HashTable *view_get_debug_info(zend_object *o, int *is_temp)
+{
+	*is_temp = 1;
+	return view_props_array(o, true);
+}
+
+PHP_METHOD(Buffers_BufferView, jsonSerialize)
+{
+	buf_view *v = VIEW;
+	buf_buffer *b = buf_buffer_from(v->buf);
+
+	ZEND_PARSE_PARAMETERS_NONE();
+	if (!b->host) {
+		view_not_accessible(b);
+		RETURN_THROWS();
+	}
+	if (buf_buffer_make_ready(b) == FAILURE) {
+		RETURN_THROWS();
+	}
+	view_data_zval(v, return_value);
+}
+
+static ZEND_COLD void value_needs_0d(void)
+{
+	zend_throw_error(NULL, "value is only available on 0-d views; index the view instead");
+}
+
+/* ---- properties: dtype, shape, ndim, strides, offset, buffer, value --------------------------------------
  * Virtual properties with internal get hooks (see props.c): computed when read, nothing stored in the
  * view, so making a sub-view allocates nothing for them. */
 
@@ -860,6 +1018,11 @@ ZEND_END_ARG_INFO()
 ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(ai_get_int, 0, 0, IS_LONG, 0)
 ZEND_END_ARG_INFO()
 ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(ai_get_array, 0, 0, IS_ARRAY, 0)
+ZEND_END_ARG_INFO()
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(ai_get_mixed, 0, 0, IS_MIXED, 0)
+ZEND_END_ARG_INFO()
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(ai_set_value, 0, 1, IS_VOID, 0)
+	ZEND_ARG_TYPE_INFO(0, value, IS_MIXED, 0)
 ZEND_END_ARG_INFO()
 
 static ZEND_NAMED_FUNCTION(hook_dtype) { ZEND_PARSE_PARAMETERS_NONE(); buf_dtype_to_zval(VIEW->dt, return_value); }
@@ -891,6 +1054,49 @@ static ZEND_NAMED_FUNCTION(hook_offset)
 
 	ZEND_PARSE_PARAMETERS_NONE();
 	RETURN_LONG(v->data - buf_buffer_from(v->buf)->base);
+}
+
+/* $v->value: the single element of a 0-d view. Same rules as element access: read-only buffers, memory that is
+ * not host accessible and pending buffers behave as they do there. */
+static ZEND_NAMED_FUNCTION(hook_value_get)
+{
+	buf_view *v = VIEW;
+
+	ZEND_PARSE_PARAMETERS_NONE();
+	if (v->ndim != 0) {
+		value_needs_0d();
+		RETURN_THROWS();
+	}
+	if (v->slow && !view_slow_check(v)) {
+		RETURN_THROWS();
+	}
+	fns[v->dt].leaf(v->data, 0, return_value);
+}
+
+static ZEND_NAMED_FUNCTION(hook_value_set)
+{
+	buf_view *v = VIEW;
+	zval *val;
+
+	ZEND_PARSE_PARAMETERS_START(1, 1)
+		Z_PARAM_ZVAL(val)
+	ZEND_PARSE_PARAMETERS_END();
+	if (v->ndim != 0) {
+		value_needs_0d();
+		RETURN_THROWS();
+	}
+	if (!v->writable) {
+		zend_throw_error(NULL, "Cannot write to a read-only BufferView");
+		RETURN_THROWS();
+	}
+	if (v->slow && !view_slow_check(v)) {
+		RETURN_THROWS();
+	}
+	ZVAL_DEREF(val);
+	if (!fns[v->dt].poke(v, val)) {
+		zend_type_error("Cannot write %s to a BufferView of dtype %s", zend_zval_type_name(val), buf_dtypes[v->dt].name);
+		RETURN_THROWS();
+	}
 }
 
 static zend_type class_type(const char *name, bool nullable)
@@ -932,6 +1138,8 @@ static void init_view_handlers(zend_object_handlers *h)
 	h->compare = buf_compare_identity;
 	h->get_constructor = view_no_constructor;
 	h->do_operation = buf_view_do_operation;
+	h->get_properties_for = view_get_properties_for;
+	h->get_debug_info = view_get_debug_info;
 }
 
 void buf_view_minit(void)
@@ -949,6 +1157,7 @@ void buf_view_minit(void)
 		{ "strides", (zend_type) ZEND_TYPE_INIT_MASK(MAY_BE_ARRAY), hook_strides, ai_get_array, 0 },
 		{ "offset", (zend_type) ZEND_TYPE_INIT_MASK(MAY_BE_LONG), hook_offset, ai_get_int, 0 },
 		{ "buffer", class_type("Buffers\\BufferInterface", false), hook_buffer, ai_get_buffer, 0 },
+		{ "value", (zend_type) ZEND_TYPE_INIT_MASK(MAY_BE_ANY), hook_value_get, ai_get_mixed, 0, hook_value_set, ai_set_value },
 	};
 
 	INIT_CLASS_ENTRY(ce, "Buffers\\Tensor", NULL);
@@ -960,8 +1169,11 @@ void buf_view_minit(void)
 	buf_ce_view = zend_register_internal_class_ex(&ce, NULL);
 	buf_ce_view->ce_flags |= ZEND_ACC_FINAL | ZEND_ACC_NO_DYNAMIC_PROPERTIES | ZEND_ACC_NOT_SERIALIZABLE;
 	buf_ce_view->create_object = view_create_blank; /* real instances come from buf_view_new() */
-	buf_declare_hooked_props(buf_ce_view, view_props, 6); /* before the interface that requires them */
+	buf_declare_hooked_props(buf_ce_view, view_props, 7); /* before the interface that requires them */
 	zend_class_implements(buf_ce_view, 4, buf_ce_tensor, zend_ce_countable, zend_ce_arrayaccess, zend_ce_aggregate);
+	if (buf_json_serializable()) {
+		zend_class_implements(buf_ce_view, 1, buf_json_serializable());
+	}
 	buf_ce_view->get_iterator = view_get_iterator;
 
 	for (int dt = 0; dt < BUF_NTYPES; dt++) {

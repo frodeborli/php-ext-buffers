@@ -14,6 +14,11 @@ extern const zend_function_entry buf_testing_functions[];
 #define BUF_FUNCTIONS NULL
 #endif
 
+zend_class_entry *buf_json_serializable(void)
+{
+	return zend_hash_str_find_ptr(CG(class_table), "jsonserializable", sizeof("jsonserializable") - 1);
+}
+
 int buf_compare_identity(zval *a, zval *b)
 {
 	ZEND_COMPARE_OBJECTS_FALLBACK(a, b);
@@ -74,8 +79,13 @@ PHP_MINFO_FUNCTION(buffers)
 	php_info_print_table_end();
 }
 
+static const zend_module_dep buffers_deps[] = {
+	ZEND_MOD_OPTIONAL("json")   /* BufferView and Shape implement JsonSerializable when it is there */
+	ZEND_MOD_END
+};
+
 zend_module_entry buffers_module_entry = {
-	STANDARD_MODULE_HEADER,
+	STANDARD_MODULE_HEADER_EX, NULL, buffers_deps,
 	"buffers",
 	BUF_FUNCTIONS,
 	PHP_MINIT(buffers),

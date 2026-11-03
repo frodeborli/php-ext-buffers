@@ -32,11 +32,11 @@ var_dump(@$v->nope);
 echo "isset, property_exists, enumeration\n";
 var_dump(isset($v->ndim), isset($v->nope), property_exists($v, 'shape'), property_exists(BufferView::class, 'offset'));
 var_dump(array_keys(get_object_vars($v)));
-$j = json_decode(json_encode($v), true);
-var_dump($j['ndim'], $j['strides'], $j['offset']);
+echo json_encode($v), "\n";   // JsonSerializable: the data (see json.phpt)
+var_dump(array_keys((array)$v) === array_keys(get_object_vars($v)), array_key_exists('value', get_object_vars($v)));
 
 echo "reflection\n";
-foreach (['dtype', 'shape', 'ndim', 'strides', 'offset', 'buffer'] as $prop) {
+foreach (['dtype', 'shape', 'ndim', 'strides', 'offset', 'buffer', 'value'] as $prop) {
     $rp = new ReflectionProperty(BufferView::class, $prop);
     printf("%-8s %s virtual=%d public=%d hooks=%s\n", $prop, $rp->getType(), $rp->isVirtual(), $rp->isPublic(), json_encode(array_keys(array_filter(['get' => $rp->getHook(PropertyHookType::Get), 'set' => $rp->getHook(PropertyHookType::Set)]))));
 }
@@ -124,14 +124,9 @@ array(6) {
   [5]=>
   string(6) "buffer"
 }
-int(2)
-array(2) {
-  [0]=>
-  int(8)
-  [1]=>
-  int(2)
-}
-int(6)
+[[0,0,0,0],[0,0,0,0],[0,0,0,0]]
+bool(true)
+bool(false)
 reflection
 dtype    Buffers\DType virtual=1 public=1 hooks=["get"]
 shape    Buffers\Shape virtual=1 public=1 hooks=["get"]
@@ -139,6 +134,7 @@ ndim     int virtual=1 public=1 hooks=["get"]
 strides  array virtual=1 public=1 hooks=["get"]
 offset   int virtual=1 public=1 hooks=["get"]
 buffer   Buffers\BufferInterface virtual=1 public=1 hooks=["get"]
+value    mixed virtual=1 public=1 hooks=["get","set"]
 Tensor::$dtype ?Buffers\DType abstract=1
 Tensor::$shape Buffers\Shape abstract=1
 Tensor::$ndim int abstract=1

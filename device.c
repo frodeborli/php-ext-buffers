@@ -66,6 +66,16 @@ static bool host_accessible(int32_t type)
 	return type == kDLCPU || type == kDLCUDAHost || type == kDLROCMHost || type == kDLCUDAManaged;
 }
 
+/* "cpu", "cuda:0", "device99:7" */
+zend_string *buf_device_name(int32_t type, int32_t id)
+{
+	const char *n = buf_device_type_name(type);
+
+	if (type == kDLCPU) return zend_string_init("cpu", 3, 0);
+	if (n) return zend_strpprintf(0, "%s:%d", n, (int)id);
+	return zend_strpprintf(0, "device%d:%d", (int)type, (int)id);
+}
+
 bool buf_device_query(zend_object *dev, int32_t *type, int32_t *id, bool *host)
 {
 	zval rv;

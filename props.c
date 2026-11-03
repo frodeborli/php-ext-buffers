@@ -9,7 +9,7 @@
  * gen_stub.php cannot express hooks, so the property infos and hook functions are built here. */
 #include "php_buffers.h"
 
-typedef struct { zend_property_info *pi; zend_function *fn; } hook_rec;
+typedef struct { zend_property_info *pi; zend_function *fn[2]; } hook_rec;
 static hook_rec *recs;
 static int nrecs, caprecs;
 
@@ -22,37 +22,42 @@ void buf_declare_hooked_props(zend_class_entry *ce, const buf_prop_def *defs, in
 		zval undef;
 		char fname[64];
 		zend_string *name = zend_string_init_interned(d->name, strlen(d->name), 1);
-		zend_function_entry fe[2] = {{0}, {0}};
-		HashTable tmp;
-		zend_function *fn = NULL;
 		zend_property_info *pi;
 
 		ZVAL_UNDEF(&undef);
 		pi = zend_declare_typed_property(ce, name, &undef,
 			ZEND_ACC_PUBLIC | ZEND_ACC_VIRTUAL | (iface ? ZEND_ACC_ABSTRACT : 0), NULL, d->type);
 
-		snprintf(fname, sizeof fname, "$%s::get", d->name);
-		fe[0].fname = fname;
-		fe[0].handler = iface ? NULL : d->get;
-		fe[0].arg_info = (const zend_internal_arg_info *)d->arginfo;
-		fe[0].num_args = d->num_args;
-		fe[0].flags = ZEND_ACC_PUBLIC | (iface ? ZEND_ACC_ABSTRACT : 0);
-		zend_hash_init(&tmp, 1, NULL, NULL, 1);
-		zend_register_functions(ce, fe, &tmp, MODULE_PERSISTENT);
-		ZEND_HASH_FOREACH_PTR(&tmp, fn) { break; } ZEND_HASH_FOREACH_END();
-		zend_hash_destroy(&tmp);
-		ZEND_ASSERT(fn);
 		if (nrecs == caprecs) {
 			caprecs = caprecs ? caprecs * 2 : 16;
 			recs = realloc(recs, sizeof(hook_rec) * caprecs);
 		}
-
 		pi->hooks = calloc(1, ZEND_PROPERTY_HOOK_STRUCT_SIZE);
-		pi->hooks[ZEND_PROPERTY_HOOK_GET] = fn;
-		fn->common.prop_info = pi;
-		ce->num_hooked_props++;
 		recs[nrecs].pi = pi;
-		recs[nrecs++].fn = fn;
+		recs[nrecs].fn[0] = recs[nrecs].fn[1] = NULL;
+		for (int k = 0; k < (d->set ? 2 : 1); k++) {
+			bool is_set = k == 1;
+			zend_function_entry fe[2] = {{0}, {0}};
+			HashTable tmp;
+			zend_function *fn = NULL;
+
+			snprintf(fname, sizeof fname, "$%s::%s", d->name, is_set ? "set" : "get");
+			fe[0].fname = fname;
+			fe[0].handler = iface ? NULL : (is_set ? d->set : d->get);
+			fe[0].arg_info = is_set ? d->set_arginfo : d->arginfo;
+			fe[0].num_args = is_set ? 1 : d->num_args;
+			fe[0].flags = ZEND_ACC_PUBLIC | (iface ? ZEND_ACC_ABSTRACT : 0);
+			zend_hash_init(&tmp, 1, NULL, NULL, 1);
+			zend_register_functions(ce, fe, &tmp, MODULE_PERSISTENT);
+			ZEND_HASH_FOREACH_PTR(&tmp, fn) { break; } ZEND_HASH_FOREACH_END();
+			zend_hash_destroy(&tmp);
+			ZEND_ASSERT(fn);
+			pi->hooks[is_set ? ZEND_PROPERTY_HOOK_SET : ZEND_PROPERTY_HOOK_GET] = fn;
+			fn->common.prop_info = pi;
+			recs[nrecs].fn[k] = fn;
+		}
+		ce->num_hooked_props++;
+		nrecs++;
 	}
 }
 
@@ -60,12 +65,15 @@ void buf_declare_hooked_props(zend_class_entry *ce, const buf_prop_def *defs, in
 void buf_props_mshutdown(void)
 {
 	for (int i = 0; i < nrecs; i++) {
-		zend_function *fn = recs[i].fn;
+		for (int k = 0; k < 2; k++) {
+			zend_function *fn = recs[i].fn[k];
 
-		if (fn->common.fn_flags & (ZEND_ACC_HAS_RETURN_TYPE | ZEND_ACC_HAS_TYPE_HINTS)) {
-			free((void *)(fn->internal_function.arg_info - 1));
+			if (!fn) continue;
+			if (fn->common.fn_flags & (ZEND_ACC_HAS_RETURN_TYPE | ZEND_ACC_HAS_TYPE_HINTS)) {
+				free((void *)(fn->internal_function.arg_info - 1));
+			}
+			free(fn);
 		}
-		free(fn);
 		free(recs[i].pi->hooks);
 		recs[i].pi->hooks = NULL;
 	}

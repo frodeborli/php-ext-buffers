@@ -67,6 +67,30 @@ $before = calls();
 $v[0];
 echo calls() - $before, " call\n";
 
+echo "value, JSON and var_dump\n";
+$b = bat_make_pending(4, 9);
+$z = $b->view(DType::UInt8, [], null, 2);
+$m = $b->view(DType::UInt8, [2, 2]);
+$before = calls();
+ob_start(); var_dump($m); $o = ob_get_clean();
+echo calls() - $before, " calls for var_dump: ", str_contains($o, '"(pending)"') ? "(pending) shown" : "NOT SHOWN", "\n";
+var_dump(json_encode($m), calls() - $before);
+$b = bat_make_pending(4, 9);
+$z = $b->view(DType::UInt8, [], null, 2);
+$before = calls();
+var_dump($z->value, calls() - $before);
+bat_set_pending($b, true);
+$before = calls();
+$z->value = 4; var_dump($z->value, calls() - $before);
+bat_set_pending($b, true);
+$before = calls();
+var_dump(json_encode($z), calls() - $before);
+$b = bat_make_pending(4, 9, true);
+$z = $b->view(DType::UInt8, [], null, 0);
+foreach ([fn() => $z->value, fn() => $z->value] as $f) {
+    try { var_dump($f()); } catch (Exception $e) { echo get_class($e), ': ', $e->getMessage(), "\n"; }
+}
+
 echo "the callback can only be set while the caller holds the only reference\n";
 var_dump(bat_set_ready_late(new Buffers\ArrayBuffer(4)));
 $b = new Buffers\ArrayBuffer(4);
@@ -80,7 +104,7 @@ $a = bat_make_pending_arraybuffer(5, 67);
 $before = calls();
 $av = $a->view(DType::UInt8);
 var_dump($av[4], calls() - $before);
-unset($b, $v, $m, $row, $a, $av, $e, $f, $r);
+unset($b, $v, $m, $row, $a, $av, $e, $f, $r, $z);
 $c = bat_counts();
 echo $c['made'] === $c['deleted'] ? "deleters ran exactly once\n" : "DELETER COUNT WRONG\n";
 echo $c['ctx_freed'] === $c['pending_made'] ? "contexts freed once each\n" : "CONTEXT COUNT WRONG\n";
@@ -128,6 +152,18 @@ read: 8
 pending again
 1 call, then 18
 1 call
+value, JSON and var_dump
+0 calls for var_dump: (pending) shown
+string(13) "[[9,9],[9,9]]"
+int(1)
+int(9)
+int(1)
+int(4)
+int(1)
+string(1) "9"
+int(1)
+Exception: the computation failed
+int(9)
 the callback can only be set while the caller holds the only reference
 bool(true)
 bool(false)

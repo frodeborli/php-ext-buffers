@@ -339,6 +339,21 @@ static int shape_compare(zval *a, zval *b)
 	return 0;
 }
 
+PHP_METHOD(Buffers_Shape, jsonSerialize)
+{
+	buf_shape *s = SELF;
+
+	ZEND_PARSE_PARAMETERS_NONE();
+	if (!shape_concrete(s)) {
+		zend_throw_error(NULL, "Cannot JSON-encode a Shape with symbolic dimensions: no extension that builds deferred computations is loaded");
+		RETURN_THROWS();
+	}
+	array_init_size(return_value, s->n);
+	for (uint32_t i = 0; i < s->n; i++) {
+		zend_hash_next_index_insert_new(Z_ARRVAL_P(return_value), &s->dims[i]);
+	}
+}
+
 /* var_dump() shows the dimensions */
 static HashTable *shape_debug_info(zend_object *o, int *is_temp)
 {
@@ -358,6 +373,14 @@ static HashTable *shape_debug_info(zend_object *o, int *is_temp)
 	return ht;
 }
 
+/* print_r(), var_export(), get_object_vars() and (array) see the dimensions too */
+static HashTable *shape_get_properties_for(zend_object *o, zend_prop_purpose purpose)
+{
+	int is_temp;
+
+	return shape_debug_info(o, &is_temp);
+}
+
 void buf_shape_minit(void)
 {
 	zend_class_entry ce;
@@ -368,6 +391,9 @@ void buf_shape_minit(void)
 	buf_ce_shape->create_object = shape_create;
 	zend_class_implements(buf_ce_shape, 3, zend_ce_arrayaccess, zend_ce_countable, zend_ce_aggregate);
 	buf_ce_shape->get_iterator = shape_get_iterator;
+	if (buf_json_serializable()) {
+		zend_class_implements(buf_ce_shape, 1, buf_json_serializable());
+	}
 
 	memcpy(&shape_handlers, &std_object_handlers, sizeof shape_handlers);
 	shape_handlers.offset = XtOffsetOf(buf_shape, std);
@@ -380,4 +406,5 @@ void buf_shape_minit(void)
 	shape_handlers.unset_dimension = shape_unset;
 	shape_handlers.count_elements = shape_count;
 	shape_handlers.get_debug_info = shape_debug_info;
+	shape_handlers.get_properties_for = shape_get_properties_for;
 }

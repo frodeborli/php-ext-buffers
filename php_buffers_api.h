@@ -37,8 +37,8 @@
 
 /* The order of the cases of the Buffers\DType enum. */
 enum {
-	BUFFERS_DT_BOOL, BUFFERS_DT_INT8, BUFFERS_DT_INT16, BUFFERS_DT_INT32, BUFFERS_DT_INT64,
-	BUFFERS_DT_UINT8, BUFFERS_DT_UINT16, BUFFERS_DT_UINT32, BUFFERS_DT_UINT64,
+	BUFFERS_DT_BOOL, BUFFERS_DT_INT2, BUFFERS_DT_INT4, BUFFERS_DT_INT8, BUFFERS_DT_INT16, BUFFERS_DT_INT32, BUFFERS_DT_INT64,
+	BUFFERS_DT_UINT2, BUFFERS_DT_UINT4, BUFFERS_DT_UINT8, BUFFERS_DT_UINT16, BUFFERS_DT_UINT32, BUFFERS_DT_UINT64,
 	BUFFERS_DT_FLOAT16, BUFFERS_DT_FLOAT32, BUFFERS_DT_FLOAT64, BUFFERS_DT_BFLOAT16,
 	BUFFERS_DT_F8E3M4, BUFFERS_DT_F8E4M3, BUFFERS_DT_F8E4M3B11FNUZ, BUFFERS_DT_F8E4M3FN,
 	BUFFERS_DT_F8E4M3FNUZ, BUFFERS_DT_F8E5M2, BUFFERS_DT_F8E5M2FNUZ, BUFFERS_DT_F8E8M0FNU,
@@ -54,7 +54,7 @@ typedef struct {
 	const char *value;  /* backing string, "float8_e4m3fn" */
 	uint8_t kind;       /* BUFFERS_KIND_* */
 	uint8_t bits;       /* width of one element in bits */
-	uint8_t size;       /* bytes of one element; 0 for the packed sub-byte formats (float6, float4) */
+	uint8_t size;       /* bytes of one element; 0 for the packed sub-byte formats (int2, int4, uint2, uint4, float6, float4) */
 	uint8_t dlpack_code;
 } buffers_dtype_desc;
 

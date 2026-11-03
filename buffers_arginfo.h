@@ -1,5 +1,5 @@
 /* This is a generated file, edit the .stub.php file instead.
- * Stub hash: 241c18562ce261bd04e5ab11d44cc347e4d269cf */
+ * Stub hash: 5e5949c5b7a4c24d6a84fce7255561dadf02dce0 */
 
 ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_class_Buffers_DType_bits, 0, 0, IS_LONG, 0)
 ZEND_END_ARG_INFO()
@@ -83,6 +83,8 @@ ZEND_END_ARG_INFO()
 ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(arginfo_class_Buffers_Shape_getIterator, 0, 0, Iterator, 0)
 ZEND_END_ARG_INFO()
 
+#define arginfo_class_Buffers_Shape_jsonSerialize arginfo_class_Buffers_DType_dlpack
+
 #define arginfo_class_Buffers_BufferInterface_byteLength arginfo_class_Buffers_DType_bits
 
 #define arginfo_class_Buffers_BufferInterface_isWritable arginfo_class_Buffers_DType_isByteAligned
@@ -142,6 +144,9 @@ ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(arginfo_class_Buffers_BufferView_fromDLPa
 	ZEND_ARG_OBJ_INFO(0, capsule, Buffers\\DLPackCapsule, 0)
 ZEND_END_ARG_INFO()
 
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_class_Buffers_BufferView_jsonSerialize, 0, 0, IS_MIXED, 0)
+ZEND_END_ARG_INFO()
+
 ZEND_METHOD(Buffers_DType, bits);
 ZEND_METHOD(Buffers_DType, byteSize);
 ZEND_METHOD(Buffers_DType, isByteAligned);
@@ -169,6 +174,7 @@ ZEND_METHOD(Buffers_Shape, offsetGet);
 ZEND_METHOD(Buffers_Shape, offsetSet);
 ZEND_METHOD(Buffers_Shape, offsetUnset);
 ZEND_METHOD(Buffers_Shape, getIterator);
+ZEND_METHOD(Buffers_Shape, jsonSerialize);
 ZEND_METHOD(Buffers_ArrayBuffer, __construct);
 ZEND_METHOD(Buffers_ArrayBuffer, byteLength);
 ZEND_METHOD(Buffers_ArrayBuffer, isWritable);
@@ -188,6 +194,7 @@ ZEND_METHOD(Buffers_BufferView, offsetUnset);
 ZEND_METHOD(Buffers_BufferView, getIterator);
 ZEND_METHOD(Buffers_BufferView, toDLPack);
 ZEND_METHOD(Buffers_BufferView, fromDLPack);
+ZEND_METHOD(Buffers_BufferView, jsonSerialize);
 
 static const zend_function_entry class_Buffers_DType_methods[] = {
 	ZEND_ME(Buffers_DType, bits, arginfo_class_Buffers_DType_bits, ZEND_ACC_PUBLIC)
@@ -237,6 +244,7 @@ static const zend_function_entry class_Buffers_Shape_methods[] = {
 	ZEND_ME(Buffers_Shape, offsetSet, arginfo_class_Buffers_Shape_offsetSet, ZEND_ACC_PUBLIC)
 	ZEND_ME(Buffers_Shape, offsetUnset, arginfo_class_Buffers_Shape_offsetUnset, ZEND_ACC_PUBLIC)
 	ZEND_ME(Buffers_Shape, getIterator, arginfo_class_Buffers_Shape_getIterator, ZEND_ACC_PUBLIC)
+	ZEND_ME(Buffers_Shape, jsonSerialize, arginfo_class_Buffers_Shape_jsonSerialize, ZEND_ACC_PUBLIC)
 	ZEND_FE_END
 };
 
@@ -276,5 +284,6 @@ static const zend_function_entry class_Buffers_BufferView_methods[] = {
 	ZEND_ME(Buffers_BufferView, getIterator, arginfo_class_Buffers_BufferView_getIterator, ZEND_ACC_PUBLIC)
 	ZEND_ME(Buffers_BufferView, toDLPack, arginfo_class_Buffers_BufferView_toDLPack, ZEND_ACC_PUBLIC)
 	ZEND_ME(Buffers_BufferView, fromDLPack, arginfo_class_Buffers_BufferView_fromDLPack, ZEND_ACC_PUBLIC|ZEND_ACC_STATIC)
+	ZEND_ME(Buffers_BufferView, jsonSerialize, arginfo_class_Buffers_BufferView_jsonSerialize, ZEND_ACC_PUBLIC)
 	ZEND_FE_END
 };

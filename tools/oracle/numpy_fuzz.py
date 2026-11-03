@@ -31,7 +31,17 @@ T = {
     "Float8E5M2FNUZ": (m.float8_e5m2fnuz, 1, 1), "Float8E8M0FNU": (m.float8_e8m0fnu, 1, 1),
 }
 # packed sub-byte formats: name -> (ml_dtypes type, bits)
-PACKED = {"Float6E2M3FN": (m.float6_e2m3fn, 6), "Float6E3M2FN": (m.float6_e3m2fn, 6), "Float4E2M1FN": (m.float4_e2m1fn, 4)}
+PACKED = {"Float6E2M3FN": (m.float6_e2m3fn, 6), "Float6E3M2FN": (m.float6_e3m2fn, 6), "Float4E2M1FN": (m.float4_e2m1fn, 4),
+          "Int2": (m.int2, 2), "Int4": (m.int4, 4), "UInt2": (m.uint2, 2), "UInt4": (m.uint4, 4)}
+PACKED_INT = ("Int2", "Int4", "UInt2", "UInt4")
+
+
+def decode_packed(name, codes):
+    """the values of packed codes: floats through ml_dtypes, integers sign-extended"""
+    bits_ = PACKED[name][1]
+    if name in PACKED_INT:
+        return [int(c) - (1 << bits_) if name[0] == "I" and c >= 1 << (bits_ - 1) else int(c) for c in codes]
+    return [bits(float(x)) for x in np.asarray(codes, dtype=np.uint8).view(PACKED[name][0]).astype(np.float64)]
 UINT = {1: np.uint8, 2: np.uint16, 4: np.uint32, 8: np.uint64}
 MASK = {"Bool": 0x01}
 
@@ -127,7 +137,7 @@ def expected_reads(case):
     if case.get("zero_d"): return []
     if case["dtype"] in PACKED:
         pos, codes = packed_codes(buf, case)
-        return [bits(float(x)) for x in codes.view(PACKED[case["dtype"]][0]).astype(np.float64)] if len(codes) else []
+        return decode_packed(case["dtype"], codes) if len(codes) else []
     comp, ncomp, esize = T[case["dtype"]]
     csize = esize // ncomp
     tail = np.frombuffer(bytes(buf), dtype=np.uint8)[case["offset"]:]
@@ -159,7 +169,10 @@ def expected_after(case):
         pos, _ = packed_codes(buf, case)
         def val(w):
             return {"nan": float("nan"), "inf": float("inf"), "-inf": float("-inf")}[w] if w in ("nan", "inf", "-inf") else struct.unpack(">d", bytes.fromhex(w))[0]
-        codes = np.array([val(w) for w in case["writes"]], dtype=np.float64).astype(comp).view(np.uint8)
+        if case["dtype"] in PACKED_INT:   # integers wrap by truncation to the width
+            codes = np.array([w & ((1 << nbits) - 1) for w in case["writes"]], dtype=np.uint8)
+        else:
+            codes = np.array([val(w) for w in case["writes"]], dtype=np.float64).astype(comp).view(np.uint8)
         for p, c in zip(pos.tolist(), codes.tolist()):    # read-modify-write, in the order PHP writes
             b, sh = p >> 3, p & 7
             wide = sh + nbits > 8

@@ -23,21 +23,21 @@ print_r(bat_info($b->view(DType::Int32, [])));
 
 echo "views made through the C API\n";
 $cases = [
-    'ok'              => [$b, 2, [2, 3]],            // DType index 2 is Int16
-    'strided offset'  => [$b, 2, [2, 3], [6, 2], 4],
+    'ok'              => [$b, 4, [2, 3]],            // DType index 4 is Int16
+    'strided offset'  => [$b, 4, [2, 3], [6, 2], 4],
     'bad dtype'       => [$b, 99, [1]],
-    'beyond'          => [$b, 2, [13]],
-    'misaligned'      => [$b, 2, [1], null, 1],
-    'neg dim'         => [$b, 2, [-1]],
-    'zero stride'     => [$b, 2, [2], [0]],
-    'packed stride'   => [$b, 22, [2, 3]],           // Float6E3M2FN: rows of 3 are not whole bytes
-    'not a buffer'    => [new stdClass, 2, [1]],
+    'beyond'          => [$b, 4, [13]],
+    'misaligned'      => [$b, 4, [1], null, 1],
+    'neg dim'         => [$b, 4, [-1]],
+    'zero stride'     => [$b, 4, [2], [0]],
+    'packed stride'   => [$b, 26, [2, 3]],           // Float6E3M2FN: rows of 3 are not whole bytes
+    'not a buffer'    => [new stdClass, 4, [1]],
 ];
 foreach ($cases as $name => $args) {
     try { $x = bat_view(...$args); printf("%-15s ok %s %s\n", $name, json_encode($x->shape->toArray()), json_encode($x->strides)); }
     catch (Throwable $e) { printf("%-15s %s: %s\n", $name, get_class($e), $e->getMessage()); }
 }
-var_dump(bat_view($b, 2, [2, 3])->dtype);
+var_dump(bat_view($b, 4, [2, 3])->dtype);
 
 echo "read-only memory\n";
 $ro = bat_make_buffer(8, false);
@@ -64,12 +64,12 @@ $c = bat_counts();
 echo $c['made'] === $c['deleted'] ? "deleters ran exactly once\n" : "DELETER COUNT WRONG " . json_encode($c) . "\n";
 
 echo "dtypes\n";
-for ($i = 0; $i < 28; $i++) {
+for ($i = 0; $i < 32; $i++) {
     $d = bat_dtype_info($i);
     $c = Buffers\DType::cases()[$i];
     if ($d['name'] !== $c->name || $d['value'] !== $c->value || $d['bits'] !== $c->bits() || $d['size'] !== ($c->byteSize() ?? 0) || $d['roundtrip'] !== $i || $d['dlpack_code'] !== $c->dlpack()['code']) echo "MISMATCH $i\n";
 }
-var_dump(bat_dtype_info(28), bat_dtype_info(-1));
+var_dump(bat_dtype_info(32), bat_dtype_info(-1));
 echo "end\n";
 --EXPECT--
 bool(true)

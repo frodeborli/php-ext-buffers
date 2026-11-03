@@ -18,7 +18,7 @@ foreach ($cases as $c) {
             $res .= ' zero-d ' . json_encode($v->strides) . ' ' . $v->offset;
         } elseif (!in_array(0, $shape, true)) {
             foreach ($shape as $d) $x = $x[$d - 1];
-            $res .= ' ' . ($dt->byteSize() === null ? bin2hex(pack('E', $x)) : $x) . ' ' . json_encode($v->strides) . ' ' . $v->offset;
+            $res .= ' ' . ($dt->byteSize() === null && $dt->isFloatingPoint() ? bin2hex(pack('E', $x)) : $x) . ' ' . json_encode($v->strides) . ' ' . $v->offset;
         } else {
             $res .= ' empty ' . json_encode($v->strides) . ' ' . $v->offset;
         }

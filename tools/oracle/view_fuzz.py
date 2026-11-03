@@ -15,7 +15,8 @@ php = os.environ.get("PHP", "php")
 rnd = random.Random(seed)
 I64 = 2**63 - 1
 INT = {"Int8": ("b", 1), "Int16": ("<h", 2), "Int32": ("<i", 4), "Int64": ("<q", 8), "UInt8": ("B", 1), "UInt16": ("<H", 2), "UInt32": ("<I", 4), "UInt64": ("<Q", 8)}
-PACKED = {"Float6E2M3FN": (m.float6_e2m3fn, 6), "Float6E3M2FN": (m.float6_e3m2fn, 6), "Float4E2M1FN": (m.float4_e2m1fn, 4)}
+PACKED = {"Float6E2M3FN": (m.float6_e2m3fn, 6), "Float6E3M2FN": (m.float6_e3m2fn, 6), "Float4E2M1FN": (m.float4_e2m1fn, 4),
+          "Int2": (None, 2), "Int4": (None, 4), "UInt2": (None, 2), "UInt4": (None, 4)}
 POOL = [0, 1, 1, 2, 3, 4, 5, 7, 8, 15, 16, 31, 33, 100, 255, 256, 1000, 2**16, 2**31 - 1, 2**31, 2**32, 2**32 + 1, 2**53, 2**62, 2**63 - 2, I64, -1, -2, -8]
 
 
@@ -122,8 +123,13 @@ for c, got in zip(cases, res):
         bitpos = e[1]
         w = ((bitpos >> 3) % 251) | (((bitpos >> 3) + 1) % 251) << 8
         code = (w >> (bitpos & 7)) & ((1 << nbits) - 1)
-        x = float(np.array([code], dtype=np.uint8).view(comp).astype(np.float64)[0])
-        want = f"ok {struct.pack('>d', x).hex()} {json.dumps(e[2], separators=(',', ':'))} {e[3]}"
+        if comp is None:   # packed integers: sign-extended for Int*
+            x = code - (1 << nbits) if c["dtype"][0] == "I" and code >= 1 << (nbits - 1) else code
+            shown = str(x)
+        else:
+            x = float(np.array([code], dtype=np.uint8).view(comp).astype(np.float64)[0])
+            shown = struct.pack('>d', x).hex()
+        want = f"ok {shown} {json.dumps(e[2], separators=(',', ':'))} {e[3]}"
         if got.replace(", ", ",") != want: bad += 1; print("packed read differs:", c, "got", got, "want", want)
         continue
     fmt, size = INT[c["dtype"]]

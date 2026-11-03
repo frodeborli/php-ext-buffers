@@ -18,10 +18,14 @@ foreach ([[0, 64], [1, 64], [1, 32], [0, 32], [1, 16]] as [$code, $bits]) {
 echo "end\n";
 --EXPECT--
 Bool              ok true
+Int2              ok 1
+Int4              ok 1
 Int8              ok 1
 Int16             ok 1
 Int32             ok 1
 Int64              ValueError: Buffers\ArrayBuffer::view(): Argument #1 ($type) the dtype Int64 is not supported on 32-bit PHP: its values do not fit a PHP int
+UInt2             ok 1
+UInt4             ok 1
 UInt8             ok 1
 UInt16            ok 1
 UInt32             ValueError: Buffers\ArrayBuffer::view(): Argument #1 ($type) the dtype UInt32 is not supported on 32-bit PHP: its values do not fit a PHP int

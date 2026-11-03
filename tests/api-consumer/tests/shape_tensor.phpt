@@ -6,7 +6,7 @@ C API: a Tensor implemented in another extension; symbolic dimensions in a Shape
 <?php
 use Buffers\{Tensor, Shape, DType};
 $t0 = new BatTensor();
-$t2 = new BatTensor(2, 10);
+$t2 = new BatTensor(2, 14);
 var_dump($t0 instanceof Tensor, $t0->ndim, $t0->dtype, $t0->shape->toArray(), $t2->ndim, $t2->dtype, $t2->shape->toArray());
 foreach (['dtype', 'shape', 'ndim'] as $p) {
     try { $t0->$p = 1; } catch (Error $e) { echo $e->getMessage(), "\n"; }

@@ -26,14 +26,18 @@ ZEND_TSRMLS_CACHE_EXTERN()
 enum { BUF_BOOL = BUFFERS_KIND_BOOL, BUF_INT, BUF_UINT, BUF_FLOAT, BUF_COMPLEX };
 
 /* X(id, CaseName, "backing", kind, bits, byteSize, dlpackCode)
- * bits is the width of one element. byteSize is 0 for the packed sub-byte formats (float6, float4):
+ * bits is the width of one element. byteSize is 0 for the packed sub-byte formats (int2, int4, uint2, uint4, float6, float4):
  * their elements are packed little-bit-endian, element i at bit i*bits of the row it belongs to. */
 #define BUF_DTYPES(X) \
 	X(BOOL,     Bool,      "bool",      BUF_BOOL,    8,   1,  kDLBool) \
+	X(INT2,     Int2,      "int2",      BUF_INT,     2,   0,  kDLInt) \
+	X(INT4,     Int4,      "int4",      BUF_INT,     4,   0,  kDLInt) \
 	X(INT8,     Int8,      "int8",      BUF_INT,     8,   1,  kDLInt) \
 	X(INT16,    Int16,     "int16",     BUF_INT,     16,  2,  kDLInt) \
 	X(INT32,    Int32,     "int32",     BUF_INT,     32,  4,  kDLInt) \
 	X(INT64,    Int64,     "int64",     BUF_INT,     64,  8,  kDLInt) \
+	X(UINT2,    UInt2,     "uint2",     BUF_UINT,    2,   0,  kDLUInt) \
+	X(UINT4,    UInt4,     "uint4",     BUF_UINT,    4,   0,  kDLUInt) \
 	X(UINT8,    UInt8,     "uint8",     BUF_UINT,    8,   1,  kDLUInt) \
 	X(UINT16,   UInt16,    "uint16",    BUF_UINT,    16,  2,  kDLUInt) \
 	X(UINT32,   UInt32,    "uint32",    BUF_UINT,    32,  4,  kDLUInt) \
@@ -171,6 +175,9 @@ static inline bool buf_mul_ovf(int64_t a, int64_t b, int64_t *r)
 	return false;
 }
 
+/* buffers.c: JsonSerializable (NULL if the json extension is not loaded; it is optional) */
+zend_class_entry *buf_json_serializable(void);
+
 /* buffers.c: objects are equal only to themselves (the default would compare the empty property tables: any two views are "==") */
 int buf_compare_identity(zval *a, zval *b);
 
@@ -215,6 +222,7 @@ zend_object *buf_foreign_device_new(int32_t type, int32_t id);
 /* dlpackType, id and host accessibility of a Device object (NULL = CPU); false after throwing */
 bool buf_device_query(zend_object *dev, int32_t *type, int32_t *id, bool *host);
 const char *buf_device_type_name(int32_t type);
+zend_string *buf_device_name(int32_t type, int32_t id);
 
 /* props.c: virtual properties backed by internal get hooks */
 typedef struct {
@@ -223,6 +231,8 @@ typedef struct {
 	zif_handler get;
 	const zend_internal_arg_info *arginfo;
 	uint32_t num_args;
+	zif_handler set;                       /* optional set hook: a read-write virtual property */
+	const zend_internal_arg_info *set_arginfo;
 } buf_prop_def;
 void buf_declare_hooked_props(zend_class_entry *ce, const buf_prop_def *defs, int n);
 void buf_props_mshutdown(void);

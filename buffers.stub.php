@@ -10,10 +10,14 @@ namespace Buffers;
 enum DType: string
 {
     case Bool = 'bool';
+    case Int2 = 'int2';
+    case Int4 = 'int4';
     case Int8 = 'int8';
     case Int16 = 'int16';
     case Int32 = 'int32';
     case Int64 = 'int64';
+    case UInt2 = 'uint2';
+    case UInt4 = 'uint4';
     case UInt8 = 'uint8';
     case UInt16 = 'uint16';
     case UInt32 = 'uint32';
@@ -40,7 +44,7 @@ enum DType: string
 
     /** Width of one element in bits: 4, 6, 8 ... 128. */
     public function bits(): int {}
-    /** Bytes one element occupies, or null for the packed sub-byte formats (Float6*, Float4*). */
+    /** Bytes one element occupies, or null for the packed sub-byte formats (Int2, Int4, UInt2, UInt4, Float6*, Float4*). */
     public function byteSize(): ?int {}
     /** False for the packed sub-byte formats: their elements are not a whole number of bytes. */
     public function isByteAligned(): bool {}
@@ -100,7 +104,7 @@ final class ForeignDevice implements Device
  * @implements \ArrayAccess<int, int|Tensor>
  * @implements \IteratorAggregate<int, int|Tensor>
  */
-final class Shape implements \ArrayAccess, \Countable, \IteratorAggregate
+final class Shape implements \ArrayAccess, \Countable, \IteratorAggregate, \JsonSerializable
 {
     /** $dims is a list of non-negative ints and 0-d Tensors. */
     public function __construct(array $dims) {}
@@ -122,6 +126,8 @@ final class Shape implements \ArrayAccess, \Countable, \IteratorAggregate
     /** Always throws: a Shape is immutable. */
     public function offsetUnset(mixed $offset): void {}
     public function getIterator(): \Iterator {}
+    /** The dimensions as a list, for json_encode(). Throws Error if a dimension is symbolic (not in this version). */
+    public function jsonSerialize(): array {}
 }
 
 /**
@@ -192,11 +198,12 @@ final class DLPackCapsule
  * @property-read list<int> $strides in elements; 1 for the last axis of a packed dtype
  * @property-read int $offset bytes from the start of the buffer to element 0
  * @property-read BufferInterface $buffer
+ * @property mixed $value the single element of a 0-d view, readable and writable; Error on views with axes
  *
  * @implements \ArrayAccess<int, mixed>
  * @implements \IteratorAggregate<int, mixed>
  */
-final class BufferView implements Tensor, \Countable, \ArrayAccess, \IteratorAggregate
+final class BufferView implements Tensor, \Countable, \ArrayAccess, \IteratorAggregate, \JsonSerializable
 {
     /** The length of the first axis. A 0-d view has no axes: Error. */
     public function count(): int {}
@@ -207,4 +214,9 @@ final class BufferView implements Tensor, \Countable, \ArrayAccess, \IteratorAgg
     public function getIterator(): \Iterator {}
     public function toDLPack(): DLPackCapsule {}
     public static function fromDLPack(DLPackCapsule $capsule): BufferView {}
+    /**
+     * The whole contents as nested arrays (a 0-d view: the scalar; complex elements: [re, im]), for json_encode().
+     * json_encode() fails for NaN and INF, as for any PHP value. Throws Error for memory that is not host accessible.
+     */
+    public function jsonSerialize(): mixed {}
 }
