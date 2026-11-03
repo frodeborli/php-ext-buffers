@@ -13,8 +13,7 @@ for image in $images; do
     /src/tools/build.sh /src /build "$(command -v phpize)" "$(command -v php-config)"
     php -v | head -1; php -r "echo PHP_ZTS ? \"ZTS\" : \"NTS\", \" \", php_uname(\"s\"), \"\n\";"; (ldd --version 2>&1 || true) | head -1
     cd /build
-    NO_INTERACTION=1 REPORT_EXIT_STATUS=1 TEST_PHP_EXECUTABLE=$(command -v php) php run-tests.php -n -q -P --no-color --show-diff -d extension=/build/modules/buffers.so -d extension=/build/api/modules/buffers_api_test.so tests 2>&1 \
-      | grep -E "^(FAIL|BORK|WARN)|Tests (passed|failed|skipped)|^[0-9]+[+-] "
+    /src/tools/run-phpt.sh "$(command -v php)" /build -P | grep -E "^(FAIL|BORK|WARN)|Tests (passed|failed|skipped)|^--- ext"
   ' 2>&1)
   rc=$?
   printf '%s\n--- %s: exit %s\n' "$out" "$image" "$rc"

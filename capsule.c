@@ -357,15 +357,16 @@ ZEND_BEGIN_ARG_INFO_EX(arginfo_buffers_test_make, 0, 0, 4)
 	ZEND_ARG_TYPE_INFO(0, byteOffset, IS_LONG, 0)
 	ZEND_ARG_TYPE_INFO(0, minor, IS_LONG, 0)
 	ZEND_ARG_TYPE_INFO(0, major, IS_LONG, 0)
+	ZEND_ARG_TYPE_INFO(0, deviceId, IS_LONG, 0)
 ZEND_END_ARG_INFO()
 ZEND_BEGIN_ARG_INFO_EX(arginfo_buffers_test_counts, 0, 0, 0)
 ZEND_END_ARG_INFO()
 
-/* buffers_test_make(code, bits, lanes, shape, ?strides = null, flags = 0, device = 1, byteOffset = 0, minor = 3, major = 1)
+/* buffers_test_make(code, bits, lanes, shape, ?strides = null, flags = 0, device = 1, byteOffset = 0, minor = 3, major = 1, deviceId = 0)
  * The memory holds the byte pattern i & 0xff, so tests can check what a view reads. */
 PHP_FUNCTION(buffers_test_make)
 {
-	zend_long code, bits, lanes, flags = 0, device = 1, byte_offset = 0, minor = DLPACK_MINOR_VERSION, major = DLPACK_MAJOR_VERSION;
+	zend_long code, bits, lanes, flags = 0, device = 1, device_id = 0, byte_offset = 0, minor = DLPACK_MINOR_VERSION, major = DLPACK_MAJOR_VERSION;
 	HashTable *shape, *strides = NULL;
 	test_ctx *c;
 	zval *z;
@@ -373,10 +374,10 @@ PHP_FUNCTION(buffers_test_make)
 	int64_t extent = 1, esize, acc = 1;
 	size_t total;
 
-	ZEND_PARSE_PARAMETERS_START(4, 10)
+	ZEND_PARSE_PARAMETERS_START(4, 11)
 		Z_PARAM_LONG(code) Z_PARAM_LONG(bits) Z_PARAM_LONG(lanes) Z_PARAM_ARRAY_HT(shape)
 		Z_PARAM_OPTIONAL
-		Z_PARAM_ARRAY_HT_OR_NULL(strides) Z_PARAM_LONG(flags) Z_PARAM_LONG(device) Z_PARAM_LONG(byte_offset) Z_PARAM_LONG(minor) Z_PARAM_LONG(major)
+		Z_PARAM_ARRAY_HT_OR_NULL(strides) Z_PARAM_LONG(flags) Z_PARAM_LONG(device) Z_PARAM_LONG(byte_offset) Z_PARAM_LONG(minor) Z_PARAM_LONG(major) Z_PARAM_LONG(device_id)
 	ZEND_PARSE_PARAMETERS_END();
 
 	if (zend_hash_num_elements(shape) > 16 || (strides && zend_hash_num_elements(strides) > 16)) {
@@ -410,6 +411,7 @@ PHP_FUNCTION(buffers_test_make)
 	c->t.flags = (uint64_t)flags;
 	c->t.dl_tensor.data = c->mem;
 	c->t.dl_tensor.device.device_type = (DLDeviceType)device;
+	c->t.dl_tensor.device.device_id = (int32_t)device_id;
 	c->t.dl_tensor.ndim = n;
 	c->t.dl_tensor.dtype.code = (uint8_t)code;
 	c->t.dl_tensor.dtype.bits = (uint8_t)bits;

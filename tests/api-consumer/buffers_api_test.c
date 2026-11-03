@@ -14,7 +14,7 @@
 
 /* ---- counters ----------------------------------------------------------------------------- */
 
-static zend_long made, deleted, ctx_freed, ready_calls, owners_made, owners_freed;
+static zend_long made, deleted, ctx_freed, ready_calls, owners_made, owners_freed, pending_made;
 
 /* ---- a buffer over malloc'd memory with a counting deleter ------------------------------------ */
 
@@ -63,7 +63,13 @@ static zend_result pending_ready(zend_object *buffer, void *ctx)
 		zend_throw_exception(NULL, "the computation failed", 0);
 		return FAILURE;
 	}
-	memset(c->mem, c->fill, c->len);
+	if (c->mem) {
+		memset(c->mem, c->fill, c->len);
+	} else { /* an ArrayBuffer: the memory is the buffer's own */
+		buffers_buffer_info info;
+		if (buffers_buffer_get_info(buffer, &info) == FAILURE) return FAILURE;
+		memset(info.base, c->fill, info.length);
+	}
 	return SUCCESS;
 }
 
@@ -100,6 +106,7 @@ PHP_FUNCTION(bat_make_pending)
 		RETURN_THROWS();
 	}
 	made++;
+	pending_made++;
 	if (buffers_buffer_set_ready_callback(b, pending_ready, c, pending_ctx_free) == FAILURE) {
 		OBJ_RELEASE(b);
 		free(c);
@@ -108,6 +115,40 @@ PHP_FUNCTION(bat_make_pending)
 	}
 	buffers_buffer_set_pending(b, true);
 	RETURN_OBJ(b);
+}
+
+/* bat_make_pending_arraybuffer(int $length, int $fill): an ArrayBuffer (its own memory) that is filled when something reads it */
+PHP_FUNCTION(bat_make_pending_arraybuffer)
+{
+	zend_long len, fill;
+	zval obj, arg;
+	zend_class_entry *ce = buffers_get_class(BUFFERS_CE_ARRAY_BUFFER);
+	pending_ctx *c;
+
+	ZEND_PARSE_PARAMETERS_START(2, 2)
+		Z_PARAM_LONG(len)
+		Z_PARAM_LONG(fill)
+	ZEND_PARSE_PARAMETERS_END();
+
+	object_init_ex(&obj, ce);
+	ZVAL_LONG(&arg, len);
+	zend_call_known_instance_method_with_1_params(ce->constructor, Z_OBJ(obj), NULL, &arg);
+	if (EG(exception)) {
+		zval_ptr_dtor(&obj);
+		RETURN_THROWS();
+	}
+	c = calloc(1, sizeof *c);
+	c->len = (size_t)len;
+	c->fill = (int)fill;
+	pending_made++;
+	if (buffers_buffer_set_ready_callback(Z_OBJ(obj), pending_ready, c, pending_ctx_free) == FAILURE) {
+		free(c);
+		zval_ptr_dtor(&obj);
+		zend_throw_error(NULL, "could not set the readiness callback");
+		RETURN_THROWS();
+	}
+	buffers_buffer_set_pending(Z_OBJ(obj), true);
+	RETURN_COPY_VALUE(&obj);
 }
 
 /* bat_set_pending(BufferInterface $b, bool $pending): marks a buffer pending again */
@@ -163,6 +204,7 @@ PHP_FUNCTION(bat_counts)
 	array_init(return_value);
 	add_assoc_long(return_value, "made", made);
 	add_assoc_long(return_value, "deleted", deleted);
+	add_assoc_long(return_value, "pending_made", pending_made);
 	add_assoc_long(return_value, "ctx_freed", ctx_freed);
 	add_assoc_long(return_value, "ready_calls", ready_calls);
 	add_assoc_long(return_value, "owners_made", owners_made);
@@ -493,14 +535,17 @@ PHP_FUNCTION(bat_export)
 	zend_object *v;
 	DLManagedTensorVersioned *t;
 	DLTensor *d;
-	zval l;
+	buffers_view_info vi;
+	buffers_buffer_info bi;
 
 	ZEND_PARSE_PARAMETERS_START(1, 1)
 		Z_PARAM_OBJ(v)
 	ZEND_PARSE_PARAMETERS_END();
+	if (buffers_view_get_info(v, &vi) == FAILURE || buffers_buffer_get_info(vi.buffer, &bi) == FAILURE) RETURN_THROWS();
 	if (buffers_dlpack_export(v, &t) == FAILURE) RETURN_THROWS();
 	d = &t->dl_tensor;
 	array_init(return_value);
+	add_assoc_bool(return_value, "data_is_buffer_base", d->data == bi.base);
 	add_assoc_long(return_value, "device_type", d->device.device_type);
 	add_assoc_long(return_value, "device_id", d->device.device_id);
 	add_assoc_long(return_value, "ndim", d->ndim);
@@ -510,8 +555,6 @@ PHP_FUNCTION(bat_export)
 	add_assoc_long(return_value, "flags", (zend_long)t->flags);
 	list_i64(return_value, "shape", d->shape, d->ndim);
 	list_i64(return_value, "strides", d->strides, d->ndim);
-	array_init(&l);
-	add_assoc_zval(return_value, "unused", &l);
 	t->deleter(t);
 }
 
@@ -640,6 +683,7 @@ ARGS(any3, 3)
 static const zend_function_entry functions[] = {
 	PHP_FE(bat_make_buffer, ai_any1)
 	PHP_FE(bat_make_pending, ai_any2)
+	PHP_FE(bat_make_pending_arraybuffer, ai_any2)
 	PHP_FE(bat_set_pending, ai_any2)
 	PHP_FE(bat_set_ready_late, ai_any1)
 	PHP_FE(bat_peek, ai_any2)
