@@ -1,12 +1,13 @@
 --TEST--
 Integer dtypes: wrapping, float conversion, type errors
 --SKIPIF--
-<?php if (!extension_loaded('dlpack')) die('skip dlpack extension not loaded'); ?>
+<?php if (!extension_loaded('buffers')) die('skip buffers extension not loaded'); ?>
 --FILE--
 <?php
+use Buffers\{DType, ArrayBuffer, BufferView};
 $b = new ArrayBuffer(64);
 foreach (['Int8','Int16','Int32','Int64','UInt8','UInt16','UInt32','UInt64'] as $name) {
-    $v = $b->view(constant("DType::$name"), 4);
+    $v = $b->view(constant("Buffers\\DType::$name"), 4);
     $out = [];
     foreach ([0, 1, -1, 127, 128, 255, 256, 32767, 32768, 65535, 65536, 2147483647, 2147483648, 4294967295, 4294967296, PHP_INT_MAX, PHP_INT_MIN] as $x) {
         $v[0] = $x; $out[] = $v[0];
@@ -63,16 +64,16 @@ bool(false)
 bool(false)
 bool(true)
 type errors
-Cannot write null to a TypedView of dtype Int8
-Cannot write string to a TypedView of dtype Int8
-Cannot write array to a TypedView of dtype Int8
-Cannot write bool to a TypedView of dtype Int8
-Cannot write bool to a TypedView of dtype Int8
-Cannot write stdClass to a TypedView of dtype Int8
-Cannot write string to a TypedView of dtype Int8
-Cannot write int to a TypedView of dtype Bool
-Cannot write int to a TypedView of dtype Bool
-Cannot write float to a TypedView of dtype Bool
-Cannot write string to a TypedView of dtype Bool
-Cannot write null to a TypedView of dtype Bool
-Cannot write array to a TypedView of dtype Bool
+Cannot write null to a BufferView of dtype Int8
+Cannot write string to a BufferView of dtype Int8
+Cannot write array to a BufferView of dtype Int8
+Cannot write bool to a BufferView of dtype Int8
+Cannot write bool to a BufferView of dtype Int8
+Cannot write stdClass to a BufferView of dtype Int8
+Cannot write string to a BufferView of dtype Int8
+Cannot write int to a BufferView of dtype Bool
+Cannot write int to a BufferView of dtype Bool
+Cannot write float to a BufferView of dtype Bool
+Cannot write string to a BufferView of dtype Bool
+Cannot write null to a BufferView of dtype Bool
+Cannot write array to a BufferView of dtype Bool

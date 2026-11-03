@@ -2,11 +2,12 @@
 ArrayBuffer allocations are PHP-managed memory (counted by memory_get_usage and memory_limit)
 --SKIPIF--
 <?php
-if (!extension_loaded('dlpack')) die('skip dlpack extension not loaded');
+if (!extension_loaded('buffers')) die('skip buffers extension not loaded');
 if (getenv('USE_ZEND_ALLOC') === '0') die('skip memory_get_usage() is not tracked without the Zend allocator');
 ?>
 --FILE--
 <?php
+use Buffers\{DType, ArrayBuffer};
 $before = memory_get_usage();
 $b = new ArrayBuffer(4 * 1024 * 1024);
 $during = memory_get_usage();

@@ -1,6 +1,6 @@
 #!/bin/sh
 # Strip a release .so in place; fail if it still leaks debug info or internal symbols (#12).
-# Usage: tools/release-strip.sh dlpack.so   (Linux ELF or macOS Mach-O)
+# Usage: tools/release-strip.sh buffers.so   (Linux ELF or macOS Mach-O)
 set -eu
 so=$1
 if [ "$(uname -s)" = Darwin ]; then

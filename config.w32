@@ -1,6 +1,7 @@
-ARG_ENABLE("dlpack", "dlpack support", "no");
+ARG_ENABLE("buffers", "buffers support", "no");
 
-if (PHP_DLPACK != "no") {
-	EXTENSION("dlpack", "dlpack.c dtype.c buffer.c view.c capsule.c");
-	AC_DEFINE("HAVE_DLPACK", 1, "dlpack support enabled");
+if (PHP_BUFFERS != "no") {
+	EXTENSION("buffers", "buffers.c dtype.c device.c shape.c buffer.c props.c view.c capsule.c api.c");
+	AC_DEFINE("HAVE_BUFFERS", 1, "buffers support enabled");
+	PHP_INSTALL_HEADERS("ext/buffers", "php_buffers_api.h dlpack.h");
 }

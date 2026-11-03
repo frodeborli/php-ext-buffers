@@ -1,20 +1,21 @@
 --TEST--
-TypedView: chained offsets, sub-views, aliasing, offset errors
+BufferView: chained offsets, sub-views, aliasing, offset errors
 --SKIPIF--
-<?php if (!extension_loaded('dlpack')) die('skip dlpack extension not loaded'); ?>
+<?php if (!extension_loaded('buffers')) die('skip buffers extension not loaded'); ?>
 --FILE--
 <?php
+use Buffers\{DType, ArrayBuffer, BufferView, BufferInterface};
 $b = new ArrayBuffer(24);
 $v = $b->view(DType::UInt8, [2, 3, 4]);
 for ($i = 0; $i < 24; $i++) $b->view(DType::UInt8)[$i] = $i;
 var_dump($v[1][2][3], $v[0][0][0], $v[1][0][0]);
 $plane = $v[1];                       // sub-view
-var_dump($plane instanceof TypedView, $plane->shape(), $plane->strides(), $plane->byteOffset(), $plane[2][1]);
+var_dump($plane instanceof BufferView, $plane->shape->toArray(), $plane->strides, $plane->offset, $plane[2][1]);
 $row = $v[1][2];
-var_dump($row->shape(), $row->byteOffset(), $row[3], count($row));
+var_dump($row->shape->toArray(), $row->offset, $row[3], count($row));
 $row[0] = 200;                        // writes through to the root
 var_dump($v[1][2][0], $b->toString()[20] === chr(200));
-$v[0][1][2] = 77; var_dump($plane->byteOffset(), $v[0][1][2]);
+$v[0][1][2] = 77; var_dump($plane->offset, $v[0][1][2]);
 $v[1][1][1] += 5; var_dump($v[1][1][1]);
 $x = 3; var_dump($v[$x - 2][$x - 1][$x]);
 // the sub-view survives its parent
@@ -31,7 +32,7 @@ foreach ([
     function() use ($v) { $v[] = 1; }, function() use ($v) { $v[0] = 1; }, function() use ($v) { $v[0][0] = 1; },
     function() use ($v) { $v[9][0][0] = 1; }, function() use ($v) { $v[0][0][9] = 1; }, function() use ($v) { $v[[0,0,0]] = 1; },
     function() use ($v) { unset($v[0][0][0]); }, function() use ($v) { unset($v[0]); },
-    function() use ($v) { $v->foo = 1; }, fn() => clone $v, fn() => serialize($v), fn() => new TypedView(),
+    function() use ($v) { $v->foo = 1; }, fn() => clone $v, fn() => serialize($v), fn() => new BufferView(),
 ] as $i => $f) {
     try { $f(); echo "$i: no error\n"; } catch (Throwable $e) { echo "$i: ", get_class($e), ": ", $e->getMessage(), "\n"; }
 }
@@ -89,23 +90,23 @@ int(23)
 3: ValueError: Index 4 is out of range for an axis of length 4
 4: ValueError: Index 9223372036854775807 is out of range for an axis of length 2
 5: ValueError: Index -9223372036854775808 is out of range for an axis of length 2
-6: TypeError: TypedView offset must be of type int, array given
-7: TypeError: TypedView offset must be of type int, string given
-8: TypeError: TypedView offset must be of type int, float given
-9: TypeError: TypedView offset must be of type int, null given
-10: TypeError: TypedView offset must be of type int, bool given
-11: TypeError: TypedView offset must be of type int, stdClass given
-12: Error: Cannot append to a TypedView
+6: TypeError: BufferView offset must be of type int, array given
+7: TypeError: BufferView offset must be of type int, string given
+8: TypeError: BufferView offset must be of type int, float given
+9: TypeError: BufferView offset must be of type int, null given
+10: TypeError: BufferView offset must be of type int, bool given
+11: TypeError: BufferView offset must be of type int, stdClass given
+12: Error: Cannot append to a BufferView
 13: Error: Cannot assign to a sub-view; index every axis down to one element
 14: Error: Cannot assign to a sub-view; index every axis down to one element
 15: ValueError: Index 9 is out of range for an axis of length 2
 16: ValueError: Index 9 is out of range for an axis of length 4
-17: TypeError: TypedView offset must be of type int, array given
-18: Error: Cannot unset an element of a TypedView
-19: Error: Cannot unset an element of a TypedView
-20: Error: Cannot create dynamic property TypedView::$foo
-21: Error: Trying to clone an uncloneable object of class TypedView
-22: Exception: Serialization of 'TypedView' is not allowed
-23: Error: TypedView cannot be instantiated; use BufferInterface::view()
-notice: Indirect modification of overloaded element of TypedView has no effect
+17: TypeError: BufferView offset must be of type int, array given
+18: Error: Cannot unset an element of a BufferView
+19: Error: Cannot unset an element of a BufferView
+20: Error: Cannot create dynamic property Buffers\BufferView::$foo
+21: Error: Trying to clone an uncloneable object of class Buffers\BufferView
+22: Exception: Serialization of 'Buffers\BufferView' is not allowed
+23: Error: BufferView cannot be instantiated; use BufferInterface::view()
+notice: Indirect modification of overloaded element of Buffers\BufferView has no effect
 done

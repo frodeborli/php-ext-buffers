@@ -1,9 +1,10 @@
 --TEST--
 Objects are equal only to themselves
 --SKIPIF--
-<?php if (!extension_loaded('dlpack')) die('skip dlpack extension not loaded'); ?>
+<?php if (!extension_loaded('buffers')) die('skip buffers extension not loaded'); ?>
 --FILE--
 <?php
+use Buffers\{DType, ArrayBuffer};
 $b = new ArrayBuffer(8);
 $a = $b->view(DType::UInt8);
 $c = $b->view(DType::UInt8);

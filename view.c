@@ -1,24 +1,27 @@
-/* TypedView: an n-dimensional window onto a buffer.
+/* BufferView: an n-dimensional window onto a buffer.
  *
  * Element access is a chain of single integer offsets, $v[$x][$y][$z]. All but the last offset
  * hand out sub-views, which come from a small pool and cost no allocation in steady state.
  * Every dtype has its own read/write handlers (generated below), selected when the view is
  * created, so an access never switches on the dtype. A one-dimensional contiguous view gets
  * the shortest handlers of all: one bounds check, one load, no stride, no ndim test. */
-#include "php_dlpack.h"
+#include "php_buffers.h"
 #include "codec.h"
 #include "zend_exceptions.h"
 #include "zend_interfaces.h"
-#include "dlpack_arginfo.h"
+#include "buffers_arginfo.h"
 
-zend_class_entry *dlp_ce_view;
-extern double dlp_tab[][256];
+zend_class_entry *buf_ce_view, *buf_ce_tensor;
+extern double buf_tab[][256];
 
 typedef zval *(*read_fn)(zend_object *, zval *, int, zval *);
 typedef void (*write_fn)(zend_object *, zval *, zval *);
+typedef void (*peek_fn)(const buf_view *, zend_long, zval *);
 
-/* [dtype][1-D contiguous][read-only] */
-static zend_object_handlers view_handlers[DLP_NTYPES][2][2];
+/* [dtype][1-D contiguous][read-only][slow]; slow = the memory is not host accessible or has a readiness hook,
+ * which the generic wrappers handle before delegating to the fast handlers. */
+static zend_object_handlers view_handlers[BUF_NTYPES][2][2][2];
+static zend_object_handlers view0_handlers; /* 0-d views: no axes, every access throws */
 
 /* ---- element codecs ---------------------------------------------------------------- */
 
@@ -29,38 +32,38 @@ DEF_MEM(i8, int8_t) DEF_MEM(u8, uint8_t) DEF_MEM(i16, int16_t) DEF_MEM(u16, uint
 DEF_MEM(i32, int32_t) DEF_MEM(u32, uint32_t) DEF_MEM(i64, int64_t) DEF_MEM(u64, uint64_t)
 DEF_MEM(f32, float) DEF_MEM(f64, double)
 
-static zend_always_inline bool dlp_dbl(zval *v, double *d)
+static zend_always_inline bool buf_dbl(zval *v, double *d)
 {
 	if (EXPECTED(Z_TYPE_P(v) == IS_DOUBLE)) { *d = Z_DVAL_P(v); return true; }
 	if (Z_TYPE_P(v) == IS_LONG) { *d = (double)Z_LVAL_P(v); return true; }
 	return false;
 }
 
-static zend_always_inline bool dlp_lval(zval *v, zend_long *l)
+static zend_always_inline bool buf_lval(zval *v, zend_long *l)
 {
 	if (EXPECTED(Z_TYPE_P(v) == IS_LONG)) { *l = Z_LVAL_P(v); return true; }
-	if (Z_TYPE_P(v) == IS_DOUBLE) { *l = dlp_dval_to_lval(Z_DVAL_P(v)); return true; }
+	if (Z_TYPE_P(v) == IS_DOUBLE) { *l = buf_dval_to_lval(Z_DVAL_P(v)); return true; }
 	return false;
 }
 
 /* a number, or [re, im] */
-static bool dlp_cplx(zval *v, double *re, double *im)
+static bool buf_cplx(zval *v, double *re, double *im)
 {
 	zval *a, *b;
 
-	if (dlp_dbl(v, re)) { *im = 0; return true; }
+	if (buf_dbl(v, re)) { *im = 0; return true; }
 	if (Z_TYPE_P(v) != IS_ARRAY || zend_hash_num_elements(Z_ARRVAL_P(v)) != 2) return false;
 	a = zend_hash_index_find(Z_ARRVAL_P(v), 0);
 	b = zend_hash_index_find(Z_ARRVAL_P(v), 1);
 	if (!a || !b) return false;
 	ZVAL_DEREF(a); ZVAL_DEREF(b);
-	return dlp_dbl(a, re) && dlp_dbl(b, im);
+	return buf_dbl(a, re) && buf_dbl(b, im);
 }
 
 /* rd_ID(p, zval *) reads, wr_ID(p, zval *) writes and returns false if the value has the wrong type */
 #define CODEC_INT(ID, n, T) \
 	static zend_always_inline void rd_##ID(const uint8_t *p, zval *z) { ZVAL_LONG(z, (zend_long)ld_##n(p)); } \
-	static zend_always_inline bool wr_##ID(uint8_t *p, zval *v) { zend_long l; if (!dlp_lval(v, &l)) return false; st_##n(p, (T)l); return true; }
+	static zend_always_inline bool wr_##ID(uint8_t *p, zval *v) { zend_long l; if (!buf_lval(v, &l)) return false; st_##n(p, (T)l); return true; }
 CODEC_INT(INT8, i8, int8_t) CODEC_INT(INT16, i16, int16_t) CODEC_INT(INT32, i32, int32_t) CODEC_INT(INT64, i64, int64_t)
 CODEC_INT(UINT8, u8, uint8_t) CODEC_INT(UINT16, u16, uint16_t) CODEC_INT(UINT32, u32, uint32_t) CODEC_INT(UINT64, u64, uint64_t)
 
@@ -74,15 +77,15 @@ static zend_always_inline bool wr_BOOL(uint8_t *p, zval *v)
 
 #define CODEC_FLT(ID, RD, WR) \
 	static zend_always_inline void rd_##ID(const uint8_t *p, zval *z) { ZVAL_DOUBLE(z, RD); } \
-	static zend_always_inline bool wr_##ID(uint8_t *p, zval *v) { double d; if (!dlp_dbl(v, &d)) return false; WR; return true; }
-CODEC_FLT(FLOAT16, dlp_dec_FLOAT16(ld_u16(p)), st_u16(p, dlp_enc_FLOAT16(d)))
-CODEC_FLT(BFLOAT16, dlp_dec_BFLOAT16(ld_u16(p)), st_u16(p, dlp_enc_BFLOAT16(d)))
+	static zend_always_inline bool wr_##ID(uint8_t *p, zval *v) { double d; if (!buf_dbl(v, &d)) return false; WR; return true; }
+CODEC_FLT(FLOAT16, buf_dec_FLOAT16(ld_u16(p)), st_u16(p, buf_enc_FLOAT16(d)))
+CODEC_FLT(BFLOAT16, buf_dec_BFLOAT16(ld_u16(p)), st_u16(p, buf_enc_BFLOAT16(d)))
 CODEC_FLT(FLOAT32, (double)ld_f32(p), st_f32(p, (float)d))
 CODEC_FLT(FLOAT64, ld_f64(p), st_f64(p, d))
-#define X(id, E, M, B, K) CODEC_FLT(id, dlp_tab[DLP_T_##id - DLP_T_F8E3M4][*p], *p = dlp_enc_##id(d))
-DLP_SMALL(X)
+#define X(id, E, M, B, K) CODEC_FLT(id, buf_tab[BUF_T_##id - BUF_T_F8E3M4][*p], *p = buf_enc_##id(d))
+BUF_SMALL_BYTE(X)
 #undef X
-CODEC_FLT(F8E8M0FNU, dlp_tab[DLP_T_F8E8M0FNU - DLP_T_F8E3M4][*p], *p = dlp_enc_F8E8M0FNU(d))
+CODEC_FLT(F8E8M0FNU, buf_tab[BUF_T_F8E8M0FNU - BUF_T_F8E3M4][*p], *p = buf_enc_F8E8M0FNU(d))
 
 #define CODEC_CPLX(ID, C, DEC, ENC) \
 	static zend_always_inline double cd_##ID(const uint8_t *q) { return DEC; } \
@@ -90,26 +93,87 @@ CODEC_FLT(F8E8M0FNU, dlp_tab[DLP_T_F8E8M0FNU - DLP_T_F8E3M4][*p], *p = dlp_enc_F
 	static zend_always_inline void rd_##ID(const uint8_t *p, zval *z) { \
 		array_init_size(z, 2); add_next_index_double(z, cd_##ID(p)); add_next_index_double(z, cd_##ID(p + C)); } \
 	static zend_always_inline bool wr_##ID(uint8_t *p, zval *v) { \
-		double re, im; if (!dlp_cplx(v, &re, &im)) return false; ce_##ID(p, re); ce_##ID(p + C, im); return true; }
-CODEC_CPLX(COMPLEX32, 2, dlp_dec_FLOAT16(ld_u16(q)), st_u16(q, dlp_enc_FLOAT16(x)))
-CODEC_CPLX(BCOMPLEX32, 2, dlp_dec_BFLOAT16(ld_u16(q)), st_u16(q, dlp_enc_BFLOAT16(x)))
+		double re, im; if (!buf_cplx(v, &re, &im)) return false; ce_##ID(p, re); ce_##ID(p + C, im); return true; }
+CODEC_CPLX(COMPLEX32, 2, buf_dec_FLOAT16(ld_u16(q)), st_u16(q, buf_enc_FLOAT16(x)))
+CODEC_CPLX(BCOMPLEX32, 2, buf_dec_BFLOAT16(ld_u16(q)), st_u16(q, buf_enc_BFLOAT16(x)))
 CODEC_CPLX(COMPLEX64, 4, (double)ld_f32(q), st_f32(q, (float)x))
 CODEC_CPLX(COMPLEX128, 8, ld_f64(q), st_f64(q, x))
 
+/* Packed sub-byte formats: element i of a row is the bits [i*BITS, (i+1)*BITS) of the row's bytes, little-bit-endian
+ * (DLPack's default). A row starts on a byte boundary. fp6 elements can straddle a byte boundary: they read a
+ * 16-bit window only when they do (the second byte may lie past the end of the buffer otherwise). */
+static zend_always_inline unsigned pk_get(const uint8_t *row, zend_ulong i, unsigned bits)
+{
+	zend_ulong bit = i * bits;
+	const uint8_t *p = row + (bit >> 3);
+	unsigned sh = bit & 7, w = p[0];
+
+	if (sh + bits > 8) w |= (unsigned)p[1] << 8;
+	return (w >> sh) & ((1u << bits) - 1);
+}
+
+static zend_always_inline void pk_put(uint8_t *row, zend_ulong i, unsigned bits, unsigned code)
+{
+	zend_ulong bit = i * bits;
+	uint8_t *p = row + (bit >> 3);
+	unsigned sh = bit & 7, mask = ((1u << bits) - 1) << sh, w = p[0];
+
+	if (sh + bits > 8) {
+		w |= (unsigned)p[1] << 8;
+		w = (w & ~mask) | (code << sh);
+		p[0] = (uint8_t)w;
+		p[1] = (uint8_t)(w >> 8);
+	} else {
+		p[0] = (uint8_t)((w & ~mask) | (code << sh));
+	}
+}
+
+#define CODEC_PK(ID, E, M, B, K) \
+	static zend_always_inline void rdp_##ID(const uint8_t *row, zend_ulong i, zval *z) { \
+		ZVAL_DOUBLE(z, buf_tab[BUF_T_##ID - BUF_T_F8E3M4][pk_get(row, i, E + M + 1)]); } \
+	static zend_always_inline bool wrp_##ID(uint8_t *row, zend_ulong i, zval *v) { \
+		double d; if (!buf_dbl(v, &d)) return false; pk_put(row, i, E + M + 1, buf_enc_##ID(d)); return true; }
+BUF_SMALL_PACKED(CODEC_PK)
+
+/* ---- operators: delegated to the handler another extension registered, if any ------------------- */
+
+static zend_result buf_view_do_operation(uint8_t opcode, zval *result, zval *op1, zval *op2)
+{
+	switch (opcode) {
+	case ZEND_ADD: case ZEND_SUB: case ZEND_MUL: case ZEND_DIV: case ZEND_MOD: case ZEND_POW:
+	case ZEND_SL: case ZEND_SR: case ZEND_BW_OR: case ZEND_BW_AND: case ZEND_BW_XOR: case ZEND_BW_NOT:
+		if (buf_operator_handler) {
+			zval op1_copy;
+			zend_result r;
+
+			if (result == op1) { /* `$a += 1`: the handler may write the result while it still reads the operands */
+				ZVAL_COPY_VALUE(&op1_copy, op1);
+				op1 = &op1_copy;
+			}
+			r = buf_operator_handler(opcode, result, op1, op2);
+			if (r == SUCCESS && op1 == &op1_copy) {
+				zval_ptr_dtor(op1);
+			}
+			return r;
+		}
+	}
+	return FAILURE; /* the engine's "Unsupported operand types" TypeError */
+}
+
 /* ---- view objects and the pool ----------------------------------------------------- */
 
-static zend_always_inline zend_object *view_new(zend_object *buf, int dt, int ndim, const int64_t *shape, const int64_t *sbytes, uint8_t *data, bool writable)
+static zend_always_inline zend_object *view_alloc(zend_object *buf, int dt, int ndim, const int64_t *shape, const int64_t *sbytes, uint8_t *data, bool writable, bool slow)
 {
-	dlp_view *v;
+	buf_view *v;
 	zend_object *o;
 
-	if (DLPG(npool) > 0) {
-		o = DLPG(pool)[--DLPG(npool)];
-		v = dlp_view_from(o);
+	if (BUFG(npool) > 0) {
+		o = BUFG(pool)[--BUFG(npool)];
+		v = buf_view_from(o);
 		GC_DEL_FLAGS(o, IS_OBJ_DESTRUCTOR_CALLED); /* refcount is 1, handed to the caller */
 	} else {
-		v = zend_object_alloc(sizeof(dlp_view), dlp_ce_view);
-		zend_object_std_init(&v->std, dlp_ce_view);
+		v = zend_object_alloc(sizeof(buf_view), buf_ce_view);
+		zend_object_std_init(&v->std, buf_ce_view);
 		o = &v->std;
 	}
 	GC_ADDREF(buf);
@@ -118,17 +182,33 @@ static zend_always_inline zend_object *view_new(zend_object *buf, int dt, int nd
 	v->dt = dt;
 	v->ndim = ndim;
 	v->writable = writable;
+	v->slow = slow;
 	for (int i = 0; i < ndim; i++) { /* ndim is 1-3 in practice: a short loop beats a call or a 128-byte copy */
 		v->shape[i] = shape[i];
 		v->sbytes[i] = sbytes[i];
 	}
-	o->handlers = &view_handlers[dt][ndim == 1 && sbytes[0] == dlp_dtypes[dt].size][!writable];
 	return o;
 }
 
-zend_object *dlp_view_new(zend_object *buf, int dt, int ndim, const int64_t *shape, const int64_t *sbytes, uint8_t *data, bool writable)
+/* A packed dtype has no byte stride on its last axis (it is stored as 0, like the element size of
+ * the dtype), so "ndim == 1 && sbytes[0] == size" selects the contiguous handlers for it too. */
+static zend_always_inline zend_object *view_new(zend_object *buf, int dt, int ndim, const int64_t *shape, const int64_t *sbytes, uint8_t *data, bool writable, bool slow)
 {
-	return view_new(buf, dt, ndim, shape, sbytes, data, writable);
+	zend_object *o = view_alloc(buf, dt, ndim, shape, sbytes, data, writable, slow);
+
+	o->handlers = &view_handlers[dt][ndim == 1 && sbytes[0] == buf_dtypes[dt].size][!writable][slow];
+	return o;
+}
+
+zend_object *buf_view_new(zend_object *buf, int dt, int ndim, const int64_t *shape, const int64_t *sbytes, uint8_t *data, bool writable, bool slow)
+{
+	if (ndim == 0) {
+		zend_object *o = view_alloc(buf, dt, 0, shape, sbytes, data, writable, slow);
+
+		o->handlers = &view0_handlers;
+		return o;
+	}
+	return view_new(buf, dt, ndim, shape, sbytes, data, writable, slow);
 }
 
 /* Last reference gone: park the object in the pool instead of freeing it (the engine skips
@@ -136,13 +216,13 @@ zend_object *dlp_view_new(zend_object *buf, int dt, int ndim, const int64_t *sha
  * the shutdown and GC paths call dtor_obj with extra references held. */
 static void view_dtor(zend_object *o)
 {
-	dlp_view *v = dlp_view_from(o);
+	buf_view *v = buf_view_from(o);
 	zend_object *buf = v->buf;
 
-	if (GC_REFCOUNT(o) == 1 && buf && DLPG(request_active) && DLPG(npool) < DLP_POOL_MAX
+	if (GC_REFCOUNT(o) == 1 && buf && BUFG(request_active) && BUFG(npool) < BUF_POOL_MAX
 			&& !(EG(flags) & EG_FLAGS_IN_SHUTDOWN)) {
 		v->buf = NULL;
-		DLPG(pool)[DLPG(npool)++] = o;
+		BUFG(pool)[BUFG(npool)++] = o;
 		GC_ADDREF(o);
 		OBJ_RELEASE(buf);
 	}
@@ -150,7 +230,7 @@ static void view_dtor(zend_object *o)
 
 static void view_free(zend_object *o)
 {
-	dlp_view *v = dlp_view_from(o);
+	buf_view *v = buf_view_from(o);
 
 	if (v->buf) {
 		OBJ_RELEASE(v->buf);
@@ -158,30 +238,44 @@ static void view_free(zend_object *o)
 	zend_object_std_dtor(o);
 }
 
-void dlp_view_rshutdown(void)
+void buf_view_rshutdown(void)
 {
-	while (DLPG(npool) > 0) {
-		OBJ_RELEASE(DLPG(pool)[--DLPG(npool)]);
+	while (BUFG(npool) > 0) {
+		OBJ_RELEASE(BUFG(pool)[--BUFG(npool)]);
+	}
+}
+
+/* strides in elements; the last axis of a packed dtype has stride 1 */
+void buf_view_strides_elements(const buf_view *v, int64_t *out)
+{
+	const buf_dtype_info *info = &buf_dtypes[v->dt];
+
+	for (int i = 0; i < v->ndim; i++) {
+		if (info->size) {
+			out[i] = v->sbytes[i] / info->size;
+		} else {
+			out[i] = i == v->ndim - 1 ? 1 : v->sbytes[i] * 8 / info->bits;
+		}
 	}
 }
 
 /* ---- errors (cold) ------------------------------------------------------------------- */
 
-static zend_never_inline zval *dlp_bad_offset(zval *off, int type, zval *rv)
+static zend_never_inline zval *buf_bad_offset(zval *off, int type, zval *rv)
 {
 	if (type == BP_VAR_IS) {
 		ZVAL_NULL(rv);
 		return rv;
 	}
 	if (!off) {
-		zend_throw_error(NULL, "Cannot append to a TypedView");
+		zend_throw_error(NULL, "Cannot append to a BufferView");
 	} else {
-		zend_type_error("TypedView offset must be of type int, %s given", zend_zval_type_name(off));
+		zend_type_error("BufferView offset must be of type int, %s given", zend_zval_type_name(off));
 	}
 	return NULL;
 }
 
-static zend_never_inline zval *dlp_out_of_range(dlp_view *v, zend_long i, int type, zval *rv)
+static zend_never_inline zval *buf_out_of_range(buf_view *v, zend_long i, int type, zval *rv)
 {
 	if (type == BP_VAR_IS) {
 		ZVAL_NULL(rv);
@@ -191,24 +285,24 @@ static zend_never_inline zval *dlp_out_of_range(dlp_view *v, zend_long i, int ty
 	return NULL;
 }
 
-static zend_never_inline void dlp_bad_write(zval *off, zval *val, dlp_view *v)
+static zend_never_inline void buf_bad_write(zval *off, zval *val, buf_view *v)
 {
 	if (!off) {
-		zend_throw_error(NULL, "Cannot append to a TypedView");
+		zend_throw_error(NULL, "Cannot append to a BufferView");
 	} else if (Z_TYPE_P(off) != IS_LONG) {
-		zend_type_error("TypedView offset must be of type int, %s given", zend_zval_type_name(off));
+		zend_type_error("BufferView offset must be of type int, %s given", zend_zval_type_name(off));
 	} else if (v->ndim > 1) {
 		zend_throw_error(NULL, "Cannot assign to a sub-view; index every axis down to one element");
 	} else if (Z_TYPE_P(off) == IS_LONG && (zend_ulong)Z_LVAL_P(off) >= (zend_ulong)v->shape[0]) {
 		zend_value_error("Index " ZEND_LONG_FMT " is out of range for an axis of length " ZEND_LONG_FMT, Z_LVAL_P(off), (zend_long)v->shape[0]);
 	} else {
-		zend_type_error("Cannot write %s to a TypedView of dtype %s", zend_zval_type_name(val), dlp_dtypes[v->dt].name);
+		zend_type_error("Cannot write %s to a BufferView of dtype %s", zend_zval_type_name(val), buf_dtypes[v->dt].name);
 	}
 }
 
-static void dlp_write_ro(zend_object *o, zval *off, zval *val)
+static void buf_write_ro(zend_object *o, zval *off, zval *val)
 {
-	zend_throw_error(NULL, "Cannot write to a read-only TypedView");
+	zend_throw_error(NULL, "Cannot write to a read-only BufferView");
 }
 
 /* ---- per-dtype handlers ----------------------------------------------------------- */
@@ -216,66 +310,151 @@ static void dlp_write_ro(zend_object *o, zval *off, zval *val)
 #define GEN(ID, NAME, VALUE, KIND, BITS, SIZE, CODE) \
 static zval *rd1_##ID(zend_object *o, zval *off, int type, zval *rv) \
 { \
-	dlp_view *v = dlp_view_from(o); \
+	buf_view *v = buf_view_from(o); \
 	zend_ulong i; \
-	if (UNEXPECTED(!off || Z_TYPE_P(off) != IS_LONG)) return dlp_bad_offset(off, type, rv); \
+	if (UNEXPECTED(!off || Z_TYPE_P(off) != IS_LONG)) return buf_bad_offset(off, type, rv); \
 	i = (zend_ulong)Z_LVAL_P(off); \
-	if (UNEXPECTED(i >= (zend_ulong)v->shape[0])) return dlp_out_of_range(v, Z_LVAL_P(off), type, rv); \
+	if (UNEXPECTED(i >= (zend_ulong)v->shape[0])) return buf_out_of_range(v, Z_LVAL_P(off), type, rv); \
 	rd_##ID(v->data + i * SIZE, rv); \
 	return rv; \
 } \
 static zval *rdn_##ID(zend_object *o, zval *off, int type, zval *rv) \
 { \
-	dlp_view *v = dlp_view_from(o); \
+	buf_view *v = buf_view_from(o); \
 	zend_ulong i; \
 	uint8_t *p; \
-	if (UNEXPECTED(!off || Z_TYPE_P(off) != IS_LONG)) return dlp_bad_offset(off, type, rv); \
+	if (UNEXPECTED(!off || Z_TYPE_P(off) != IS_LONG)) return buf_bad_offset(off, type, rv); \
 	i = (zend_ulong)Z_LVAL_P(off); \
-	if (UNEXPECTED(i >= (zend_ulong)v->shape[0])) return dlp_out_of_range(v, Z_LVAL_P(off), type, rv); \
+	if (UNEXPECTED(i >= (zend_ulong)v->shape[0])) return buf_out_of_range(v, Z_LVAL_P(off), type, rv); \
 	p = v->data + (int64_t)i * v->sbytes[0]; \
 	if (v->ndim == 1) { rd_##ID(p, rv); return rv; } \
-	ZVAL_OBJ(rv, view_new(v->buf, v->dt, v->ndim - 1, v->shape + 1, v->sbytes + 1, p, v->writable)); \
+	ZVAL_OBJ(rv, view_new(v->buf, v->dt, v->ndim - 1, v->shape + 1, v->sbytes + 1, p, v->writable, v->slow)); \
 	return rv; \
 } \
 static void wr1_##ID(zend_object *o, zval *off, zval *val) \
 { \
-	dlp_view *v = dlp_view_from(o); \
+	buf_view *v = buf_view_from(o); \
 	zend_ulong i; \
-	if (UNEXPECTED(!off || Z_TYPE_P(off) != IS_LONG)) return dlp_bad_write(off, val, v); \
+	if (UNEXPECTED(!off || Z_TYPE_P(off) != IS_LONG)) return buf_bad_write(off, val, v); \
 	i = (zend_ulong)Z_LVAL_P(off); \
 	ZVAL_DEREF(val); \
-	if (UNEXPECTED(i >= (zend_ulong)v->shape[0] || !wr_##ID(v->data + i * SIZE, val))) dlp_bad_write(off, val, v); \
+	if (UNEXPECTED(i >= (zend_ulong)v->shape[0] || !wr_##ID(v->data + i * SIZE, val))) buf_bad_write(off, val, v); \
 } \
 static void wrn_##ID(zend_object *o, zval *off, zval *val) \
 { \
-	dlp_view *v = dlp_view_from(o); \
+	buf_view *v = buf_view_from(o); \
 	zend_ulong i; \
-	if (UNEXPECTED(!off || Z_TYPE_P(off) != IS_LONG || v->ndim > 1)) return dlp_bad_write(off, val, v); \
+	if (UNEXPECTED(!off || Z_TYPE_P(off) != IS_LONG || v->ndim > 1)) return buf_bad_write(off, val, v); \
 	i = (zend_ulong)Z_LVAL_P(off); \
 	ZVAL_DEREF(val); \
-	if (UNEXPECTED(i >= (zend_ulong)v->shape[0] || !wr_##ID(v->data + (int64_t)i * v->sbytes[0], val))) dlp_bad_write(off, val, v); \
+	if (UNEXPECTED(i >= (zend_ulong)v->shape[0] || !wr_##ID(v->data + (int64_t)i * v->sbytes[0], val))) buf_bad_write(off, val, v); \
 } \
-static void rdf_##ID(const uint8_t *p, zval *z) { rd_##ID(p, z); }
-#define X(id, name, value, kind, bits, size, code) GEN(id, name, value, kind, bits, size, code)
-DLP_DTYPES(X)
+static void peek_##ID(const buf_view *v, zend_long i, zval *z) { rd_##ID(v->data + i * v->sbytes[0], z); }
+
+/* packed dtypes: a 1-D view is always contiguous, so the only n-D handler that can run is the one that makes sub-views */
+#define GENP(ID, NAME, VALUE, KIND, BITS, SIZE, CODE) \
+static zval *rd1_##ID(zend_object *o, zval *off, int type, zval *rv) \
+{ \
+	buf_view *v = buf_view_from(o); \
+	zend_ulong i; \
+	if (UNEXPECTED(!off || Z_TYPE_P(off) != IS_LONG)) return buf_bad_offset(off, type, rv); \
+	i = (zend_ulong)Z_LVAL_P(off); \
+	if (UNEXPECTED(i >= (zend_ulong)v->shape[0])) return buf_out_of_range(v, Z_LVAL_P(off), type, rv); \
+	rdp_##ID(v->data, i, rv); \
+	return rv; \
+} \
+static zval *rdn_##ID(zend_object *o, zval *off, int type, zval *rv) \
+{ \
+	buf_view *v = buf_view_from(o); \
+	zend_ulong i; \
+	if (UNEXPECTED(!off || Z_TYPE_P(off) != IS_LONG)) return buf_bad_offset(off, type, rv); \
+	i = (zend_ulong)Z_LVAL_P(off); \
+	if (UNEXPECTED(i >= (zend_ulong)v->shape[0])) return buf_out_of_range(v, Z_LVAL_P(off), type, rv); \
+	ZVAL_OBJ(rv, view_new(v->buf, v->dt, v->ndim - 1, v->shape + 1, v->sbytes + 1, v->data + (int64_t)i * v->sbytes[0], v->writable, v->slow)); \
+	return rv; \
+} \
+static void wr1_##ID(zend_object *o, zval *off, zval *val) \
+{ \
+	buf_view *v = buf_view_from(o); \
+	zend_ulong i; \
+	if (UNEXPECTED(!off || Z_TYPE_P(off) != IS_LONG)) return buf_bad_write(off, val, v); \
+	i = (zend_ulong)Z_LVAL_P(off); \
+	ZVAL_DEREF(val); \
+	if (UNEXPECTED(i >= (zend_ulong)v->shape[0] || !wrp_##ID(v->data, i, val))) buf_bad_write(off, val, v); \
+} \
+static void wrn_##ID(zend_object *o, zval *off, zval *val) { buf_bad_write(off, val, buf_view_from(o)); } \
+static void peek_##ID(const buf_view *v, zend_long i, zval *z) { rdp_##ID(v->data, i, z); }
+
+#define GENSEL_0 GENP
+#define GENSEL_1 GEN
+#define GENSEL_2 GEN
+#define GENSEL_4 GEN
+#define GENSEL_8 GEN
+#define GENSEL_16 GEN
+#define GENSEL2(size) GENSEL_##size
+#define GENSEL(size) GENSEL2(size)
+#define X(id, name, value, kind, bits, size, code) GENSEL(size)(id, name, value, kind, bits, size, code)
+BUF_DTYPES(X)
 #undef X
 
-static const struct { read_fn rd[2]; write_fn wr[2]; void (*rdf)(const uint8_t *, zval *); } fns[DLP_NTYPES] = {
-#define X(id, ...) { { rdn_##id, rd1_##id }, { wrn_##id, wr1_##id }, rdf_##id },
-	DLP_DTYPES(X)
+static const struct { read_fn rd[2]; write_fn wr[2]; peek_fn peek; } fns[BUF_NTYPES] = {
+#define X(id, ...) { { rdn_##id, rd1_##id }, { wrn_##id, wr1_##id }, peek_##id },
+	BUF_DTYPES(X)
 #undef X
 };
 
+/* ---- memory that needs a check before elements are touched ------------------------------- */
+
+static zend_never_inline bool view_not_accessible(buf_buffer *b)
+{
+	const char *n = buf_device_type_name(b->dev_type);
+
+	if (n) {
+		zend_throw_error(NULL, "Cannot access the elements of a tensor on device %s:%d: its memory is not host accessible", n, (int)b->dev_id);
+	} else {
+		zend_throw_error(NULL, "Cannot access the elements of a tensor on device %d:%d: its memory is not host accessible", (int)b->dev_type, (int)b->dev_id);
+	}
+	return false;
+}
+
+/* before reading or writing an element: host accessible memory, and ready */
+static bool view_slow_check(const buf_view *v)
+{
+	buf_buffer *b = buf_buffer_from(v->buf);
+
+	if (UNEXPECTED(!b->host)) {
+		return view_not_accessible(b);
+	}
+	return buf_buffer_make_ready(b) == SUCCESS;
+}
+
+static zval *view_read_slow(zend_object *o, zval *off, int type, zval *rv)
+{
+	buf_view *v = buf_view_from(o);
+
+	if (v->ndim == 1 && !view_slow_check(v)) return NULL;
+	return fns[v->dt].rd[v->ndim == 1 && v->sbytes[0] == (int64_t)buf_dtypes[v->dt].size](o, off, type, rv);
+}
+
+static void view_write_slow(zend_object *o, zval *off, zval *val)
+{
+	buf_view *v = buf_view_from(o);
+
+	if (v->ndim == 1 && !view_slow_check(v)) return;
+	fns[v->dt].wr[v->ndim == 1 && v->sbytes[0] == (int64_t)buf_dtypes[v->dt].size](o, off, val);
+}
+
 static int view_has_dimension(zend_object *o, zval *off, int check_empty)
 {
-	dlp_view *v = dlp_view_from(o);
+	buf_view *v = buf_view_from(o);
 	zval tmp;
 	int r;
 
 	ZVAL_DEREF(off);
 	if (Z_TYPE_P(off) != IS_LONG || (zend_ulong)Z_LVAL_P(off) >= (zend_ulong)v->shape[0]) return 0;
 	if (!check_empty || v->ndim > 1) return 1;
-	fns[v->dt].rdf(v->data + Z_LVAL_P(off) * v->sbytes[0], &tmp);
+	if (v->slow && !view_slow_check(v)) return 0;
+	fns[v->dt].peek(v, Z_LVAL_P(off), &tmp);
 	r = zend_is_true(&tmp);
 	zval_ptr_dtor(&tmp);
 	return r;
@@ -283,21 +462,33 @@ static int view_has_dimension(zend_object *o, zval *off, int check_empty)
 
 static void view_unset_dimension(zend_object *o, zval *off)
 {
-	zend_throw_error(NULL, "Cannot unset an element of a TypedView");
+	zend_throw_error(NULL, "Cannot unset an element of a BufferView");
 }
 
 static zend_result view_count_elements(zend_object *o, zend_long *count)
 {
-	*count = dlp_view_from(o)->shape[0];
+	*count = buf_view_from(o)->shape[0];
 	return SUCCESS;
 }
 
-
 static zend_function *view_no_constructor(zend_object *o)
 {
-	zend_throw_error(NULL, "TypedView cannot be instantiated; use BufferInterface::view()");
+	zend_throw_error(NULL, "BufferView cannot be instantiated; use BufferInterface::view()");
 	return NULL;
 }
+
+/* ---- 0-d views: one element, no axes ---------------------------------------------------------- */
+
+static ZEND_COLD void view0_error(void)
+{
+	zend_throw_error(NULL, "A 0-d view has no axes");
+}
+
+static zval *view0_read(zend_object *o, zval *off, int type, zval *rv) { view0_error(); return NULL; }
+static void view0_write(zend_object *o, zval *off, zval *val) { view0_error(); }
+static int view0_has(zend_object *o, zval *off, int check_empty) { view0_error(); return 0; }
+static void view0_unset(zend_object *o, zval *off) { view0_error(); }
+static zend_result view0_count(zend_object *o, zend_long *count) { view0_error(); return FAILURE; }
 
 /* ---- iteration over the first axis ---------------------------------------------------- */
 
@@ -311,7 +502,7 @@ static void iter_dtor(zend_object_iterator *it)
 
 static int iter_valid(zend_object_iterator *it)
 {
-	return ((view_iter *)it)->idx < dlp_view_from(Z_OBJ(it->data))->shape[0] ? SUCCESS : FAILURE;
+	return ((view_iter *)it)->idx < buf_view_from(Z_OBJ(it->data))->shape[0] ? SUCCESS : FAILURE;
 }
 
 static zval *iter_current(zend_object_iterator *it)
@@ -345,6 +536,10 @@ static zend_object_iterator *view_get_iterator(zend_class_entry *ce, zval *objec
 		zend_throw_error(NULL, "An iterator cannot be used with foreach by reference");
 		return NULL;
 	}
+	if (buf_view_from(Z_OBJ_P(object))->ndim == 0) {
+		view0_error();
+		return NULL;
+	}
 	vi = emalloc(sizeof(view_iter));
 	zend_iterator_init(&vi->it);
 	ZVAL_OBJ_COPY(&vi->it.data, Z_OBJ_P(object));
@@ -356,49 +551,30 @@ static zend_object_iterator *view_get_iterator(zend_class_entry *ce, zval *objec
 
 /* ---- methods ----------------------------------------------------------------------------- */
 
-#define VIEW dlp_view_from(Z_OBJ_P(ZEND_THIS))
+#define VIEW buf_view_from(Z_OBJ_P(ZEND_THIS))
 
-PHP_METHOD(TypedView, dtype) { ZEND_PARSE_PARAMETERS_NONE(); dlp_dtype_to_zval(VIEW->dt, return_value); }
-PHP_METHOD(TypedView, ndim) { ZEND_PARSE_PARAMETERS_NONE(); RETURN_LONG(VIEW->ndim); }
-PHP_METHOD(TypedView, count) { ZEND_PARSE_PARAMETERS_NONE(); RETURN_LONG(VIEW->shape[0]); }
-
-PHP_METHOD(TypedView, shape)
+PHP_METHOD(Buffers_BufferView, count)
 {
-	dlp_view *v = VIEW;
+	buf_view *v = VIEW;
 
 	ZEND_PARSE_PARAMETERS_NONE();
-	array_init_size(return_value, v->ndim);
-	for (int i = 0; i < v->ndim; i++) add_next_index_long(return_value, v->shape[i]);
+	if (v->ndim == 0) {
+		view0_error();
+		RETURN_THROWS();
+	}
+	RETURN_LONG(v->shape[0]);
 }
 
-PHP_METHOD(TypedView, strides)
-{
-	dlp_view *v = VIEW;
-
-	ZEND_PARSE_PARAMETERS_NONE();
-	array_init_size(return_value, v->ndim);
-	for (int i = 0; i < v->ndim; i++) add_next_index_long(return_value, v->sbytes[i] / dlp_dtypes[v->dt].size);
-}
-
-PHP_METHOD(TypedView, byteOffset)
-{
-	dlp_view *v = VIEW;
-
-	ZEND_PARSE_PARAMETERS_NONE();
-	RETURN_LONG(v->data - dlp_buffer_from(v->buf)->base);
-}
-
-PHP_METHOD(TypedView, buffer) { ZEND_PARSE_PARAMETERS_NONE(); RETURN_OBJ_COPY(VIEW->buf); }
-
-PHP_METHOD(TypedView, offsetExists)
+PHP_METHOD(Buffers_BufferView, offsetExists)
 {
 	zval *off;
+	zend_object *o = Z_OBJ_P(ZEND_THIS);
 
 	ZEND_PARSE_PARAMETERS_START(1, 1) Z_PARAM_ZVAL(off) ZEND_PARSE_PARAMETERS_END();
-	RETURN_BOOL(view_has_dimension(Z_OBJ_P(ZEND_THIS), off, 0));
+	RETURN_BOOL(o->handlers->has_dimension(o, off, 0));
 }
 
-PHP_METHOD(TypedView, offsetGet)
+PHP_METHOD(Buffers_BufferView, offsetGet)
 {
 	zval *off;
 	zend_object *o = Z_OBJ_P(ZEND_THIS);
@@ -407,7 +583,7 @@ PHP_METHOD(TypedView, offsetGet)
 	if (!o->handlers->read_dimension(o, off, BP_VAR_R, return_value)) RETURN_THROWS();
 }
 
-PHP_METHOD(TypedView, offsetSet)
+PHP_METHOD(Buffers_BufferView, offsetSet)
 {
 	zval *off, *val;
 	zend_object *o = Z_OBJ_P(ZEND_THIS);
@@ -416,15 +592,16 @@ PHP_METHOD(TypedView, offsetSet)
 	o->handlers->write_dimension(o, Z_TYPE_P(off) == IS_NULL ? NULL : off, val);
 }
 
-PHP_METHOD(TypedView, offsetUnset)
+PHP_METHOD(Buffers_BufferView, offsetUnset)
 {
 	zval *off;
+	zend_object *o = Z_OBJ_P(ZEND_THIS);
 
 	ZEND_PARSE_PARAMETERS_START(1, 1) Z_PARAM_ZVAL(off) ZEND_PARSE_PARAMETERS_END();
-	view_unset_dimension(Z_OBJ_P(ZEND_THIS), off);
+	o->handlers->unset_dimension(o, off);
 }
 
-PHP_METHOD(TypedView, getIterator)
+PHP_METHOD(Buffers_BufferView, getIterator)
 {
 	ZEND_PARSE_PARAMETERS_NONE();
 	zend_create_internal_iterator_zval(return_value, ZEND_THIS);
@@ -432,7 +609,7 @@ PHP_METHOD(TypedView, getIterator)
 
 /* ---- BufferInterface::view() ------------------------------------------------------------- */
 
-/* shape/strides arrays: 1..8 non-negative integers (strides: at least 1) */
+/* shape/strides arrays: 0..8 integers, each at least `min` */
 static bool read_dims(HashTable *ht, int64_t *out, int *n, uint32_t argn, int64_t min)
 {
 	zval *z;
@@ -444,8 +621,8 @@ static bool read_dims(HashTable *ht, int64_t *out, int *n, uint32_t argn, int64_
 			zend_argument_type_error(argn, "must contain only integers, %s given", zend_zval_type_name(z));
 			return false;
 		}
-		if (c == DLP_MAX_NDIM) {
-			zend_argument_value_error(argn, "must have at most %d elements", DLP_MAX_NDIM);
+		if (c == BUF_MAX_NDIM) {
+			zend_argument_value_error(argn, "must have at most %d elements", BUF_MAX_NDIM);
 			return false;
 		}
 		if (Z_LVAL_P(z) < min) {
@@ -458,44 +635,159 @@ static bool read_dims(HashTable *ht, int64_t *out, int *n, uint32_t argn, int64_
 	return true;
 }
 
-void dlp_buffer_view_impl(zend_object *bufobj, INTERNAL_FUNCTION_PARAMETERS)
+#define FAIL(a, ...) do { *arg = (a); snprintf(err, errlen, __VA_ARGS__); return NULL; } while (0)
+
+/* The one place views are validated. Everything is checked once, with overflow-safe arithmetic, so that
+ * element access needs only a bounds check. `strides` are in elements (NULL: C-contiguous). */
+zend_object *buf_view_make(zend_object *bufobj, int dt, int ndim, const int64_t *shape_in, const int64_t *strides_in,
+	int64_t offset, char *err, size_t errlen, int *arg)
 {
-	dlp_buffer *b = dlp_buffer_from(bufobj);
-	zend_object *dtobj;
+	buf_buffer *b = buf_buffer_from(bufobj);
+	const buf_dtype_info *info = &buf_dtypes[dt];
+	bool packed = info->size == 0, empty = false;
+	int64_t size = info->size, bits = info->bits;
+	int64_t shape[BUF_MAX_NDIM] = {0}, st[BUF_MAX_NDIM] = {0}, sb[BUF_MAX_NDIM] = {0}, t, last = 0, extent;
+
+	if (ndim < 0 || ndim > BUF_MAX_NDIM) {
+		FAIL(2, "must have between 0 and %d elements", BUF_MAX_NDIM);
+	}
+	if (offset < 0 || (uint64_t)offset > b->len) {
+		FAIL(4, "must be between 0 and the byte length of the buffer");
+	}
+	if (!packed && offset % size) {
+		FAIL(4, "must be a multiple of the element size (%d bytes)", (int)size);
+	}
+	for (int i = 0; i < ndim; i++) {
+		if (shape_in[i] < 0) {
+			FAIL(2, "must contain only non-negative values");
+		}
+		shape[i] = shape_in[i];
+		if (shape[i] == 0) {
+			empty = true;
+		}
+	}
+	if (strides_in) {
+		for (int i = 0; i < ndim; i++) {
+			if (strides_in[i] < 1) {
+				FAIL(3, "must contain only values of at least 1");
+			}
+			st[i] = strides_in[i];
+		}
+	} else { /* C-contiguous; empty axes count as 1 so the strides stay valid */
+		int64_t acc = 1;
+		for (int i = ndim - 1; i >= 0; i--) {
+			st[i] = acc;
+			if (buf_mul_ovf(acc, shape[i] ? shape[i] : 1, &acc)) {
+				FAIL(2, "describes more elements than can be addressed");
+			}
+		}
+	}
+
+	if (packed) {
+		/* elements are bits apart on the last axis; every row starts on a byte boundary */
+		if (ndim > 0 && st[ndim - 1] != 1) {
+			FAIL(3, "the last axis of a packed %s view must have stride 1", info->name);
+		}
+		for (int i = 0; i < ndim - 1; i++) {
+			if (buf_mul_ovf(st[i], bits, &t)) {
+				FAIL(3, "stride is too large");
+			}
+			if (t % 8) {
+				FAIL(strides_in ? 3 : 2, "axis %d of a packed %s view has a stride of %lld elements = %lld bits, which is not a whole number of bytes; "
+					"pass explicit strides that are multiples of %d elements", i, info->name, (long long)st[i], (long long)t, bits == 6 ? 4 : 2);
+			}
+			sb[i] = t / 8;
+		}
+	} else {
+		for (int i = 0; i < ndim; i++) {
+			if (buf_mul_ovf(st[i], size, &sb[i])) {
+				FAIL(3, "stride is too large");
+			}
+		}
+	}
+
+	if (!empty) {
+		bool fits = true;
+
+		if (packed) { /* bytes from the start of the last element's row to the end of the last element */
+			int64_t row_bytes = 1;
+
+			if (ndim > 0) {
+				if (buf_mul_ovf(shape[ndim - 1], bits, &t)) {
+					FAIL(2, "describes more elements than can be addressed");
+				}
+				row_bytes = (t + 7) / 8;
+			}
+			for (int i = 0; i < ndim - 1 && fits; i++) {
+				if (buf_mul_ovf(shape[i] - 1, sb[i], &t) || last > INT64_MAX - t) {
+					fits = false;
+				} else {
+					last += t;
+				}
+			}
+			extent = row_bytes;
+		} else {
+			for (int i = 0; i < ndim && fits; i++) {
+				if (buf_mul_ovf(shape[i] - 1, sb[i], &t) || last > INT64_MAX - t) {
+					fits = false;
+				} else {
+					last += t;
+				}
+			}
+			extent = size;
+		}
+		fits = fits && last <= INT64_MAX - extent && (uint64_t)offset + (uint64_t)last + (uint64_t)extent <= b->len;
+		if (!fits) {
+			FAIL(2, "with the given strides and offset extends beyond the end of the buffer (%zu bytes)", b->len);
+		}
+	}
+
+	return buf_view_new(bufobj, dt, ndim, shape, sb, b->base + offset, b->writable, b->slow);
+}
+
+void buf_buffer_view_impl(zend_object *bufobj, INTERNAL_FUNCTION_PARAMETERS)
+{
+	buf_buffer *b = buf_buffer_from(bufobj);
+	zend_object *dtobj, *v;
 	zval *shape_zv = NULL;
 	HashTable *strides_ht = NULL;
 	zend_long offset = 0;
-	int64_t shape[DLP_MAX_NDIM] = {0}, st[DLP_MAX_NDIM] = {0}, sb[DLP_MAX_NDIM] = {0}, t, last = 0;
-	int dt, ndim, n;
-	int64_t size;
-	bool empty = false;
+	int64_t shape[BUF_MAX_NDIM] = {0}, st[BUF_MAX_NDIM] = {0};
+	int dt, ndim, n, arg;
+	char err[256];
+	bool packed;
 
 	ZEND_PARSE_PARAMETERS_START(1, 4)
-		Z_PARAM_OBJ_OF_CLASS(dtobj, dlp_ce_dtype)
+		Z_PARAM_OBJ_OF_CLASS(dtobj, buf_ce_dtype)
 		Z_PARAM_OPTIONAL
 		Z_PARAM_ZVAL(shape_zv)
 		Z_PARAM_ARRAY_HT_OR_NULL(strides_ht)
 		Z_PARAM_LONG(offset)
 	ZEND_PARSE_PARAMETERS_END();
 
-	dt = dlp_dtype_from_object(dtobj);
-	size = dlp_dtypes[dt].size;
-
-	if (offset < 0 || (zend_ulong)offset > b->len) {
-		zend_argument_value_error(4, "must be between 0 and the byte length of the buffer");
-		RETURN_THROWS();
-	}
-	if (offset % size) {
-		zend_argument_value_error(4, "must be a multiple of the element size (%d bytes)", (int)size);
-		RETURN_THROWS();
-	}
+	dt = buf_dtype_from_object(dtobj);
+	packed = buf_is_packed(dt);
 
 	if (!shape_zv || Z_TYPE_P(shape_zv) == IS_NULL) {
-		if ((b->len - offset) % size) {
-			zend_argument_value_error(2, "is required: the buffer length minus the offset is not a multiple of the element size (%d bytes)", (int)size);
-			RETURN_THROWS();
+		/* with an offset that buf_view_make() is about to reject, any shape will do */
+		if (offset >= 0 && (size_t)offset <= b->len && (packed || offset % buf_dtypes[dt].size == 0)) {
+			size_t rest = b->len - (size_t)offset;
+
+			if (packed) {
+				int64_t total;
+				if (buf_mul_ovf((int64_t)rest, 8, &total) || total % buf_dtypes[dt].bits) {
+					zend_argument_value_error(2, "is required: the number of bits in the buffer after the offset is not a multiple of the element width (%d bits)", (int)buf_dtypes[dt].bits);
+					RETURN_THROWS();
+				}
+				shape[0] = total / buf_dtypes[dt].bits;
+			} else {
+				if (rest % buf_dtypes[dt].size) {
+					zend_argument_value_error(2, "is required: the buffer length minus the offset is not a multiple of the element size (%d bytes)", (int)buf_dtypes[dt].size);
+					RETURN_THROWS();
+				}
+				shape[0] = rest / buf_dtypes[dt].size;
+			}
 		}
-		shape[0] = (b->len - offset) / size;
 		ndim = 1;
 	} else if (Z_TYPE_P(shape_zv) == IS_LONG) {
 		if (Z_LVAL_P(shape_zv) < 0) {
@@ -506,10 +798,6 @@ void dlp_buffer_view_impl(zend_object *bufobj, INTERNAL_FUNCTION_PARAMETERS)
 		ndim = 1;
 	} else if (Z_TYPE_P(shape_zv) == IS_ARRAY) {
 		if (!read_dims(Z_ARRVAL_P(shape_zv), shape, &ndim, 2, 0)) RETURN_THROWS();
-		if (ndim == 0) {
-			zend_argument_value_error(2, "must have between 1 and %d elements", DLP_MAX_NDIM);
-			RETURN_THROWS();
-		}
 	} else {
 		zend_argument_type_error(2, "must be of type array|int|null, %s given", zend_zval_type_name(shape_zv));
 		RETURN_THROWS();
@@ -521,91 +809,169 @@ void dlp_buffer_view_impl(zend_object *bufobj, INTERNAL_FUNCTION_PARAMETERS)
 			zend_argument_value_error(3, "must have one entry per dimension (%d)", ndim);
 			RETURN_THROWS();
 		}
-	} else { /* C-contiguous; empty axes count as 1 so the strides stay valid */
-		int64_t acc = 1;
-		for (int i = ndim - 1; i >= 0; i--) {
-			st[i] = acc;
-			if (dlp_mul_ovf(acc, shape[i] ? shape[i] : 1, &acc)) {
-				zend_argument_value_error(2, "describes more elements than can be addressed");
-				RETURN_THROWS();
-			}
-		}
 	}
 
-	for (int i = 0; i < ndim; i++) {
-		if (dlp_mul_ovf(st[i], size, &sb[i])) {
-			zend_argument_value_error(3, "stride is too large");
-			RETURN_THROWS();
-		}
-		if (shape[i] == 0) {
-			empty = true;
-		}
+	v = buf_view_make(bufobj, dt, ndim, shape, strides_ht ? st : NULL, offset, err, sizeof err, &arg);
+	if (!v) {
+		zend_argument_value_error(arg, "%s", err);
+		RETURN_THROWS();
 	}
-	if (!empty) {
-		bool fits = true;
-
-		for (int i = 0; i < ndim && fits; i++) {
-			if (dlp_mul_ovf(shape[i] - 1, sb[i], &t) || last > INT64_MAX - t) {
-				fits = false;
-			} else {
-				last += t;
-			}
-		}
-		fits = fits && last <= INT64_MAX - size && (zend_ulong)offset + (zend_ulong)last + (zend_ulong)size <= b->len;
-		if (!fits) {
-			zend_argument_value_error(2, "with the given strides and offset extends beyond the end of the buffer (%zu bytes)", b->len);
-			RETURN_THROWS();
-		}
-	}
-
-	ZVAL_OBJ(return_value, dlp_view_new(bufobj, dt, ndim, shape, sb, b->base + offset, b->writable));
+	RETURN_OBJ(v);
 }
 
-/* `new TypedView` must produce a valid object before get_constructor refuses it */
+/* `new BufferView` must produce a valid object before get_constructor refuses it */
 static zend_object *view_create_blank(zend_class_entry *ce)
 {
-	dlp_view *v = zend_object_alloc(sizeof(dlp_view), ce);
+	buf_view *v = zend_object_alloc(sizeof(buf_view), ce);
 
 	zend_object_std_init(&v->std, ce);
-	v->std.handlers = &view_handlers[0][0][1];
+	v->std.handlers = &view_handlers[0][0][1][0];
 	v->buf = NULL;
 	v->data = NULL;
-	v->dt = v->ndim = v->writable = 0;
+	v->dt = v->ndim = v->writable = v->slow = 0;
 	v->shape[0] = 0;
 	return &v->std;
 }
 
+/* ---- properties: dtype, shape, ndim, strides, offset, buffer --------------------------------------
+ * Virtual properties with internal get hooks (see props.c): computed when read, nothing stored in the
+ * view, so making a sub-view allocates nothing for them. */
+
+ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(ai_get_dtype, 0, 0, Buffers\\DType, 0)
+ZEND_END_ARG_INFO()
+ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(ai_get_dtype_n, 0, 0, Buffers\\DType, 1)
+ZEND_END_ARG_INFO()
+ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(ai_get_shape, 0, 0, Buffers\\Shape, 0)
+ZEND_END_ARG_INFO()
+ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(ai_get_buffer, 0, 0, Buffers\\BufferInterface, 0)
+ZEND_END_ARG_INFO()
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(ai_get_int, 0, 0, IS_LONG, 0)
+ZEND_END_ARG_INFO()
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(ai_get_array, 0, 0, IS_ARRAY, 0)
+ZEND_END_ARG_INFO()
+
+static void hook_dtype(INTERNAL_FUNCTION_PARAMETERS) { ZEND_PARSE_PARAMETERS_NONE(); buf_dtype_to_zval(VIEW->dt, return_value); }
+static void hook_ndim(INTERNAL_FUNCTION_PARAMETERS) { ZEND_PARSE_PARAMETERS_NONE(); RETURN_LONG(VIEW->ndim); }
+static void hook_buffer(INTERNAL_FUNCTION_PARAMETERS) { ZEND_PARSE_PARAMETERS_NONE(); RETURN_OBJ_COPY(VIEW->buf); }
+
+static void hook_shape(INTERNAL_FUNCTION_PARAMETERS)
+{
+	buf_view *v = VIEW;
+
+	ZEND_PARSE_PARAMETERS_NONE();
+	RETURN_OBJ(buf_shape_new_ints(v->ndim, v->shape));
+}
+
+static void hook_strides(INTERNAL_FUNCTION_PARAMETERS)
+{
+	buf_view *v = VIEW;
+	int64_t st[BUF_MAX_NDIM];
+
+	ZEND_PARSE_PARAMETERS_NONE();
+	buf_view_strides_elements(v, st);
+	array_init_size(return_value, v->ndim);
+	for (int i = 0; i < v->ndim; i++) add_next_index_long(return_value, st[i]);
+}
+
+static void hook_offset(INTERNAL_FUNCTION_PARAMETERS)
+{
+	buf_view *v = VIEW;
+
+	ZEND_PARSE_PARAMETERS_NONE();
+	RETURN_LONG(v->data - buf_buffer_from(v->buf)->base);
+}
+
+static zend_type class_type(const char *name, bool nullable)
+{
+	return (zend_type) ZEND_TYPE_INIT_CLASS(zend_string_init(name, strlen(name), 1), nullable, 0);
+}
+
+static zend_result tensor_implemented(zend_class_entry *iface, zend_class_entry *ce)
+{
+	if (ce->type == ZEND_USER_CLASS) {
+		zend_error_noreturn(E_ERROR, "%s %s cannot implement interface %s: only internal classes can implement it",
+			zend_get_object_type_uc(ce), ZSTR_VAL(ce->name), ZSTR_VAL(iface->name));
+	}
+	return SUCCESS;
+}
+
+void buffers_implement_tensor(zend_class_entry *ce, void (*get_dtype)(INTERNAL_FUNCTION_PARAMETERS),
+	void (*get_shape)(INTERNAL_FUNCTION_PARAMETERS), void (*get_ndim)(INTERNAL_FUNCTION_PARAMETERS))
+{
+	const buf_prop_def defs[] = {
+		{ "dtype", class_type("Buffers\\DType", true), get_dtype, ai_get_dtype_n, 0 },
+		{ "shape", class_type("Buffers\\Shape", false), get_shape, ai_get_shape, 0 },
+		{ "ndim", (zend_type) ZEND_TYPE_INIT_MASK(MAY_BE_LONG), get_ndim, ai_get_int, 0 },
+	};
+
+	buf_declare_hooked_props(ce, defs, 3);
+	zend_class_implements(ce, 1, buf_ce_tensor);
+}
+
 /* ---- registration --------------------------------------------------------------------------- */
 
-void dlp_view_minit(void)
+static void init_view_handlers(zend_object_handlers *h)
+{
+	memcpy(h, &std_object_handlers, sizeof *h);
+	h->offset = XtOffsetOf(buf_view, std);
+	h->dtor_obj = view_dtor;
+	h->free_obj = view_free;
+	h->clone_obj = NULL;
+	h->compare = buf_compare_identity;
+	h->get_constructor = view_no_constructor;
+	h->do_operation = buf_view_do_operation;
+}
+
+void buf_view_minit(void)
 {
 	zend_class_entry ce;
+	const buf_prop_def tensor_props[] = {
+		{ "dtype", class_type("Buffers\\DType", true), NULL, ai_get_dtype_n, 0 },
+		{ "shape", class_type("Buffers\\Shape", false), NULL, ai_get_shape, 0 },
+		{ "ndim", (zend_type) ZEND_TYPE_INIT_MASK(MAY_BE_LONG), NULL, ai_get_int, 0 },
+	};
+	const buf_prop_def view_props[] = {
+		{ "dtype", class_type("Buffers\\DType", false), hook_dtype, ai_get_dtype, 0 },
+		{ "shape", class_type("Buffers\\Shape", false), hook_shape, ai_get_shape, 0 },
+		{ "ndim", (zend_type) ZEND_TYPE_INIT_MASK(MAY_BE_LONG), hook_ndim, ai_get_int, 0 },
+		{ "strides", (zend_type) ZEND_TYPE_INIT_MASK(MAY_BE_ARRAY), hook_strides, ai_get_array, 0 },
+		{ "offset", (zend_type) ZEND_TYPE_INIT_MASK(MAY_BE_LONG), hook_offset, ai_get_int, 0 },
+		{ "buffer", class_type("Buffers\\BufferInterface", false), hook_buffer, ai_get_buffer, 0 },
+	};
 
-	INIT_CLASS_ENTRY(ce, "TypedView", class_TypedView_methods);
-	dlp_ce_view = zend_register_internal_class_ex(&ce, NULL);
-	dlp_ce_view->ce_flags |= ZEND_ACC_FINAL | ZEND_ACC_NO_DYNAMIC_PROPERTIES | ZEND_ACC_NOT_SERIALIZABLE;
-	dlp_ce_view->create_object = view_create_blank; /* real instances come from dlp_view_new() */
-	zend_class_implements(dlp_ce_view, 3, zend_ce_countable, zend_ce_arrayaccess, zend_ce_aggregate);
-	dlp_ce_view->get_iterator = view_get_iterator;
+	INIT_CLASS_ENTRY(ce, "Buffers\\Tensor", NULL);
+	buf_ce_tensor = zend_register_internal_interface(&ce);
+	buf_declare_hooked_props(buf_ce_tensor, tensor_props, 3);
+	buf_ce_tensor->interface_gets_implemented = tensor_implemented;
 
-	for (int dt = 0; dt < DLP_NTYPES; dt++) {
+	INIT_CLASS_ENTRY(ce, "Buffers\\BufferView", class_Buffers_BufferView_methods);
+	buf_ce_view = zend_register_internal_class_ex(&ce, NULL);
+	buf_ce_view->ce_flags |= ZEND_ACC_FINAL | ZEND_ACC_NO_DYNAMIC_PROPERTIES | ZEND_ACC_NOT_SERIALIZABLE;
+	buf_ce_view->create_object = view_create_blank; /* real instances come from buf_view_new() */
+	buf_declare_hooked_props(buf_ce_view, view_props, 6); /* before the interface that requires them */
+	zend_class_implements(buf_ce_view, 4, buf_ce_tensor, zend_ce_countable, zend_ce_arrayaccess, zend_ce_aggregate);
+	buf_ce_view->get_iterator = view_get_iterator;
+
+	for (int dt = 0; dt < BUF_NTYPES; dt++) {
 		for (int contig = 0; contig < 2; contig++) {
 			for (int ro = 0; ro < 2; ro++) {
-				zend_object_handlers *h = &view_handlers[dt][contig][ro];
+				for (int slow = 0; slow < 2; slow++) {
+					zend_object_handlers *h = &view_handlers[dt][contig][ro][slow];
 
-				memcpy(h, &std_object_handlers, sizeof *h);
-				h->offset = XtOffsetOf(dlp_view, std);
-				h->dtor_obj = view_dtor;
-				h->free_obj = view_free;
-				h->clone_obj = NULL;
-				h->compare = dlp_compare_identity;
-				h->get_constructor = view_no_constructor;
-				h->count_elements = view_count_elements;
-				h->has_dimension = view_has_dimension;
-				h->unset_dimension = view_unset_dimension;
-				h->read_dimension = fns[dt].rd[contig];
-				h->write_dimension = ro ? dlp_write_ro : fns[dt].wr[contig];
+					init_view_handlers(h);
+					h->count_elements = view_count_elements;
+					h->has_dimension = view_has_dimension;
+					h->unset_dimension = view_unset_dimension;
+					h->read_dimension = slow ? view_read_slow : fns[dt].rd[contig];
+					h->write_dimension = ro ? buf_write_ro : slow ? view_write_slow : fns[dt].wr[contig];
+				}
 			}
 		}
 	}
+	init_view_handlers(&view0_handlers);
+	view0_handlers.count_elements = view0_count;
+	view0_handlers.has_dimension = view0_has;
+	view0_handlers.unset_dimension = view0_unset;
+	view0_handlers.read_dimension = view0_read;
+	view0_handlers.write_dimension = view0_write;
 }

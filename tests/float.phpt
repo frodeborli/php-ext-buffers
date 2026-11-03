@@ -1,12 +1,13 @@
 --TEST--
 Float16, BFloat16, Float32, Float64 element codecs
 --SKIPIF--
-<?php if (!extension_loaded('dlpack')) die('skip dlpack extension not loaded'); ?>
+<?php if (!extension_loaded('buffers')) die('skip buffers extension not loaded'); ?>
 --FILE--
 <?php
+use Buffers\{DType, ArrayBuffer, BufferView};
 $b = new ArrayBuffer(64);
 foreach (['Float16', 'BFloat16', 'Float32', 'Float64'] as $name) {
-    $v = $b->view(constant("DType::$name"), 4);
+    $v = $b->view(constant("Buffers\\DType::$name"), 4);
     echo $name, "\n";
     foreach ([0.0, -0.0, 1.0, -1.5, 0.1, 3.14159265358979, 65504.0, 65519.0, 65520.0, 1e-8, 6e-8, 1e38, 3.5e38, 1e300, INF, -INF, NAN, unpack('d', pack('H*', '000000000000f8ff'))[1], 5, -7, PHP_INT_MAX] as $x) {
         $v[1] = $x;
@@ -116,5 +117,5 @@ raw bytes
 003c00c0
 803f00c0
 0000803f
-Cannot write string to a TypedView of dtype Float32
-Cannot write bool to a TypedView of dtype Float32
+Cannot write string to a BufferView of dtype Float32
+Cannot write bool to a BufferView of dtype Float32

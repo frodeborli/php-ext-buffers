@@ -1,9 +1,10 @@
 --TEST--
 Views of the same buffer in different dtypes, writes through any alias
 --SKIPIF--
-<?php if (!extension_loaded('dlpack')) die('skip dlpack extension not loaded'); ?>
+<?php if (!extension_loaded('buffers')) die('skip buffers extension not loaded'); ?>
 --FILE--
 <?php
+use Buffers\{DType, ArrayBuffer};
 $b = new ArrayBuffer(16);
 $bytes = $b->view(DType::UInt8);
 $words = $b->view(DType::UInt32, 4);

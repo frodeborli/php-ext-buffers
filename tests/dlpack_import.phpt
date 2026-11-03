@@ -1,70 +1,72 @@
 --TEST--
 DLPack import of foreign tensors; the deleter runs exactly once
 --SKIPIF--
-<?php if (!extension_loaded('dlpack') || !function_exists('dlpack_test_make')) die('skip needs a build with --enable-dlpack-testing'); ?>
+<?php if (!extension_loaded('buffers') || !function_exists('buffers_test_make')) die('skip needs a build with --enable-buffers-testing'); ?>
 --FILE--
 <?php
-function counts() { $c = dlpack_test_counts(); return "{$c['made']}/{$c['deleted']}"; }
+use Buffers\{DType, BufferView, BufferInterface, DLPackBuffer, DLPackCapsule, Tensor};
+function counts() { $c = buffers_test_counts(); return "{$c['made']}/{$c['deleted']}"; }
 const INT = 0, UINT = 1, FLOAT = 2, BFLOAT = 4, COMPLEX = 5, BOOL = 6, BCOMPLEX = 18;
 const READ_ONLY = 1, PADDED = 4;
 
 echo "contiguous uint8 2x3: "; 
-$v = TypedView::fromDLPack(dlpack_test_make(UINT, 8, 1, [2, 3], [3, 1]));
-var_dump($v->dtype(), $v->shape(), $v->strides(), $v->byteOffset(), $v[1][2], $v->buffer() instanceof DLPackBuffer, $v->buffer() instanceof BufferInterface);
-var_dump($v->buffer()->isWritable(), $v->buffer()->byteLength());
+$v = BufferView::fromDLPack(buffers_test_make(UINT, 8, 1, [2, 3], [3, 1]));
+var_dump($v->dtype, $v->shape->toArray(), $v->strides, $v->offset, $v[1][2], $v->buffer instanceof DLPackBuffer, $v->buffer instanceof BufferInterface);
+var_dump($v->buffer->isWritable(), $v->buffer->byteLength());
 $v[1][2] = 77; var_dump($v[1][2]);
 echo counts(), "\n"; unset($v); echo counts(), "\n";
 
 echo "byte offset and strides\n";
-$v = TypedView::fromDLPack(dlpack_test_make(INT, 16, 1, [2, 2], [1, 2], 0, 1, 2));
-var_dump($v->byteOffset(), $v->strides(), dechex($v[0][0]), dechex($v[0][1]), dechex($v[1][0]), $v->buffer()->byteLength());
+$v = BufferView::fromDLPack(buffers_test_make(INT, 16, 1, [2, 2], [1, 2], 0, 1, 2));
+var_dump($v->offset, $v->strides, dechex($v[0][0]), dechex($v[0][1]), dechex($v[1][0]), $v->buffer->byteLength());
 unset($v);
 
 echo "dtype mapping\n";
 foreach ([[INT,8],[INT,16],[INT,32],[INT,64],[UINT,8],[UINT,64],[FLOAT,16],[BFLOAT,16],[FLOAT,32],[FLOAT,64],[COMPLEX,32],[COMPLEX,64],[COMPLEX,128],[BCOMPLEX,32],[BOOL,8],
           [7,8],[8,8],[9,8],[10,8],[11,8],[12,8],[13,8],[14,8]] as [$code, $bits]) {
-    $v = TypedView::fromDLPack(dlpack_test_make($code, $bits, 1, [1], [1]));
-    echo "$code/$bits => ", $v->dtype()->name, "\n";
+    $v = BufferView::fromDLPack(buffers_test_make($code, $bits, 1, [1], [1]));
+    echo "$code/$bits => ", $v->dtype->name, "\n";
 }
 foreach ([[15,6],[16,6],[17,4]] as [$code, $bits]) {
-    $v = TypedView::fromDLPack(dlpack_test_make($code, $bits, 1, [3], [1], PADDED));
-    echo "$code/$bits padded => ", $v->dtype()->name, " ", $v->buffer()->byteLength(), " bytes\n";
+    $v = BufferView::fromDLPack(buffers_test_make($code, $bits, 1, [8], [1]));
+    echo "$code/$bits packed => ", $v->dtype->name, " ", $v->buffer->byteLength(), " bytes, strides ", json_encode($v->strides), "\n";
 }
 unset($v);
 
 echo "read-only\n";
-$v = TypedView::fromDLPack(dlpack_test_make(UINT, 8, 1, [4], [1], READ_ONLY));
-var_dump($v->buffer()->isWritable(), $v[3]);
+$v = BufferView::fromDLPack(buffers_test_make(UINT, 8, 1, [4], [1], READ_ONLY));
+var_dump($v->buffer->isWritable(), $v[3]);
 try { $v[0] = 1; } catch (Error $e) { echo $e->getMessage(), "\n"; }
-$s = $v->buffer()->view(DType::UInt8, 2);
+$s = $v->buffer->view(DType::UInt8, 2);
 try { $s[0] = 1; } catch (Error $e) { echo $e->getMessage(), "\n"; }
-$m = TypedView::fromDLPack(dlpack_test_make(UINT, 8, 1, [2, 2], [2, 1], READ_ONLY));
+$m = BufferView::fromDLPack(buffers_test_make(UINT, 8, 1, [2, 2], [2, 1], READ_ONLY));
 try { $m[1][1] = 1; } catch (Error $e) { echo $e->getMessage(), "\n"; }
 unset($v, $s, $m);
 
 echo "empty tensor\n";
-$v = TypedView::fromDLPack(dlpack_test_make(FLOAT, 32, 1, [0, 3], [3, 1]));
-var_dump($v->shape(), count($v), $v->buffer()->byteLength());
+$v = BufferView::fromDLPack(buffers_test_make(FLOAT, 32, 1, [0, 3], [3, 1]));
+var_dump($v->shape->toArray(), count($v), $v->buffer->byteLength());
 unset($v);
 
 echo "legacy NULL strides (DLPack < 1.2) mean compact row-major\n";
-$v = TypedView::fromDLPack(dlpack_test_make(UINT, 8, 1, [2, 3], null, 0, 1, 0, 1));
-var_dump($v->strides(), $v[1][0]);
+$v = BufferView::fromDLPack(buffers_test_make(UINT, 8, 1, [2, 3], null, 0, 1, 0, 1));
+var_dump($v->strides, $v[1][0]);
 unset($v);
 
 echo "rejections\n";
 $cases = [
-  'cuda device'       => [UINT, 8, 1, [2], [1], 0, 2],
-  'cpu pinned'        => [UINT, 8, 1, [2], [1], 0, 3],
+  'device type 0'     => [UINT, 8, 1, [2], [1], 0, 0],
   'lanes'             => [FLOAT, 32, 4, [2], [1]],
   'opaque handle'     => [3, 64, 1, [2], [1]],
   'int 12 bits'       => [INT, 12, 1, [2], [1]],
   'float 128 bits'    => [FLOAT, 128, 1, [2], [1]],
   'unknown code'      => [99, 8, 1, [2], [1]],
-  'packed fp4'        => [17, 4, 1, [4], [1], 0],
-  'packed fp6'        => [15, 6, 1, [4], [1], 0],
+  'padded fp4'        => [17, 4, 1, [4], [1], PADDED],
+  'padded fp6'        => [15, 6, 1, [4], [1], PADDED],
+  'packed fp6 stride' => [15, 6, 1, [2, 3], [3, 1]],
+  'packed fp4 last'   => [17, 4, 1, [4], [2]],
+  'packed fp4 odd row'=> [17, 4, 1, [2, 3], [3, 1]],
   'NULL strides 1.3'  => [UINT, 8, 1, [2, 3], null],
-  'scalar (ndim 0)'   => [UINT, 8, 1, [], []],
   '9 dims'            => [UINT, 8, 1, [1,1,1,1,1,1,1,1,1], [1,1,1,1,1,1,1,1,1]],
   'negative dim'      => [UINT, 8, 1, [-1], [1]],
   'zero stride'       => [UINT, 8, 1, [2, 2], [0, 1]],
@@ -75,34 +77,34 @@ $cases = [
   'major version 0'   => [UINT, 8, 1, [2], [1], 0, 1, 0, 3, 0],
 ];
 foreach ($cases as $name => $args) {
-    $before = dlpack_test_counts();
-    $cap = dlpack_test_make(...$args);
-    try { TypedView::fromDLPack($cap); echo "$name: accepted\n"; }
+    $before = buffers_test_counts();
+    $cap = buffers_test_make(...$args);
+    try { BufferView::fromDLPack($cap); echo "$name: accepted\n"; }
     catch (Throwable $e) { printf("%-18s %s: %s\n", $name, get_class($e), $e->getMessage()); }
-    $mid = dlpack_test_counts();
+    $mid = buffers_test_counts();
     unset($cap, $e);
-    $after = dlpack_test_counts();
+    $after = buffers_test_counts();
     // a rejected capsule is not consumed: its deleter runs when the capsule is dropped
     if ($after['deleted'] - $before['deleted'] !== 1 || $mid['deleted'] !== $before['deleted']) echo "  DELETER COUNT WRONG\n";
 }
 
 echo "consumed capsules\n";
-$cap = dlpack_test_make(UINT, 8, 1, [4], [1]);
-$v = TypedView::fromDLPack($cap);
-try { TypedView::fromDLPack($cap); } catch (Error $e) { echo get_class($e), ': ', $e->getMessage(), "\n"; }
+$cap = buffers_test_make(UINT, 8, 1, [4], [1]);
+$v = BufferView::fromDLPack($cap);
+try { BufferView::fromDLPack($cap); } catch (Error $e) { echo get_class($e), ': ', $e->getMessage(), "\n"; }
 unset($cap);
-$c = dlpack_test_counts(); echo $c['made'] - $c['deleted'], " live\n";   // only $v's tensor is alive
+$c = buffers_test_counts(); echo $c['made'] - $c['deleted'], " live\n";   // only $v's tensor is alive
 unset($v, $e);
-$c = dlpack_test_counts(); echo $c['made'] - $c['deleted'], " live\n";
-$cap = dlpack_test_make(UINT, 8, 1, [4], [1]); unset($cap);
-$c = dlpack_test_counts(); echo $c['made'] - $c['deleted'], " live\n";
-foreach ([fn() => new DLPackCapsule(), fn() => new DLPackBuffer(), fn() => clone dlpack_test_make(UINT, 8, 1, [1], [1]), fn() => serialize(dlpack_test_make(UINT, 8, 1, [1], [1]))] as $f) {
+$c = buffers_test_counts(); echo $c['made'] - $c['deleted'], " live\n";
+$cap = buffers_test_make(UINT, 8, 1, [4], [1]); unset($cap);
+$c = buffers_test_counts(); echo $c['made'] - $c['deleted'], " live\n";
+foreach ([fn() => new DLPackCapsule(), fn() => new DLPackBuffer(), fn() => clone buffers_test_make(UINT, 8, 1, [1], [1]), fn() => serialize(buffers_test_make(UINT, 8, 1, [1], [1]))] as $f) {
     try { $f(); } catch (Throwable $e) { echo get_class($e), ': ', $e->getMessage(), "\n"; }
 }
 unset($f, $e);
-$c = dlpack_test_counts(); echo $c['made'] - $c['deleted'], " live at end\n";
+$c = buffers_test_counts(); echo $c['made'] - $c['deleted'], " live at end\n";
 --EXPECT--
-contiguous uint8 2x3: enum(DType::UInt8)
+contiguous uint8 2x3: enum(Buffers\DType::UInt8)
 array(2) {
   [0]=>
   int(2)
@@ -160,15 +162,15 @@ dtype mapping
 12/8 => Float8E5M2
 13/8 => Float8E5M2FNUZ
 14/8 => Float8E8M0FNU
-15/6 padded => Float6E2M3FN 3 bytes
-16/6 padded => Float6E3M2FN 3 bytes
-17/4 padded => Float4E2M1FN 3 bytes
+15/6 packed => Float6E2M3FN 6 bytes, strides [1]
+16/6 packed => Float6E3M2FN 6 bytes, strides [1]
+17/4 packed => Float4E2M1FN 4 bytes, strides [1]
 read-only
 bool(false)
 int(3)
-Cannot write to a read-only TypedView
-Cannot write to a read-only TypedView
-Cannot write to a read-only TypedView
+Cannot write to a read-only BufferView
+Cannot write to a read-only BufferView
+Cannot write to a read-only BufferView
 empty tensor
 array(2) {
   [0]=>
@@ -187,18 +189,19 @@ array(2) {
 }
 int(3)
 rejections
-cuda device        ValueError: Only CPU tensors can be imported (device type 2)
-cpu pinned         ValueError: Only CPU tensors can be imported (device type 3)
+device type 0      ValueError: Invalid DLPack device type 0
 lanes              ValueError: Vector dtypes are not supported (4 lanes)
 opaque handle      ValueError: Unsupported DLPack dtype (code 3, 64 bits)
 int 12 bits        ValueError: Unsupported DLPack dtype (code 0, 12 bits)
 float 128 bits     ValueError: Unsupported DLPack dtype (code 2, 128 bits)
 unknown code       ValueError: Unsupported DLPack dtype (code 99, 8 bits)
-packed fp4         ValueError: Packed sub-byte tensors are not supported; the tensor must be padded (one element per byte)
-packed fp6         ValueError: Packed sub-byte tensors are not supported; the tensor must be padded (one element per byte)
+padded fp4         ValueError: Padded sub-byte tensors are not supported; the tensor must be packed (DLPack's default: little-bit-endian, no padding)
+padded fp6         ValueError: Padded sub-byte tensors are not supported; the tensor must be packed (DLPack's default: little-bit-endian, no padding)
+packed fp6 stride  ValueError: Axis 0 of a packed sub-byte tensor has a stride of 18 bits, which is not a whole number of bytes
+packed fp4 last    ValueError: The last axis of a packed sub-byte tensor must have stride 1
+packed fp4 odd row ValueError: Axis 0 of a packed sub-byte tensor has a stride of 12 bits, which is not a whole number of bytes
 NULL strides 1.3   ValueError: Tensors without strides are illegal since DLPack 1.2
-scalar (ndim 0)    ValueError: Unsupported number of dimensions (0); expected 1 to 8
-9 dims             ValueError: Unsupported number of dimensions (9); expected 1 to 8
+9 dims             ValueError: Unsupported number of dimensions (9); expected 0 to 8
 negative dim       ValueError: Negative dimension in shape
 zero stride        ValueError: Zero and negative strides are not supported
 negative stride    ValueError: Zero and negative strides are not supported
@@ -211,8 +214,8 @@ Error: The DLPackCapsule has already been consumed
 1 live
 0 live
 0 live
-Error: DLPackCapsule cannot be instantiated; use TypedView::toDLPack()
-Error: DLPackBuffer cannot be instantiated; use TypedView::fromDLPack()
-Error: Trying to clone an uncloneable object of class DLPackCapsule
-Exception: Serialization of 'DLPackCapsule' is not allowed
+Error: DLPackCapsule cannot be instantiated; use BufferView::toDLPack()
+Error: DLPackBuffer cannot be instantiated; use BufferView::fromDLPack()
+Error: Trying to clone an uncloneable object of class Buffers\DLPackCapsule
+Exception: Serialization of 'Buffers\DLPackCapsule' is not allowed
 0 live at end

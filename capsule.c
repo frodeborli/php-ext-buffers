@@ -1,14 +1,14 @@
-/* DLPack interop: TypedView::toDLPack() / fromDLPack() and the opaque DLPackCapsule. */
-#include "php_dlpack.h"
+/* DLPack interop: BufferView::toDLPack() / fromDLPack() and the opaque DLPackCapsule. */
+#include "php_buffers.h"
 #include "zend_exceptions.h"
-#include "dlpack_arginfo.h"
+#include "buffers_arginfo.h"
 
-zend_class_entry *dlp_ce_capsule;
+zend_class_entry *buf_ce_capsule;
 static zend_object_handlers capsule_handlers;
 
 static zend_object *capsule_create(zend_class_entry *ce)
 {
-	dlp_capsule *c = zend_object_alloc(sizeof(dlp_capsule), ce);
+	buf_capsule *c = zend_object_alloc(sizeof(buf_capsule), ce);
 
 	zend_object_std_init(&c->std, ce);
 	c->std.handlers = &capsule_handlers;
@@ -18,14 +18,14 @@ static zend_object *capsule_create(zend_class_entry *ce)
 
 static zend_function *capsule_no_constructor(zend_object *o)
 {
-	zend_throw_error(NULL, "DLPackCapsule cannot be instantiated; use TypedView::toDLPack()");
+	zend_throw_error(NULL, "DLPackCapsule cannot be instantiated; use BufferView::toDLPack()");
 	return NULL;
 }
 
 /* An unconsumed capsule that is dropped releases its tensor. */
 static void capsule_free(zend_object *o)
 {
-	dlp_capsule *c = dlp_capsule_from(o);
+	buf_capsule *c = buf_capsule_from(o);
 
 	if (c->t && c->t->deleter) {
 		c->t->deleter(c->t);
@@ -35,9 +35,9 @@ static void capsule_free(zend_object *o)
 
 static zend_object *capsule_new(DLManagedTensorVersioned *t)
 {
-	zend_object *o = capsule_create(dlp_ce_capsule);
+	zend_object *o = capsule_create(buf_ce_capsule);
 
-	dlp_capsule_from(o)->t = t;
+	buf_capsule_from(o)->t = t;
 	return o;
 }
 
@@ -45,7 +45,7 @@ static zend_object *capsule_new(DLManagedTensorVersioned *t)
 
 typedef struct {
 	DLManagedTensorVersioned t; /* first: the pointer handed to the deleter is the context */
-	int64_t shape[DLP_MAX_NDIM], strides[DLP_MAX_NDIM];
+	int64_t shape[BUF_MAX_NDIM], strides[BUF_MAX_NDIM];
 	zend_object *buf;
 } export_ctx;
 
@@ -53,38 +53,39 @@ static void export_deleter(DLManagedTensorVersioned *t)
 {
 	export_ctx *c = (export_ctx *)t;
 
-	if (DLPG(request_active)) { /* otherwise the engine is already tearing every object down */
+	if (BUFG(request_active)) { /* otherwise the engine is already tearing every object down */
 		OBJ_RELEASE(c->buf);
 	}
 	free(c);
 }
 
-PHP_METHOD(TypedView, toDLPack)
+zend_result buf_view_export(zend_object *vo, DLManagedTensorVersioned **out)
 {
-	dlp_view *v = dlp_view_from(Z_OBJ_P(ZEND_THIS));
-	dlp_buffer *b = dlp_buffer_from(v->buf);
-	const dlp_dtype_info *info = &dlp_dtypes[v->dt];
+	buf_view *v = buf_view_from(vo);
+	buf_buffer *b = buf_buffer_from(v->buf);
+	const buf_dtype_info *info = &buf_dtypes[v->dt];
 	export_ctx *c;
 	DLTensor *d;
 
-	ZEND_PARSE_PARAMETERS_NONE();
-
+	if (UNEXPECTED(b->pending) && buf_buffer_make_ready(b) == FAILURE) {
+		return FAILURE;
+	}
 	c = malloc(sizeof(export_ctx));
 	if (!c) {
 		zend_throw_error(NULL, "Out of memory");
-		RETURN_THROWS();
+		return FAILURE;
 	}
 	c->t.version.major = DLPACK_MAJOR_VERSION;
 	c->t.version.minor = DLPACK_MINOR_VERSION;
 	c->t.manager_ctx = c;
 	c->t.deleter = export_deleter;
-	c->t.flags = (v->writable ? 0 : DLPACK_FLAG_BITMASK_READ_ONLY) | (info->bits < 8 ? DLPACK_FLAG_BITMASK_IS_SUBBYTE_TYPE_PADDED : 0);
+	c->t.flags = v->writable ? 0 : DLPACK_FLAG_BITMASK_READ_ONLY; /* packed sub-byte data is DLPack's default: no PADDED flag */
 	d = &c->t.dl_tensor;
 	d->data = b->base;
-	d->device.device_type = kDLCPU;
-	d->device.device_id = 0;
+	d->device.device_type = (DLDeviceType)b->dev_type;
+	d->device.device_id = b->dev_id;
 	d->ndim = v->ndim;
-	d->dtype.code = info->code;
+	d->dtype.code = info->dlpack_code;
 	d->dtype.bits = info->bits;
 	d->dtype.lanes = 1;
 	d->shape = c->shape;
@@ -92,160 +93,246 @@ PHP_METHOD(TypedView, toDLPack)
 	d->byte_offset = (uint64_t)(v->data - b->base);
 	for (int i = 0; i < v->ndim; i++) {
 		c->shape[i] = v->shape[i];
-		c->strides[i] = v->sbytes[i] / info->size;
 	}
+	buf_view_strides_elements(v, c->strides);
 	GC_ADDREF(v->buf);
 	c->buf = v->buf;
-	RETURN_OBJ(capsule_new(&c->t));
+	*out = &c->t;
+	return SUCCESS;
+}
+
+zend_result buffers_dlpack_export(zend_object *view, DLManagedTensorVersioned **out)
+{
+	return buf_view_export(view, out);
+}
+
+PHP_METHOD(Buffers_BufferView, toDLPack)
+{
+	DLManagedTensorVersioned *t;
+
+	ZEND_PARSE_PARAMETERS_NONE();
+	if (buf_view_export(Z_OBJ_P(ZEND_THIS), &t) == FAILURE) {
+		RETURN_THROWS();
+	}
+	RETURN_OBJ(capsule_new(t));
 }
 
 /* ---- import --------------------------------------------------------------------------- */
 
-PHP_METHOD(TypedView, fromDLPack)
+static void dlpack_buffer_deleter(void *ctx)
 {
-	zend_object *co;
-	dlp_capsule *cap;
-	DLManagedTensorVersioned *t;
-	DLTensor *d;
+	DLManagedTensorVersioned *t = ctx;
+
+	if (t->deleter) {
+		t->deleter(t);
+	}
+}
+
+#define IMPORT_FAIL(...) do { zend_value_error(__VA_ARGS__); return NULL; } while (0)
+
+/* Imports a tensor of any device; on success the buffer owns the tensor. NULL after throwing, tensor untouched. */
+zend_object *buf_view_import(DLManagedTensorVersioned *t)
+{
+	DLTensor *d = &t->dl_tensor;
 	int dt = -1, ndim;
-	int64_t shape[DLP_MAX_NDIM] = {0}, sb[DLP_MAX_NDIM] = {0}, size, last = 0, tmp, len;
-	bool empty = false;
-	zend_object *buf;
+	int64_t shape[BUF_MAX_NDIM] = {0}, st[BUF_MAX_NDIM] = {0}, sb[BUF_MAX_NDIM] = {0}, size, bits, last = 0, tmp, len, extent;
+	bool empty = false, packed, host;
+	int32_t dtype_dev = d->device.device_type;
+	zend_object *buf, *dev = NULL, *view;
+	uint8_t *base;
 
-	ZEND_PARSE_PARAMETERS_START(1, 1)
-		Z_PARAM_OBJ_OF_CLASS(co, dlp_ce_capsule)
-	ZEND_PARSE_PARAMETERS_END();
-
-	cap = dlp_capsule_from(co);
-	t = cap->t;
-	if (!t) {
-		zend_throw_error(NULL, "The DLPackCapsule has already been consumed");
-		RETURN_THROWS();
-	}
-	d = &t->dl_tensor;
 	if (t->version.major != DLPACK_MAJOR_VERSION) {
-		zend_value_error("Unsupported DLPack major version %u (expected %d)", (unsigned)t->version.major, DLPACK_MAJOR_VERSION);
-		RETURN_THROWS();
+		IMPORT_FAIL("Unsupported DLPack major version %u (expected %d)", (unsigned)t->version.major, DLPACK_MAJOR_VERSION);
 	}
-	if (d->device.device_type != kDLCPU) {
-		zend_value_error("Only CPU tensors can be imported (device type %d)", (int)d->device.device_type);
-		RETURN_THROWS();
+	if (dtype_dev < 1) {
+		IMPORT_FAIL("Invalid DLPack device type %d", (int)dtype_dev);
 	}
 	if (d->dtype.lanes != 1) {
-		zend_value_error("Vector dtypes are not supported (%u lanes)", (unsigned)d->dtype.lanes);
-		RETURN_THROWS();
+		IMPORT_FAIL("Vector dtypes are not supported (%u lanes)", (unsigned)d->dtype.lanes);
 	}
-	for (int i = 0; i < DLP_NTYPES; i++) {
-		if (dlp_dtypes[i].code == d->dtype.code && dlp_dtypes[i].bits == d->dtype.bits) {
+	for (int i = 0; i < BUF_NTYPES; i++) {
+		if (buf_dtypes[i].dlpack_code == d->dtype.code && buf_dtypes[i].bits == d->dtype.bits) {
 			dt = i;
 			break;
 		}
 	}
 	if (dt < 0) {
-		zend_value_error("Unsupported DLPack dtype (code %u, %u bits)", (unsigned)d->dtype.code, (unsigned)d->dtype.bits);
-		RETURN_THROWS();
+		IMPORT_FAIL("Unsupported DLPack dtype (code %u, %u bits)", (unsigned)d->dtype.code, (unsigned)d->dtype.bits);
 	}
-	if (d->dtype.bits < 8 && !(t->flags & DLPACK_FLAG_BITMASK_IS_SUBBYTE_TYPE_PADDED)) {
-		zend_value_error("Packed sub-byte tensors are not supported; the tensor must be padded (one element per byte)");
-		RETURN_THROWS();
+	packed = buf_is_packed(dt);
+	size = buf_dtypes[dt].size;
+	bits = buf_dtypes[dt].bits;
+	if (packed && (t->flags & DLPACK_FLAG_BITMASK_IS_SUBBYTE_TYPE_PADDED)) {
+		IMPORT_FAIL("Padded sub-byte tensors are not supported; the tensor must be packed (DLPack's default: little-bit-endian, no padding)");
 	}
-	if (d->ndim < 1 || d->ndim > DLP_MAX_NDIM) {
-		zend_value_error("Unsupported number of dimensions (%d); expected 1 to %d", (int)d->ndim, DLP_MAX_NDIM);
-		RETURN_THROWS();
+	if (d->ndim < 0 || d->ndim > BUF_MAX_NDIM) {
+		IMPORT_FAIL("Unsupported number of dimensions (%d); expected 0 to %d", (int)d->ndim, BUF_MAX_NDIM);
 	}
 	ndim = d->ndim;
-	size = dlp_dtypes[dt].size;
 
 	for (int i = 0; i < ndim; i++) {
 		shape[i] = d->shape[i];
 		if (shape[i] < 0) {
-			zend_value_error("Negative dimension in shape");
-			RETURN_THROWS();
+			IMPORT_FAIL("Negative dimension in shape");
 		}
 		if (shape[i] == 0) {
 			empty = true;
 		}
 	}
-	if (d->strides) {
+	if (ndim == 0) {
+		/* a scalar: nothing to read */
+	} else if (d->strides) {
 		for (int i = 0; i < ndim; i++) {
 			if (d->strides[i] < 1) {
-				zend_value_error("Zero and negative strides are not supported");
-				RETURN_THROWS();
+				IMPORT_FAIL("Zero and negative strides are not supported");
 			}
-			if (d->strides[i] > INT64_MAX / size) {
-				zend_value_error("Stride is too large");
-				RETURN_THROWS();
-			}
-			sb[i] = d->strides[i] * size;
+			st[i] = d->strides[i];
 		}
 	} else if (t->version.minor >= 2) {
-		zend_value_error("Tensors without strides are illegal since DLPack 1.2");
-		RETURN_THROWS();
+		IMPORT_FAIL("Tensors without strides are illegal since DLPack 1.2");
 	} else { /* DLPack < 1.2: NULL strides mean compact row-major */
-		int64_t acc = size;
+		int64_t acc = 1;
 		for (int i = ndim - 1; i >= 0; i--) {
-			sb[i] = acc;
+			st[i] = acc;
 			if (shape[i] > 1 && acc > INT64_MAX / shape[i]) {
-				zend_value_error("Shape is too large");
-				RETURN_THROWS();
+				IMPORT_FAIL("Shape is too large");
 			}
 			acc *= shape[i] ? shape[i] : 1;
 		}
 	}
-
-	if (empty) {
-		len = 0;
+	if (packed) {
+		if (ndim > 0 && st[ndim - 1] != 1) {
+			IMPORT_FAIL("The last axis of a packed sub-byte tensor must have stride 1");
+		}
+		for (int i = 0; i < ndim - 1; i++) {
+			if (buf_mul_ovf(st[i], bits, &tmp)) {
+				IMPORT_FAIL("Stride is too large");
+			}
+			if (tmp % 8) {
+				IMPORT_FAIL("Axis %d of a packed sub-byte tensor has a stride of %lld bits, which is not a whole number of bytes", i, (long long)tmp);
+			}
+			sb[i] = tmp / 8;
+		}
 	} else {
 		for (int i = 0; i < ndim; i++) {
-			if (dlp_mul_ovf(shape[i] - 1, sb[i], &tmp) || last > INT64_MAX - tmp) {
-				zend_value_error("The tensor is too large");
-				RETURN_THROWS();
+			if (buf_mul_ovf(st[i], size, &sb[i])) {
+				IMPORT_FAIL("Stride is too large");
+			}
+		}
+	}
+
+	/* bytes from the first to past the last element */
+	if (empty) {
+		extent = 0;
+	} else {
+		if (packed) {
+			if (ndim > 0) {
+				if (buf_mul_ovf(shape[ndim - 1], bits, &tmp)) {
+					IMPORT_FAIL("The tensor is too large");
+				}
+				extent = (tmp + 7) / 8;
+			} else {
+				extent = 1;
+			}
+		} else {
+			extent = size;
+		}
+		for (int i = 0; i < ndim - (packed ? 1 : 0); i++) {
+			if (buf_mul_ovf(shape[i] - 1, sb[i], &tmp) || last > INT64_MAX - tmp) {
+				IMPORT_FAIL("The tensor is too large");
 			}
 			last += tmp;
 		}
-		if (last > INT64_MAX - size) {
-			zend_value_error("The tensor is too large");
-			RETURN_THROWS();
+		if (last > INT64_MAX - extent) {
+			IMPORT_FAIL("The tensor is too large");
 		}
-		len = last + size;
+		extent += last;
 		if (!d->data) {
-			zend_value_error("Tensor data pointer is NULL");
-			RETURN_THROWS();
+			IMPORT_FAIL("Tensor data pointer is NULL");
 		}
 	}
-	if (((uintptr_t)d->data + d->byte_offset) % size) {
-		zend_value_error("Tensor data is not aligned to the element size (%d bytes)", (int)size);
-		RETURN_THROWS();
+	host = dtype_dev == kDLCPU || dtype_dev == kDLCUDAHost || dtype_dev == kDLROCMHost || dtype_dev == kDLCUDAManaged;
+	if (host && !packed && ((uintptr_t)d->data + d->byte_offset) % size) {
+		IMPORT_FAIL("Tensor data is not aligned to the element size (%d bytes)", (int)size);
+	}
+	if (d->byte_offset > (uint64_t)INT64_MAX || (uint64_t)extent > (uint64_t)INT64_MAX - d->byte_offset) {
+		IMPORT_FAIL("The tensor is too large");
 	}
 
-	buf = dlp_foreign_buffer_new(t, (uint8_t *)d->data + d->byte_offset, (size_t)len);
-	cap->t = NULL; /* consumed: the buffer owns the tensor and calls its deleter exactly once */
-	ZVAL_OBJ(return_value, dlp_view_new(buf, dt, ndim, shape, sb, dlp_buffer_from(buf)->base, dlp_buffer_from(buf)->writable));
+	if (dtype_dev != kDLCPU) {
+		dev = buf_foreign_device_new(dtype_dev, d->device.device_id);
+	}
+	if (host) {
+		/* the buffer covers exactly the tensor's extent: the view starts at offset 0 */
+		base = (uint8_t *)d->data + d->byte_offset;
+		len = extent;
+	} else {
+		/* an opaque device handle: never dereferenced, passed through unchanged on export */
+		base = (uint8_t *)d->data;
+		len = (int64_t)d->byte_offset + extent;
+	}
+	buf = buf_foreign_buffer_new(base, (size_t)len, !(t->flags & DLPACK_FLAG_BITMASK_READ_ONLY), dev, dlpack_buffer_deleter, t, NULL);
+	if (dev) {
+		OBJ_RELEASE(dev);
+	}
+	if (!buf) {
+		return NULL;
+	}
+	/* the buffer now owns the tensor: its deleter runs exactly once, when the buffer is freed */
+	view = buf_view_new(buf, dt, ndim, shape, sb, host ? base : base + d->byte_offset, buf_buffer_from(buf)->writable, buf_buffer_from(buf)->slow);
 	OBJ_RELEASE(buf);
+	return view;
 }
 
-void dlp_capsule_minit(void)
+zend_object *buffers_dlpack_import(DLManagedTensorVersioned *t)
+{
+	return buf_view_import(t);
+}
+
+PHP_METHOD(Buffers_BufferView, fromDLPack)
+{
+	zend_object *co, *view;
+	buf_capsule *cap;
+
+	ZEND_PARSE_PARAMETERS_START(1, 1)
+		Z_PARAM_OBJ_OF_CLASS(co, buf_ce_capsule)
+	ZEND_PARSE_PARAMETERS_END();
+
+	cap = buf_capsule_from(co);
+	if (!cap->t) {
+		zend_throw_error(NULL, "The DLPackCapsule has already been consumed");
+		RETURN_THROWS();
+	}
+	view = buf_view_import(cap->t);
+	if (!view) {
+		RETURN_THROWS(); /* a rejected capsule is not consumed: its deleter still runs, once, when it is freed */
+	}
+	cap->t = NULL;
+	RETURN_OBJ(view);
+}
+
+void buf_capsule_minit(void)
 {
 	zend_class_entry ce;
 
-	INIT_CLASS_ENTRY(ce, "DLPackCapsule", NULL);
-	dlp_ce_capsule = zend_register_internal_class_ex(&ce, NULL);
-	dlp_ce_capsule->ce_flags |= ZEND_ACC_FINAL | ZEND_ACC_NO_DYNAMIC_PROPERTIES | ZEND_ACC_NOT_SERIALIZABLE;
-	dlp_ce_capsule->create_object = capsule_create;
+	INIT_CLASS_ENTRY(ce, "Buffers\\DLPackCapsule", NULL);
+	buf_ce_capsule = zend_register_internal_class_ex(&ce, NULL);
+	buf_ce_capsule->ce_flags |= ZEND_ACC_FINAL | ZEND_ACC_NO_DYNAMIC_PROPERTIES | ZEND_ACC_NOT_SERIALIZABLE;
+	buf_ce_capsule->create_object = capsule_create;
 	memcpy(&capsule_handlers, &std_object_handlers, sizeof capsule_handlers);
-	capsule_handlers.offset = XtOffsetOf(dlp_capsule, std);
+	capsule_handlers.offset = XtOffsetOf(buf_capsule, std);
 	capsule_handlers.free_obj = capsule_free;
 	capsule_handlers.clone_obj = NULL;
-	capsule_handlers.compare = dlp_compare_identity;
+	capsule_handlers.compare = buf_compare_identity;
 	capsule_handlers.get_constructor = capsule_no_constructor;
 }
 
-#ifdef DLPACK_TESTING
-/* Test-only (configure --enable-dlpack-testing): produces tensors as a foreign framework would,
+#ifdef BUFFERS_TESTING
+/* Test-only (configure --enable-buffers-testing): produces tensors as a foreign framework would,
  * with a deleter that is counted, so the suite can prove the deleter runs exactly once. */
 typedef struct {
 	DLManagedTensorVersioned t;
-	int64_t shape[16], strides[16]; /* more than DLP_MAX_NDIM, so tests can ask for 9 dimensions */
+	int64_t shape[16], strides[16]; /* more than BUF_MAX_NDIM, so tests can ask for 9 dimensions */
 	void *mem;
 } test_ctx;
 static zend_long test_made, test_deleted;
@@ -259,7 +346,7 @@ static void test_deleter(DLManagedTensorVersioned *t)
 	test_deleted++;
 }
 
-ZEND_BEGIN_ARG_INFO_EX(arginfo_dlpack_test_make, 0, 0, 4)
+ZEND_BEGIN_ARG_INFO_EX(arginfo_buffers_test_make, 0, 0, 4)
 	ZEND_ARG_TYPE_INFO(0, code, IS_LONG, 0)
 	ZEND_ARG_TYPE_INFO(0, bits, IS_LONG, 0)
 	ZEND_ARG_TYPE_INFO(0, lanes, IS_LONG, 0)
@@ -271,12 +358,12 @@ ZEND_BEGIN_ARG_INFO_EX(arginfo_dlpack_test_make, 0, 0, 4)
 	ZEND_ARG_TYPE_INFO(0, minor, IS_LONG, 0)
 	ZEND_ARG_TYPE_INFO(0, major, IS_LONG, 0)
 ZEND_END_ARG_INFO()
-ZEND_BEGIN_ARG_INFO_EX(arginfo_dlpack_test_counts, 0, 0, 0)
+ZEND_BEGIN_ARG_INFO_EX(arginfo_buffers_test_counts, 0, 0, 0)
 ZEND_END_ARG_INFO()
 
-/* dlpack_test_make(code, bits, lanes, shape, ?strides = null, flags = 0, device = 1, byteOffset = 0, minor = 3, major = 1)
+/* buffers_test_make(code, bits, lanes, shape, ?strides = null, flags = 0, device = 1, byteOffset = 0, minor = 3, major = 1)
  * The memory holds the byte pattern i & 0xff, so tests can check what a view reads. */
-PHP_FUNCTION(dlpack_test_make)
+PHP_FUNCTION(buffers_test_make)
 {
 	zend_long code, bits, lanes, flags = 0, device = 1, byte_offset = 0, minor = DLPACK_MINOR_VERSION, major = DLPACK_MAJOR_VERSION;
 	HashTable *shape, *strides = NULL;
@@ -334,7 +421,7 @@ PHP_FUNCTION(dlpack_test_make)
 	RETURN_OBJ(capsule_new(&c->t));
 }
 
-PHP_FUNCTION(dlpack_test_counts)
+PHP_FUNCTION(buffers_test_counts)
 {
 	ZEND_PARSE_PARAMETERS_NONE();
 	array_init(return_value);
@@ -342,9 +429,9 @@ PHP_FUNCTION(dlpack_test_counts)
 	add_assoc_long(return_value, "deleted", test_deleted);
 }
 
-const zend_function_entry dlp_testing_functions[] = {
-	PHP_FE(dlpack_test_make, arginfo_dlpack_test_make)
-	PHP_FE(dlpack_test_counts, arginfo_dlpack_test_counts)
+const zend_function_entry buf_testing_functions[] = {
+	PHP_FE(buffers_test_make, arginfo_buffers_test_make)
+	PHP_FE(buffers_test_counts, arginfo_buffers_test_counts)
 	PHP_FE_END
 };
 #endif

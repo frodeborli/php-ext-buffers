@@ -1,9 +1,10 @@
 --TEST--
 ArrayBuffer: construction, zero fill, strings, errors
 --SKIPIF--
-<?php if (!extension_loaded('dlpack')) die('skip dlpack extension not loaded'); ?>
+<?php if (!extension_loaded('buffers')) die('skip buffers extension not loaded'); ?>
 --FILE--
 <?php
+use Buffers\{DType, ArrayBuffer, BufferInterface};
 $b = new ArrayBuffer(10);
 var_dump($b->byteLength(), $b->isWritable(), $b instanceof BufferInterface, bin2hex($b->toString()));
 $z = new ArrayBuffer(0);
@@ -31,11 +32,11 @@ string(0) ""
 int(8)
 string(16) "68c3a96c6c6f0078"
 bool(true)
-ValueError: ArrayBuffer::__construct(): Argument #1 ($byteLength) must be greater than or equal to 0
-ValueError: ArrayBuffer::__construct(): Argument #1 ($byteLength) is too large
+ValueError: Buffers\ArrayBuffer::__construct(): Argument #1 ($byteLength) must be greater than or equal to 0
+ValueError: Buffers\ArrayBuffer::__construct(): Argument #1 ($byteLength) is too large
 Error: ArrayBuffer is already constructed
-Error: Trying to clone an uncloneable object of class ArrayBuffer
-Exception: Serialization of 'ArrayBuffer' is not allowed
-Error: Cannot create dynamic property ArrayBuffer::$x
-TypeError: ArrayBuffer::__construct(): Argument #1 ($byteLength) must be of type int, string given
+Error: Trying to clone an uncloneable object of class Buffers\ArrayBuffer
+Exception: Serialization of 'Buffers\ArrayBuffer' is not allowed
+Error: Cannot create dynamic property Buffers\ArrayBuffer::$x
+TypeError: Buffers\ArrayBuffer::__construct(): Argument #1 ($byteLength) must be of type int, string given
 ok

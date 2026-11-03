@@ -1,16 +1,18 @@
 --TEST--
 NaN conversions: float16 keeps the payload like numpy, the other formats canonicalise like ml_dtypes
 --SKIPIF--
-<?php if (!extension_loaded('dlpack')) die('skip dlpack extension not loaded'); ?>
+<?php if (!extension_loaded('buffers')) die('skip buffers extension not loaded'); ?>
 --FILE--
 <?php
+use Buffers\{DType, ArrayBuffer};
 $nan = fn(string $hex) => unpack('E', hex2bin($hex))[1];   // big-endian double bits
 $b = new ArrayBuffer(8);
 $raw = $b->view(DType::UInt8);
-$show = function (DType $t, string $hex) use ($b, $nan) {
+$show = function (DType $t, string $hex) use ($b, $nan, $raw) {
+    for ($i = 0; $i < 8; $i++) $raw[$i] = 0;
     $v = $b->view($t, 1);
     $v[0] = $nan($hex);
-    $n = $t->byteSize();
+    $n = $t->byteSize() ?? 1;   // a packed element starts in the low bits of the first byte
     printf("%-14s %s -> %s\n", $t->name, $hex, bin2hex(substr($b->toString(), 0, $n)));
 };
 foreach (['7ff8000000000000', 'fff8000000000000', '7ff0000000000001', 'fff0000040000000', '7ff0040000000000', '7fffffffffffffff', 'ffffffffffffffff', '7ff4000000000000'] as $hex) {
