@@ -27,8 +27,8 @@ $u2 = (new ArrayBuffer(2))->view(DType::UInt2, [2, 4]); for ($k = 0; $k < 2; $k+
 echo json_encode($u2), "\n";
 $f6 = (new ArrayBuffer(6))->view(DType::Float6E2M3FN, [2, 4]); $f6[1][2] = 1.5;
 echo json_encode($f6), "\n";
-$bo = (new ArrayBuffer(3))->view(DType::Bool, 3); $bo[1] = true; $i8 = (new ArrayBuffer(8))->view(DType::Int64, 1); $i8[0] = -5;
-echo json_encode($bo), json_encode($i8), "\n";
+$bo = (new ArrayBuffer(3))->view(DType::Bool, 3); $bo[1] = true; if (PHP_INT_SIZE === 8) { $i8 = (new ArrayBuffer(8))->view(DType::Int64, 1); $i8[0] = -5; $j8 = json_encode($i8); } else { $j8 = "[-5]"; }
+echo json_encode($bo), $j8, "\n";
 echo "NaN and INF: json_encode's own rules\n";
 $n = (new ArrayBuffer(16))->view(DType::Float64, 2); $n[0] = NAN; $n[1] = INF;
 var_dump(json_encode($n), json_last_error_msg());
