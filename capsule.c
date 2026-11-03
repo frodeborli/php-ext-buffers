@@ -108,7 +108,7 @@ PHP_METHOD(TypedView, fromDLPack)
 	DLManagedTensorVersioned *t;
 	DLTensor *d;
 	int dt = -1, ndim;
-	int64_t shape[DLP_MAX_NDIM], sb[DLP_MAX_NDIM], size, last = 0, tmp, len;
+	int64_t shape[DLP_MAX_NDIM] = {0}, sb[DLP_MAX_NDIM] = {0}, size, last = 0, tmp, len;
 	bool empty = false;
 	zend_object *buf;
 

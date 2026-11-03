@@ -98,7 +98,7 @@ CODEC_CPLX(COMPLEX128, 8, ld_f64(q), st_f64(q, x))
 
 /* ---- view objects and the pool ----------------------------------------------------- */
 
-zend_object *dlp_view_new(zend_object *buf, int dt, int ndim, const int64_t *shape, const int64_t *sbytes, uint8_t *data, bool writable)
+static zend_always_inline zend_object *view_new(zend_object *buf, int dt, int ndim, const int64_t *shape, const int64_t *sbytes, uint8_t *data, bool writable)
 {
 	dlp_view *v;
 	zend_object *o;
@@ -118,10 +118,17 @@ zend_object *dlp_view_new(zend_object *buf, int dt, int ndim, const int64_t *sha
 	v->dt = dt;
 	v->ndim = ndim;
 	v->writable = writable;
-	memcpy(v->shape, shape, ndim * sizeof(int64_t));
-	memcpy(v->sbytes, sbytes, ndim * sizeof(int64_t));
+	for (int i = 0; i < ndim; i++) { /* ndim is 1-3 in practice: a short loop beats a call or a 128-byte copy */
+		v->shape[i] = shape[i];
+		v->sbytes[i] = sbytes[i];
+	}
 	o->handlers = &view_handlers[dt][ndim == 1 && sbytes[0] == dlp_dtypes[dt].size][!writable];
 	return o;
+}
+
+zend_object *dlp_view_new(zend_object *buf, int dt, int ndim, const int64_t *shape, const int64_t *sbytes, uint8_t *data, bool writable)
+{
+	return view_new(buf, dt, ndim, shape, sbytes, data, writable);
 }
 
 /* Last reference gone: park the object in the pool instead of freeing it (the engine skips
@@ -227,7 +234,7 @@ static zval *rdn_##ID(zend_object *o, zval *off, int type, zval *rv) \
 	if (UNEXPECTED(i >= (zend_ulong)v->shape[0])) return dlp_out_of_range(v, Z_LVAL_P(off), type, rv); \
 	p = v->data + (int64_t)i * v->sbytes[0]; \
 	if (v->ndim == 1) { rd_##ID(p, rv); return rv; } \
-	ZVAL_OBJ(rv, dlp_view_new(v->buf, v->dt, v->ndim - 1, v->shape + 1, v->sbytes + 1, p, v->writable)); \
+	ZVAL_OBJ(rv, view_new(v->buf, v->dt, v->ndim - 1, v->shape + 1, v->sbytes + 1, p, v->writable)); \
 	return rv; \
 } \
 static void wr1_##ID(zend_object *o, zval *off, zval *val) \
@@ -458,7 +465,7 @@ void dlp_buffer_view_impl(zend_object *bufobj, INTERNAL_FUNCTION_PARAMETERS)
 	zval *shape_zv = NULL;
 	HashTable *strides_ht = NULL;
 	zend_long offset = 0;
-	int64_t shape[DLP_MAX_NDIM], st[DLP_MAX_NDIM], sb[DLP_MAX_NDIM], t, last = 0;
+	int64_t shape[DLP_MAX_NDIM] = {0}, st[DLP_MAX_NDIM] = {0}, sb[DLP_MAX_NDIM] = {0}, t, last = 0;
 	int dt, ndim, n;
 	int64_t size;
 	bool empty = false;

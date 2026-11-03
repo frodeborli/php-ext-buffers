@@ -135,7 +135,7 @@ def expected_after(case):
 def run(cases):
     with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
         json.dump(cases, f); path = f.name
-    r = subprocess.run([php, "-n", "-d", "extension=" + so, os.path.join(os.path.dirname(os.path.abspath(__file__)), "numpy_fuzz.php"), path],
+    r = subprocess.run([php, "-n", "-d", "memory_limit=-1", "-d", "extension=" + so, os.path.join(os.path.dirname(os.path.abspath(__file__)), "numpy_fuzz.php"), path],
                        capture_output=True, text=True)
     os.unlink(path)
     if r.returncode: print(r.stdout[-2000:], r.stderr[-2000:]); sys.exit(2)
@@ -148,7 +148,7 @@ for i in range(N):
     name = names[i % len(names)]
     writes = i % 2 == 1
     cases.append(make_case(name, writes)); kinds.append(writes)
-res = run(cases)
+res = [r for k in range(0, len(cases), 1000) for r in run(cases[k:k + 1000])]
 bad = 0; nread = nwrite = nel = 0
 for case, r, writes in zip(cases, res, kinds):
     er = expected_reads(case)
