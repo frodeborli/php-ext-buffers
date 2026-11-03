@@ -256,7 +256,7 @@ static void wrn_##ID(zend_object *o, zval *off, zval *val) \
 	if (UNEXPECTED(i >= (zend_ulong)v->shape[0] || !wr_##ID(v->data + (int64_t)i * v->sbytes[0], val))) dlp_bad_write(off, val, v); \
 } \
 static void rdf_##ID(const uint8_t *p, zval *z) { rd_##ID(p, z); }
-#define X(id, ...) GEN(id, __VA_ARGS__)
+#define X(id, name, value, kind, bits, size, code) GEN(id, name, value, kind, bits, size, code)
 DLP_DTYPES(X)
 #undef X
 

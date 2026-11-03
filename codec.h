@@ -13,7 +13,11 @@
 #include <math.h>
 
 #ifndef DLP_INLINE
-#define DLP_INLINE static inline __attribute__((always_inline))
+# if defined(_MSC_VER) && !defined(__clang__)
+#  define DLP_INLINE static __forceinline
+# else
+#  define DLP_INLINE static inline __attribute__((always_inline))
+# endif
 #endif
 
 /* DLP_K_HALF is IEEE with numpy's float16 NaN rule: the payload is carried over, not canonicalised */
