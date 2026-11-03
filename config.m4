@@ -16,5 +16,5 @@ if test "$PHP_DLPACK" != "no"; then
     AC_DEFINE([DLPACK_TESTING], [1], [Build the test helpers])
   fi
   AC_DEFINE(HAVE_DLPACK, 1, [ Have dlpack support ])
-  PHP_NEW_EXTENSION(dlpack, dlpack.c dtype.c buffer.c view.c capsule.c, $ext_shared,, -std=gnu99 -O2)
+  PHP_NEW_EXTENSION(dlpack, dlpack.c dtype.c buffer.c view.c capsule.c, $ext_shared)
 fi
