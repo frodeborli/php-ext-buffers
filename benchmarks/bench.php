@@ -13,6 +13,13 @@ fprintf(STDERR, "mode: %s\n", $jit ? 'JIT (tracing)' : 'interpreter');
 
 require __DIR__ . '/loops.php';
 
+function measure_inner(string $name, callable $run, int $accesses, int $reps): void {   // $run returns the ns it spent in its loops
+    $run(); $run();
+    $best = INF;
+    for ($r = 0; $r < $reps; $r++) $best = min($best, $run());
+    printf("%s\t%.2f\n", $name, $best / $accesses);
+}
+
 function measure(string $name, callable $run, int $accesses, int $reps): void {
     $run();                                  // warm up: lets the JIT compile before the timed runs
     $run();
@@ -48,14 +55,15 @@ if ($section === 'all' || $section === 'access') {
     $m('write view [y][x][c]',            fn() => write_view_3d($v3, $w, $h));
     $m('write view [y][x][c], row var',   fn() => write_view_3d_rowhoisted($v3, $w, $h));
     $m('write view 2-D [y][x*4+c]',       fn() => write_view_2d($v2, $w, $h));
-    $m('write array flat',                fn() => write_array_1d($arr1, $w, $h));
-    $m('write array flat, row hoisted',   fn() => write_array_1d_hoisted($arr1, $w, $h));
-    $m('write array nested [y][x][c]',    fn() => write_array_nested($arrN, $w, $h));
+    $mi = function (string $name, callable $f) use ($px, $reps) { measure_inner($name, $f, $px * 4, 5); };
+    $mi('write array flat',               fn() => write_array_1d($w, $h, 4));
+    $mi('write array flat, row hoisted',  fn() => write_array_1d_hoisted($w, $h, 4));
+    $mi('write array nested [y][x][c]',   fn() => write_array_nested($w, $h, 4));
     $m('write SplFixedArray flat',        fn() => write_spl_1d($spl, $w, $h));
     $m('+=    view 1-D idiom',            fn() => add_view_1d($flat, $w, $h));
     $m('+=    view [y][x][c]',            fn() => add_view_3d($v3, $w, $h));
-    $m('+=    array flat',                fn() => add_array_1d($arr1, $w, $h));
-    $m('+=    array nested [y][x][c]',    fn() => add_array_nested($arrN, $w, $h));
+    $mi('+=    array flat',               fn() => add_array_1d($w, $h, 4));
+    $mi('+=    array nested [y][x][c]',   fn() => add_array_nested($w, $h, 4));
 }
 
 if ($section === 'all' || $section === 'dtype') {
