@@ -32,7 +32,7 @@ echo $weights[0][0];                                     // 1.5
 ## Install
 
 ```sh
-pie install phasync/ext-buffers          # needs the package to be published; or:
+pie install frodeborli/ext-buffers          # needs the package to be published; or:
 phpize && ./configure --enable-buffers && make && make install     # then extension=buffers
 ```
 
