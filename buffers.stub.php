@@ -158,7 +158,8 @@ final class Buffer
     /** Zero-filled, 64-byte aligned host memory that counts toward memory_limit. */
     public function __construct(int $byteLength) {}
     /** A writable host Buffer holding a copy of $data. */
-    public static function fromString(string $data): Buffer {}
+    /** A buffer holding a copy of $data. With $writable = false it is read-only, like a mapped file: backends that bake constants into a plan (onnxruntime) do so for read-only tensors only. */
+    public static function fromString(string $data, bool $writable = true): Buffer {}
     /**
      * A buffer on FileDevice over bytes $offset .. $offset + $length of a file ($length null: to the end), read-only unless
      * $writable. A writable buffer must be mapped; it is a shared mapping: writes go to the file and other processes that map

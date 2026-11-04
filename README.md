@@ -150,7 +150,7 @@ final class Buffer {
     public int $byteLength { get; }
     public Device $device { get; }
     public function __construct(int $byteLength);   // zero-filled host memory; emalloc'd, so it counts toward memory_limit
-    public static function fromString(string $data): Buffer;
+    public static function fromString(string $data, bool $writable = true): Buffer;   // $writable = false: read-only (what backends bake into a plan as a constant)
     public static function fromFile(string $path, int $offset = 0, ?int $length = null, bool $map = true, bool $writable = false): Buffer;
     public static function createFile(string $path, int $byteLength): Buffer;   // creates or truncates; writable, mapped
     public function flush(): void;                  // pushes a writable mapping's changes to disk; no-op for other buffers

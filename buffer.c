@@ -233,9 +233,12 @@ PHP_METHOD(Buffers_Buffer, fromString)
 {
 	zend_string *s;
 	buf_buffer *b;
+	bool writable = true;
 
-	ZEND_PARSE_PARAMETERS_START(1, 1)
+	ZEND_PARSE_PARAMETERS_START(1, 2)
 		Z_PARAM_STR(s)
+		Z_PARAM_OPTIONAL
+		Z_PARAM_BOOL(writable)
 	ZEND_PARSE_PARAMETERS_END();
 
 	object_init_ex(return_value, buf_ce_buffer);
@@ -243,7 +246,7 @@ PHP_METHOD(Buffers_Buffer, fromString)
 	b->alloc = ecalloc(1, ZSTR_LEN(s) + BUF_ALIGN);
 	b->base = (uint8_t *)(((uintptr_t)b->alloc + BUF_ALIGN - 1) & ~(uintptr_t)(BUF_ALIGN - 1));
 	b->len = ZSTR_LEN(s);
-	b->writable = true;
+	b->writable = writable;
 	b->inited = true;
 	memcpy(b->base, ZSTR_VAL(s), ZSTR_LEN(s));
 }
