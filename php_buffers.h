@@ -240,6 +240,8 @@ zend_object *buf_view_new(zend_object *buf, int dt, int ndim, const int64_t *sha
 zend_object *buf_view_make(zend_object *buf, int dt, int ndim, const int64_t *shape, const int64_t *strides,
 	int64_t offset, char *err, size_t errlen, int *arg);
 void buf_buffer_view_impl(zend_object *buf, INTERNAL_FUNCTION_PARAMETERS);
+/* before touching the elements of a view: host accessible memory that is ready; false after throwing */
+bool buf_view_check_access(const buf_view *v);
 void buf_view_strides_elements(const buf_view *v, int64_t *out);
 /* byte range of the buffer that the view touches: from *first, *len bytes (0 for an empty view) */
 void buf_view_extent(const buf_view *v, uint64_t *first, uint64_t *len);

@@ -1,5 +1,5 @@
 /* This is a generated file, edit the .stub.php file instead.
- * Stub hash: 2597d77eb6fe25348c967885c3ed6de071288233 */
+ * Stub hash: b18856eb624a5fde61fa7c17e18004d84dd985ed */
 
 ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_class_Buffers_DType_bits, 0, 0, IS_LONG, 0)
 ZEND_END_ARG_INFO()
@@ -132,6 +132,23 @@ ZEND_END_ARG_INFO()
 ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_class_Buffers_Tensor_jsonSerialize, 0, 0, IS_MIXED, 0)
 ZEND_END_ARG_INFO()
 
+ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(arginfo_class_Buffers_Tensor_fromArray, 0, 1, Buffers\\Tensor, 0)
+	ZEND_ARG_TYPE_MASK(0, data, MAY_BE_ARRAY|MAY_BE_LONG|MAY_BE_DOUBLE|MAY_BE_BOOL, NULL)
+	ZEND_ARG_OBJ_INFO_WITH_DEFAULT_VALUE(0, dtype, Buffers\\DType, 1, "null")
+	ZEND_ARG_OBJ_INFO_WITH_DEFAULT_VALUE(0, device, Buffers\\Device, 1, "null")
+ZEND_END_ARG_INFO()
+
+#define arginfo_class_Buffers_Tensor_toArray arginfo_class_Buffers_Tensor_jsonSerialize
+
+#if defined(HAVE_BUFFERS_GD)
+ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(arginfo_class_Buffers_Tensor_fromGdImage, 0, 1, Buffers\\Tensor, 0)
+	ZEND_ARG_OBJ_INFO(0, image, GdImage, 0)
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(arginfo_class_Buffers_Tensor_toGdImage, 0, 0, GdImage, 0)
+ZEND_END_ARG_INFO()
+#endif
+
 ZEND_METHOD(Buffers_DType, bits);
 ZEND_METHOD(Buffers_DType, byteSize);
 ZEND_METHOD(Buffers_DType, isByteAligned);
@@ -172,6 +189,12 @@ ZEND_METHOD(Buffers_Tensor, getIterator);
 ZEND_METHOD(Buffers_Tensor, to);
 ZEND_METHOD(Buffers_Tensor, convert);
 ZEND_METHOD(Buffers_Tensor, jsonSerialize);
+ZEND_METHOD(Buffers_Tensor, fromArray);
+ZEND_METHOD(Buffers_Tensor, toArray);
+#if defined(HAVE_BUFFERS_GD)
+ZEND_METHOD(Buffers_Tensor, fromGdImage);
+ZEND_METHOD(Buffers_Tensor, toGdImage);
+#endif
 
 static const zend_function_entry class_Buffers_DType_methods[] = {
 	ZEND_ME(Buffers_DType, bits, arginfo_class_Buffers_DType_bits, ZEND_ACC_PUBLIC)
@@ -234,5 +257,11 @@ static const zend_function_entry class_Buffers_Tensor_methods[] = {
 	ZEND_ME(Buffers_Tensor, to, arginfo_class_Buffers_Tensor_to, ZEND_ACC_PUBLIC)
 	ZEND_ME(Buffers_Tensor, convert, arginfo_class_Buffers_Tensor_convert, ZEND_ACC_PUBLIC)
 	ZEND_ME(Buffers_Tensor, jsonSerialize, arginfo_class_Buffers_Tensor_jsonSerialize, ZEND_ACC_PUBLIC)
+	ZEND_ME(Buffers_Tensor, fromArray, arginfo_class_Buffers_Tensor_fromArray, ZEND_ACC_PUBLIC|ZEND_ACC_STATIC)
+	ZEND_ME(Buffers_Tensor, toArray, arginfo_class_Buffers_Tensor_toArray, ZEND_ACC_PUBLIC)
+#if defined(HAVE_BUFFERS_GD)
+	ZEND_ME(Buffers_Tensor, fromGdImage, arginfo_class_Buffers_Tensor_fromGdImage, ZEND_ACC_PUBLIC|ZEND_ACC_STATIC)
+	ZEND_ME(Buffers_Tensor, toGdImage, arginfo_class_Buffers_Tensor_toGdImage, ZEND_ACC_PUBLIC)
+#endif
 	ZEND_FE_END
 };

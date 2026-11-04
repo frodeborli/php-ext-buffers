@@ -18,6 +18,7 @@ typedef zval *(*read_fn)(zend_object *, zval *, int, zval *);
 typedef void (*write_fn)(zend_object *, zval *, zval *);
 typedef void (*peek_fn)(const buf_view *, zend_long, zval *);
 typedef void (*leaf_fn)(const uint8_t *, zend_ulong, zval *);   /* one element: a row (packed) or the element's own address */
+typedef bool (*store_fn)(uint8_t *, zend_ulong, zval *);          /* writes one element, addressed like leaf_fn reads it */
 typedef bool (*poke_fn)(const buf_view *, zval *);                /* writes the first element of the view */
 
 /* [dtype][1-D contiguous][read-only][slow]; slow = the memory is not host accessible or has a readiness hook,
@@ -437,6 +438,7 @@ static void wrn_##ID(zend_object *o, zval *off, zval *val) \
 } \
 static void peek_##ID(const buf_view *v, zend_long i, zval *z) { rd_##ID(v->data + i * v->sbytes[0], z); } \
 static void leaf_##ID(const uint8_t *p, zend_ulong i, zval *z) { rd_##ID(p, z); } \
+static bool store_##ID(uint8_t *p, zend_ulong i, zval *z) { return wr_##ID(p, z); } \
 static bool poke_##ID(const buf_view *v, zval *val) { return wr_##ID(v->data, val); }
 
 /* packed dtypes: a 1-D view is always contiguous, so the only n-D handler that can run is the one that makes sub-views */
@@ -473,6 +475,7 @@ static void wr1_##ID(zend_object *o, zval *off, zval *val) \
 static void wrn_##ID(zend_object *o, zval *off, zval *val) { buf_bad_write(off, val, buf_view_from(o)); } \
 static void peek_##ID(const buf_view *v, zend_long i, zval *z) { rdp_##ID(v->data, i, z); } \
 static void leaf_##ID(const uint8_t *row, zend_ulong i, zval *z) { rdp_##ID(row, i, z); } \
+static bool store_##ID(uint8_t *row, zend_ulong i, zval *z) { return wrp_##ID(row, i, z); } \
 static bool poke_##ID(const buf_view *v, zval *val) { return wrp_##ID(v->data, 0, val); }
 
 #define GENSEL_0 GENP
@@ -487,8 +490,8 @@ static bool poke_##ID(const buf_view *v, zval *val) { return wrp_##ID(v->data, 0
 BUF_DTYPES(X)
 #undef X
 
-static const struct { read_fn rd[2]; write_fn wr[2]; peek_fn peek; leaf_fn leaf; poke_fn poke; } fns[BUF_NTYPES] = {
-#define X(id, ...) { { rdn_##id, rd1_##id }, { wrn_##id, wr1_##id }, peek_##id, leaf_##id, poke_##id },
+static const struct { read_fn rd[2]; write_fn wr[2]; peek_fn peek; leaf_fn leaf; store_fn store; poke_fn poke; } fns[BUF_NTYPES] = {
+#define X(id, ...) { { rdn_##id, rd1_##id }, { wrn_##id, wr1_##id }, peek_##id, leaf_##id, store_##id, poke_##id },
 	BUF_DTYPES(X)
 #undef X
 };
@@ -505,7 +508,7 @@ static zend_never_inline bool view_not_accessible(buf_buffer *b)
 }
 
 /* before reading or writing an element: host accessible memory, and ready */
-static bool view_slow_check(const buf_view *v)
+bool buf_view_check_access(const buf_view *v)
 {
 	buf_buffer *b = buf_buffer_from(v->buf);
 
@@ -519,7 +522,7 @@ static zval *view_read_slow(zend_object *o, zval *off, int type, zval *rv)
 {
 	buf_view *v = buf_view_from(o);
 
-	if (v->ndim == 1 && !view_slow_check(v)) return NULL;
+	if (v->ndim == 1 && !buf_view_check_access(v)) return NULL;
 	return fns[v->dt].rd[v->ndim == 1 && v->sbytes[0] == (int64_t)buf_dtypes[v->dt].size](o, off, type, rv);
 }
 
@@ -527,7 +530,7 @@ static void view_write_slow(zend_object *o, zval *off, zval *val)
 {
 	buf_view *v = buf_view_from(o);
 
-	if (v->ndim == 1 && !view_slow_check(v)) return;
+	if (v->ndim == 1 && !buf_view_check_access(v)) return;
 	fns[v->dt].wr[v->ndim == 1 && v->sbytes[0] == (int64_t)buf_dtypes[v->dt].size](o, off, val);
 }
 
@@ -540,7 +543,7 @@ static int view_has_dimension(zend_object *o, zval *off, int check_empty)
 	ZVAL_DEREF(off);
 	if (Z_TYPE_P(off) != IS_LONG || (zend_ulong)Z_LVAL_P(off) >= (zend_ulong)v->shape[0]) return 0;
 	if (!check_empty || v->ndim > 1) return 1;
-	if (v->slow && !view_slow_check(v)) return 0;
+	if (v->slow && !buf_view_check_access(v)) return 0;
 	fns[v->dt].peek(v, Z_LVAL_P(off), &tmp);
 	r = zend_is_true(&tmp);
 	zval_ptr_dtor(&tmp);
@@ -1050,7 +1053,287 @@ static HashTable *view_get_debug_info(zend_object *o, int *is_temp)
 	return view_props_array(o, true);
 }
 
-PHP_METHOD(Buffers_Tensor, jsonSerialize)
+/* ---- Tensor::fromArray() and toArray() ------------------------------------------------------- */
+
+/* "[2][1]" for the indices idx[0..depth) */
+static void array_path(char *out, size_t n, const int64_t *idx, int depth)
+{
+	size_t len = 0;
+
+	out[0] = 0;
+	for (int i = 0; i < depth && len < n; i++) {
+		len += snprintf(out + len, n - len, "[%" PRId64 "]", idx[i]);
+	}
+	if (!depth) snprintf(out, n, "the top level");
+}
+
+typedef struct {
+	int nd;                          /* dimensions found */
+	int64_t shape[BUF_MAX_NDIM];
+	int64_t idx[BUF_MAX_NDIM];       /* where the walk is, for error messages */
+	bool saw_int, saw_float, saw_bool;
+} array_scan;
+
+/* checks the shape against sc->shape and the types of the leaves; every array at depth d must have shape[d] elements */
+static bool array_scan_level(array_scan *sc, HashTable *ht, int depth)
+{
+	zval *e;
+	int64_t i = 0;
+	char path[96];
+
+	ZEND_HASH_FOREACH_VAL(ht, e) {
+		ZVAL_DEREF(e);
+		sc->idx[depth] = i;
+		if (depth + 1 < sc->nd) {
+			if (Z_TYPE_P(e) != IS_ARRAY) {
+				array_path(path, sizeof path, sc->idx, depth + 1);
+				zend_value_error("Tensor::fromArray(): ragged array at %s: expected an array, found %s", path, zend_zval_type_name(e));
+				return false;
+			}
+			if ((int64_t)zend_hash_num_elements(Z_ARRVAL_P(e)) != sc->shape[depth + 1]) {
+				array_path(path, sizeof path, sc->idx, depth + 1);
+				zend_value_error("Tensor::fromArray(): ragged array at %s: expected %" PRId64 " elements, found %u",
+					path, sc->shape[depth + 1], zend_hash_num_elements(Z_ARRVAL_P(e)));
+				return false;
+			}
+			if (!array_scan_level(sc, Z_ARRVAL_P(e), depth + 1)) return false;
+		} else {
+			switch (Z_TYPE_P(e)) {
+				case IS_LONG: sc->saw_int = true; break;
+				case IS_DOUBLE: sc->saw_float = true; break;
+				case IS_TRUE: case IS_FALSE: sc->saw_bool = true; break;
+				case IS_ARRAY:
+					array_path(path, sizeof path, sc->idx, depth + 1);
+					zend_value_error("Tensor::fromArray(): ragged array at %s: expected a scalar, found an array", path);
+					return false;
+				default:
+					array_path(path, sizeof path, sc->idx, depth + 1);
+					zend_value_error("Tensor::fromArray(): unsupported value at %s: expected an int, float or bool, found %s", path, zend_zval_type_name(e));
+					return false;
+			}
+		}
+		i++;
+	} ZEND_HASH_FOREACH_END();
+	return true;
+}
+
+/* the integer range of an integer dtype; PHP ints are signed 64-bit, so UInt64 stops at ZEND_LONG_MAX */
+static void int_range(int dt, int64_t *lo, int64_t *hi)
+{
+	int bits = buf_dtypes[dt].bits;
+
+	if (buf_dtypes[dt].kind == BUF_INT) {
+		*lo = bits == 64 ? INT64_MIN : -((int64_t)1 << (bits - 1));
+		*hi = bits == 64 ? INT64_MAX : ((int64_t)1 << (bits - 1)) - 1;
+	} else {
+		*lo = 0;
+		*hi = bits >= 63 ? INT64_MAX : ((int64_t)1 << bits) - 1;
+	}
+}
+
+/* converts the leaf `e` for dtype dt and stores it at element i of p; false after throwing (the path is idx[0..nd)) */
+static bool array_store(array_scan *sc, int dt, uint8_t *p, zend_ulong i, zval *e)
+{
+	int kind = buf_dtypes[dt].kind;
+	zval tmp;
+	char path[96];
+	const char *why;
+
+	if (kind == BUF_BOOL) {
+		if (Z_TYPE_P(e) == IS_TRUE || Z_TYPE_P(e) == IS_FALSE) goto store;
+		why = "a Bool tensor takes only bool values";
+		goto bad;
+	}
+	if (Z_TYPE_P(e) != IS_LONG && Z_TYPE_P(e) != IS_DOUBLE) {
+		why = "a numeric tensor takes only int and float values";
+		goto bad;
+	}
+	if (kind == BUF_INT || kind == BUF_UINT) {
+		int64_t lo, hi, l;
+
+		int_range(dt, &lo, &hi);
+		if (Z_TYPE_P(e) == IS_DOUBLE) {
+			double d = Z_DVAL_P(e);
+
+			if (!(d >= -9223372036854775808.0 && d < 9223372036854775808.0) || d != floor(d)) {
+				why = "the float is not an integer in range";
+				goto bad;
+			}
+			l = (int64_t)d;
+		} else {
+			l = Z_LVAL_P(e);
+		}
+		if (l < lo || l > hi) {
+			why = "out of range";
+			goto bad;
+		}
+		ZVAL_LONG(&tmp, l);
+		e = &tmp;
+	}
+store:
+	if (!fns[dt].store(p, i, e)) { why = "unsupported"; goto bad; }
+	return true;
+bad:
+	array_path(path, sizeof path, sc->idx, sc->nd);
+	if (Z_TYPE_P(e) == IS_LONG) {
+		zend_value_error("Tensor::fromArray(): cannot store %" PRId64 " at %s as %s: %s", (int64_t)Z_LVAL_P(e), path, buf_dtypes[dt].name, why);
+	} else {
+		zend_value_error("Tensor::fromArray(): cannot store %s at %s as %s: %s", zend_zval_type_name(e), path, buf_dtypes[dt].name, why);
+	}
+	return false;
+}
+
+static bool array_fill(array_scan *sc, const buf_view *v, int dt, HashTable *ht, int depth, uint8_t *p)
+{
+	zval *e;
+	int64_t i = 0;
+	bool last = depth + 1 == sc->nd, packed = buf_is_packed(dt);
+
+	ZEND_HASH_FOREACH_VAL(ht, e) {
+		ZVAL_DEREF(e);
+		sc->idx[depth] = i;
+		if (!last) {
+			if (!array_fill(sc, v, dt, Z_ARRVAL_P(e), depth + 1, p + i * v->sbytes[depth])) return false;
+		} else if (packed) {
+			if (!array_store(sc, dt, p, (zend_ulong)i, e)) return false;
+		} else if (!array_store(sc, dt, p + i * v->sbytes[depth], 0, e)) {
+			return false;
+		}
+		i++;
+	} ZEND_HASH_FOREACH_END();
+	return true;
+}
+
+PHP_METHOD(Buffers_Tensor, fromArray)
+{
+	zval *data;
+	zend_object *dtobj = NULL, *devobj = NULL, *buf, *view, *res;
+	array_scan sc = {0};
+	int dt, ndim;
+	int64_t strides[BUF_MAX_NDIM], acc = 1, total = 1, bytes;
+	bool packed;
+	char err[160];
+	int arg;
+	zval *z;
+
+	ZEND_PARSE_PARAMETERS_START(1, 3)
+		Z_PARAM_ZVAL(data)
+		Z_PARAM_OPTIONAL
+		Z_PARAM_OBJ_OF_CLASS_OR_NULL(dtobj, buf_ce_dtype)
+		Z_PARAM_OBJ_OF_CLASS_OR_NULL(devobj, buf_ce_device_if)
+	ZEND_PARSE_PARAMETERS_END();
+
+	/* the shape is that of the first path down the nesting; an empty array ends it */
+	z = data;
+	while (Z_TYPE_P(z) == IS_ARRAY) {
+		if (sc.nd == BUF_MAX_NDIM) {
+			zend_value_error("Tensor::fromArray(): the array is nested more than %d levels deep", BUF_MAX_NDIM);
+			RETURN_THROWS();
+		}
+		sc.shape[sc.nd++] = zend_hash_num_elements(Z_ARRVAL_P(z));
+		if (!zend_hash_num_elements(Z_ARRVAL_P(z))) break;
+		{
+			HashPosition pos;
+
+			zend_hash_internal_pointer_reset_ex(Z_ARRVAL_P(z), &pos);
+			z = zend_hash_get_current_data_ex(Z_ARRVAL_P(z), &pos);
+		}
+		ZVAL_DEREF(z);
+	}
+	if (sc.nd == 0) {                                  /* a scalar: the leaf checks of the scan, done here */
+		switch (Z_TYPE_P(data)) {
+			case IS_LONG: sc.saw_int = true; break;
+			case IS_DOUBLE: sc.saw_float = true; break;
+			case IS_TRUE: case IS_FALSE: sc.saw_bool = true; break;
+			default: zend_argument_type_error(1, "must be an array, int, float or bool, %s given", zend_zval_type_name(data)); RETURN_THROWS();
+		}
+	} else if (zend_hash_num_elements(Z_ARRVAL_P(data)) && !array_scan_level(&sc, Z_ARRVAL_P(data), 0)) {
+		RETURN_THROWS();
+	}
+	ndim = sc.nd;
+
+	if (dtobj) {
+		dt = buf_dtype_from_object(dtobj);
+		if (dt < 0) RETURN_THROWS();
+	} else if (sc.saw_bool) {
+		if (sc.saw_int || sc.saw_float) {
+			zend_value_error("Tensor::fromArray(): cannot infer a dtype from a mix of bool and numbers; pass a dtype");
+			RETURN_THROWS();
+		}
+		dt = BUF_T_BOOL;
+	} else if (sc.saw_float) {
+		dt = BUF_T_FLOAT64;
+	} else if (sc.saw_int) {
+		dt = SIZEOF_ZEND_LONG == 4 ? BUF_T_INT32 : BUF_T_INT64;
+	} else {
+		dt = BUF_T_FLOAT64;                            /* nothing to infer from: empty */
+	}
+	if (buf_dtypes[dt].kind == BUF_COMPLEX) {
+		zend_argument_value_error(2, "must not be a complex dtype");
+		RETURN_THROWS();
+	}
+	if (!buf_dtype_fits_php_int(dt)) {
+		zend_argument_value_error(2, "the dtype %s is not supported on 32-bit PHP", buf_dtypes[dt].name);
+		RETURN_THROWS();
+	}
+
+	/* C-contiguous; the rows of a packed dtype are padded to whole bytes (as buf_view_copy_host() lays them out) */
+	packed = buf_is_packed(dt);
+	for (int i = ndim - 1; i >= 0; i--) {
+		int64_t dim = sc.shape[i] ? sc.shape[i] : 1;
+
+		strides[i] = acc;
+		if (buf_mul_ovf(acc, dim, &acc)) goto too_large;
+		if (packed && i == ndim - 1) {
+			int step = buf_dtypes[dt].bits == 4 ? 2 : 4;
+			acc = (acc + step - 1) / step * step;
+		}
+		if (sc.shape[i] == 0) total = 0;
+	}
+	if (!total) {
+		bytes = 0;
+	} else if (ndim == 0) {
+		bytes = packed ? 1 : buf_dtypes[dt].size;
+	} else if (packed) {
+		if (buf_mul_ovf(acc, buf_dtypes[dt].bits, &bytes)) goto too_large;
+		bytes = (bytes + 7) / 8;
+	} else if (buf_mul_ovf(acc, buf_dtypes[dt].size, &bytes)) {
+		goto too_large;
+	}
+	buf = buf_buffer_new_host((uint64_t)bytes);
+	if (!buf) RETURN_THROWS();
+	view = buf_view_make(buf, dt, ndim, sc.shape, ndim ? strides : NULL, 0, err, sizeof err, &arg);
+	OBJ_RELEASE(buf);
+	if (!view) {
+		zend_value_error("Tensor::fromArray(): %s", err);
+		RETURN_THROWS();
+	}
+	if (total) {
+		buf_view *v = buf_view_from(view);
+		bool ok;
+
+		if (ndim == 0) {
+			ok = array_store(&sc, dt, v->data, 0, data);
+		} else {
+			ok = array_fill(&sc, v, dt, Z_ARRVAL_P(data), 0, v->data);
+		}
+		if (!ok) {
+			OBJ_RELEASE(view);
+			RETURN_THROWS();
+		}
+	}
+	if (devobj) {
+		res = buf_view_to(view, devobj);
+		OBJ_RELEASE(view);
+		if (!res) RETURN_THROWS();
+		view = res;
+	}
+	RETURN_OBJ(view);
+too_large:
+	zend_value_error("Tensor::fromArray(): the shape is too large");
+}
+
+PHP_METHOD(Buffers_Tensor, toArray)
 {
 	buf_view *v = VIEW;
 	buf_buffer *b = buf_buffer_from(v->buf);
@@ -1064,6 +1347,11 @@ PHP_METHOD(Buffers_Tensor, jsonSerialize)
 		RETURN_THROWS();
 	}
 	view_data_zval(v, return_value);
+}
+
+PHP_METHOD(Buffers_Tensor, jsonSerialize)
+{
+	ZEND_MN(Buffers_Tensor_toArray)(INTERNAL_FUNCTION_PARAM_PASSTHRU);
 }
 
 static ZEND_COLD void value_needs_0d(void)
@@ -1135,7 +1423,7 @@ static ZEND_NAMED_FUNCTION(hook_value_get)
 		value_needs_0d();
 		RETURN_THROWS();
 	}
-	if (v->slow && !view_slow_check(v)) {
+	if (v->slow && !buf_view_check_access(v)) {
 		RETURN_THROWS();
 	}
 	fns[v->dt].leaf(v->data, 0, return_value);
@@ -1157,7 +1445,7 @@ static ZEND_NAMED_FUNCTION(hook_value_set)
 		zend_throw_error(NULL, "Cannot write to a read-only Tensor");
 		RETURN_THROWS();
 	}
-	if (v->slow && !view_slow_check(v)) {
+	if (v->slow && !buf_view_check_access(v)) {
 		RETURN_THROWS();
 	}
 	ZVAL_DEREF(val);

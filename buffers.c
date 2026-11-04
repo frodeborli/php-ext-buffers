@@ -73,6 +73,7 @@ PHP_MINFO_FUNCTION(buffers)
 
 static const zend_module_dep buffers_deps[] = {
 	ZEND_MOD_OPTIONAL("json")   /* Tensor and Shape implement JsonSerializable when it is there */
+	ZEND_MOD_OPTIONAL("gd")     /* loaded first when present: Tensor::fromGdImage() and toGdImage() need it at run time */
 	ZEND_MOD_END
 };
 

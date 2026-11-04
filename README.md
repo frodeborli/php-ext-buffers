@@ -36,6 +36,10 @@ pie install frodeborli/ext-buffers          # needs the package to be published;
 phpize && ./configure --enable-buffers && make && make install     # then extension=buffers
 ```
 
+The GD integration (`Tensor::fromGdImage()`, `toGdImage()`) is built when `configure` finds `gd.h` (libgd-dev, the PHP include dir's
+`ext/gd/libgd/` for a PHP built with bundled GD, or `--with-buffers-gd=DIR`); `--without-buffers-gd` turns it off. The header must match the libgd
+that ext/gd runs with. ext/gd itself is not linked: it is only needed when one of the two methods is called (without it they throw `Error`).
+
 `make install` also installs `php_buffers_api.h` and `dlpack.h` under `ext/buffers/` for extensions that build on
 this one (see [C API](#c-api)).
 
@@ -343,6 +347,28 @@ marked `IS_SUBBYTE_TYPE_PADDED` is rejected on import with a clear message, and 
 reads assemble a 16-bit window byte by byte (`(b0 | b1 << 8) >> shift`, never a native 16-bit load) and writes
 read-modify-write, so neighbours are untouched and no byte outside the view's extent is ever read or written.
 
+## PHP arrays and GD images
+
+`Tensor::fromArray(array|int|float|bool $data, ?DType $dtype = null, ?Device $device = null)` makes a tensor from nested arrays and
+`$tensor->toArray()` gives them back (the same data as `jsonSerialize()`; a 0-d tensor gives the scalar).
+
+* The shape comes from the first path down the nesting (at most 8 levels); every other path must match it, or `ValueError` names the
+  offending path (`ragged array at [2][1]: expected 2 elements, found 1`). Keys are ignored: values are taken in order. `[]` is shape `[0]`,
+  `[[], []]` is `[2, 0]`; a scalar gives a 0-d tensor.
+* Without a dtype: int is `Int64` (`Int32` on 32-bit PHP), float `Float64`, bool `Bool`, int mixed with float `Float64`; bool mixed with numbers needs a
+  dtype; an empty array is `Float64`.
+* With a dtype, integer dtypes (including the packed `Int2`, `Int4`, `UInt2`, `UInt4`) reject out-of-range values with `ValueError`
+  instead of wrapping (`UInt64` accepts 0..`PHP_INT_MAX`, the PHP int range); floats that are whole numbers in range are accepted. `Bool` takes only
+  bool and numeric dtypes take no bool. Float dtypes round as elsewhere (overflow gives INF). Complex dtypes are not supported.
+* The tensor is built in CPU memory and moved with `to($device)` if a device is given.
+
+With ext/gd available at build time: `Tensor::fromGdImage(\GdImage $img)` gives a `UInt8` tensor `[height, width, 4]` (R, G, B, A) from a true color
+or palette image. GD's alpha `a` (0 opaque ... 127 transparent) becomes `(127 - a) * 255 / 127` rounded to nearest, so 0 gives 255 and 127 gives 0.
+`$tensor->toGdImage()` takes `UInt8` `[h, w, 3]`, `[h, w, 4]` or `[h, w]` (grey), strided views included, and makes a true color image; alpha `A`
+becomes `127 - round(A * 127 / 255)` (GD has 128 levels: 256 alpha values map to the nearest of them, at most 1 off after a round trip), and
+an RGBA image has `imagesavealpha()` on. Other dtypes or shapes, and empty axes, are an `Error`. Both walk the pixels once in C
+(`benchmarks/gd.php`: 4096 x 4096 in about 100 ms and 80 ms).
+
 ## Debug output and JSON
 
 `var_dump()` and `print_r()` of a `Tensor` show `dtype`, `shape` (as an array), `strides`, `offset`, `device` (a name such as `cpu` or
@@ -459,7 +485,7 @@ consumer loaded); `tools/valgrind.sh [8.x]`; `tools/docker-test.sh [image ...]` 
 
 ## Not in this version
 
-DLPack in PHP (it is C API only), writable file buffers, `get()`/`set()` methods, array/tuple offsets, `fill/copy/cast/reshape/transpose/slice/toArray/fromArray`,
+DLPack in PHP (it is C API only), writable file buffers, `get()`/`set()` methods, array/tuple offsets, `fill/copy/cast/reshape/transpose/slice`,
 clamped writes, padded sub-byte layouts, negative or zero strides, arithmetic by the extension itself (the operator hook
 is for other extensions), a byte-order option.
 

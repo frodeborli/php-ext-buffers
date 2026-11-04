@@ -254,4 +254,28 @@ final class Tensor implements TensorInterface, \Countable, \ArrayAccess, \Iterat
      * json_encode() fails for NaN and INF, as for any PHP value. Throws Error for memory that is not host accessible.
      */
     public function jsonSerialize(): mixed {}
+    /**
+     * A tensor from nested arrays; the shape is inferred from the first path down the nesting and every other path must match it
+     * (ValueError naming the path, e.g. "[2][1]", for a ragged array). Without $dtype: int gives Int64 (Int32 on 32-bit PHP), float
+     * Float64, bool Bool, a mix of int and float Float64; a mix with bool needs a $dtype; an empty array gives Float64.
+     * With a $dtype: values must fit it (ValueError for an integer dtype, no wrapping; integral floats are accepted for integer
+     * dtypes; Bool takes only bool). Packed dtypes work; complex dtypes are not supported. An int, float or bool gives a 0-d tensor.
+     * An empty array has a shape ending in 0 (`[]` is [0], `[[], []]` is [2, 0]). The tensor is made in CPU memory and then moved with to($device).
+     */
+    public static function fromArray(array|int|float|bool $data, ?DType $dtype = null, ?Device $device = null): Tensor {}
+    /** The same as jsonSerialize(): nested arrays of int, float or bool (complex elements as [re, im]); a 0-d view gives the scalar. */
+    public function toArray(): mixed {}
+#if defined(HAVE_BUFFERS_GD)
+    /**
+     * A UInt8 tensor of shape [height, width, 4] (R, G, B, A) from a GD image (true color or palette). GD's alpha a (0 opaque ... 127
+     * transparent) becomes 255 - round(a * 255 / 127), exactly (127 - a) * 255 / 127 rounded to nearest: 0 -> 255, 127 -> 0. Needs ext/gd.
+     */
+    public static function fromGdImage(\GdImage $image): Tensor {}
+    /**
+     * A true color GdImage from a UInt8 tensor of shape [height, width, 3] (RGB), [height, width, 4] (RGBA) or [height, width]
+     * (grey). Alpha A (255 opaque) becomes 127 - round(A * 127 / 255), the inverse of fromGdImage(); an RGBA image has
+     * imagesavealpha() on. Any other dtype or shape, or an empty axis, is an Error. Needs ext/gd.
+     */
+    public function toGdImage(): \GdImage {}
+#endif
 }
