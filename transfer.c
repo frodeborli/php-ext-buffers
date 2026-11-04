@@ -115,3 +115,88 @@ PHP_METHOD(Buffers_Tensor, to)
 	}
 	RETURN_OBJ(res);
 }
+
+/* Tensor::convert(DType $dtype, ?array $axes = null): the elements in another dtype and, with $axes, in another axis order (a permutation: out axis i is axis axes[i] of this view), as a new
+ * C-contiguous host tensor. Streamed: nothing but the result is allocated. For the weights of a model: one pass from the mapped file to the layout the backend wants. */
+PHP_METHOD(Buffers_Tensor, convert)
+{
+	zend_object *dto;
+	HashTable *axes_ht = NULL;
+	buf_view *v = buf_view_from(Z_OBJ_P(ZEND_THIS));
+	buf_buffer *b = buf_buffer_from(v->buf);
+	const buf_dtype_info *si = &buf_dtypes[v->dt];
+	int ddt, nd = v->ndim, axes[BUF_MAX_NDIM];
+	int64_t oshape[BUF_MAX_NDIM], ostr[BUF_MAX_NDIM], sstr[BUF_MAX_NDIM], total = 1, rows, L, acc = 1;
+	zend_object *nbuf, *res;
+	buf_buffer *nb;
+	bool seen[BUF_MAX_NDIM] = {0};
+
+	ZEND_PARSE_PARAMETERS_START(1, 2)
+		Z_PARAM_OBJ(dto)
+		Z_PARAM_OPTIONAL
+		Z_PARAM_ARRAY_HT_OR_NULL(axes_ht)
+	ZEND_PARSE_PARAMETERS_END();
+	ddt = buffers_dtype_from_object(dto);
+	if (ddt < 0) { zend_argument_type_error(1, "must be a DType"); RETURN_THROWS(); }
+	if (!b->host) { zend_throw_error(NULL, "convert(): the memory is not host accessible; transfer to the host first with to()"); RETURN_THROWS(); }
+	if (si->size == 0 || buf_dtypes[ddt].size == 0) { zend_throw_error(NULL, "convert(): packed dtypes are not supported (use a graph cast())"); RETURN_THROWS(); }
+	if (UNEXPECTED(b->pending) && buf_buffer_make_ready(b) == FAILURE) RETURN_THROWS();
+	for (int i = 0; i < nd; i++) axes[i] = i;
+	if (axes_ht) {
+		zval *z;
+		int i = 0;
+
+		if ((int)zend_hash_num_elements(axes_ht) != nd) { zend_argument_value_error(2, "must list every axis once (the tensor has %d)", nd); RETURN_THROWS(); }
+		ZEND_HASH_FOREACH_VAL(axes_ht, z) {
+			zend_long a = zval_get_long(z);
+
+			if (a < 0) a += nd;
+			if (a < 0 || a >= nd || seen[a]) { zend_argument_value_error(2, "must be a permutation of the axes"); RETURN_THROWS(); }
+			seen[a] = true;
+			axes[i++] = (int)a;
+		} ZEND_HASH_FOREACH_END();
+	}
+	for (int i = 0; i < nd; i++) {
+		oshape[i] = v->shape[axes[i]];
+		sstr[i] = v->sbytes[axes[i]];
+	}
+	for (int i = nd - 1; i >= 0; i--) {
+		ostr[i] = acc;
+		if (buf_mul_ovf(acc, oshape[i] ? oshape[i] : 1, &acc)) { zend_throw_error(NULL, "convert(): the result is too large"); RETURN_THROWS(); }
+	}
+	for (int i = 0; i < nd; i++) if (buf_mul_ovf(total, oshape[i], &total)) { zend_throw_error(NULL, "convert(): the result is too large"); RETURN_THROWS(); }
+	nbuf = buf_buffer_new_host((uint64_t)total * buf_dtypes[ddt].size);
+	if (!nbuf) RETURN_THROWS();
+	nb = buf_buffer_from(nbuf);
+	if (total) {
+		int64_t ssz = si->size, dsz = buf_dtypes[ddt].size;
+
+		if (nd == 0) {
+			buffers_convert(v->dt, v->data, 1, ddt, nb->base, 1, 1);
+		} else {
+			L = oshape[nd - 1];
+			rows = total / L;
+			for (int64_t r = 0; r < rows; r++) {
+				int64_t soff = 0, rem = r;
+				const uint8_t *sp;
+
+				for (int i = nd - 2; i >= 0; i--) { int64_t q = rem % oshape[i]; rem /= oshape[i]; soff += q * sstr[i]; }
+				sp = v->data + soff;
+				if (sstr[nd - 1] % ssz == 0) {
+					buffers_convert(v->dt, sp, sstr[nd - 1] / ssz, ddt, nb->base + r * L * dsz, 1, L);
+				} else {
+					for (int64_t j = 0; j < L; j++) buffers_convert(v->dt, sp + j * sstr[nd - 1], 1, ddt, nb->base + (r * L + j) * dsz, 1, 1);
+				}
+			}
+		}
+	}
+	{
+		int64_t bs[BUF_MAX_NDIM];
+
+		for (int i = 0; i < nd; i++) bs[i] = ostr[i] * (int64_t)buf_dtypes[ddt].size;
+		res = buf_view_new(nbuf, ddt, nd, oshape, bs, nb->base, true, false);
+	}
+	OBJ_RELEASE(nbuf);
+	if (!res) RETURN_THROWS();
+	RETURN_OBJ(res);
+}

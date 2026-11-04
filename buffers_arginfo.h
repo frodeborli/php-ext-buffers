@@ -1,5 +1,5 @@
 /* This is a generated file, edit the .stub.php file instead.
- * Stub hash: 3f9e82bcdc3092b66b185f579dc4dc9c6ad57f1c */
+ * Stub hash: 2597d77eb6fe25348c967885c3ed6de071288233 */
 
 ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_class_Buffers_DType_bits, 0, 0, IS_LONG, 0)
 ZEND_END_ARG_INFO()
@@ -124,6 +124,11 @@ ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(arginfo_class_Buffers_Tensor_to, 0, 1, Bu
 	ZEND_ARG_OBJ_INFO(0, device, Buffers\\Device, 0)
 ZEND_END_ARG_INFO()
 
+ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(arginfo_class_Buffers_Tensor_convert, 0, 1, Buffers\\Tensor, 0)
+	ZEND_ARG_OBJ_INFO(0, dtype, Buffers\\DType, 0)
+	ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, axes, IS_ARRAY, 1, "null")
+ZEND_END_ARG_INFO()
+
 ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_class_Buffers_Tensor_jsonSerialize, 0, 0, IS_MIXED, 0)
 ZEND_END_ARG_INFO()
 
@@ -165,6 +170,7 @@ ZEND_METHOD(Buffers_Tensor, offsetSet);
 ZEND_METHOD(Buffers_Tensor, offsetUnset);
 ZEND_METHOD(Buffers_Tensor, getIterator);
 ZEND_METHOD(Buffers_Tensor, to);
+ZEND_METHOD(Buffers_Tensor, convert);
 ZEND_METHOD(Buffers_Tensor, jsonSerialize);
 
 static const zend_function_entry class_Buffers_DType_methods[] = {
@@ -226,6 +232,7 @@ static const zend_function_entry class_Buffers_Tensor_methods[] = {
 	ZEND_ME(Buffers_Tensor, offsetUnset, arginfo_class_Buffers_Tensor_offsetUnset, ZEND_ACC_PUBLIC)
 	ZEND_ME(Buffers_Tensor, getIterator, arginfo_class_Buffers_Tensor_getIterator, ZEND_ACC_PUBLIC)
 	ZEND_ME(Buffers_Tensor, to, arginfo_class_Buffers_Tensor_to, ZEND_ACC_PUBLIC)
+	ZEND_ME(Buffers_Tensor, convert, arginfo_class_Buffers_Tensor_convert, ZEND_ACC_PUBLIC)
 	ZEND_ME(Buffers_Tensor, jsonSerialize, arginfo_class_Buffers_Tensor_jsonSerialize, ZEND_ACC_PUBLIC)
 	ZEND_FE_END
 };
