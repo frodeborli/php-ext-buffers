@@ -45,6 +45,9 @@ static void buffer_free(zend_object *o)
 	if (b->deleter) {
 		b->deleter(b->deleter_ctx);
 	}
+	if (b->path) {
+		zend_string_release(b->path);
+	}
 	if (b->owner) {
 		OBJ_RELEASE(b->owner);
 	}
@@ -454,6 +457,20 @@ PHP_METHOD(Buffers_Buffer, fromFile)
 	}
 	if (!file_buffer(return_value, file, (uint64_t)offset, len, map, writable)) {
 		RETURN_THROWS();
+	}
+	{
+		buf_buffer *nb = buf_buffer_from(Z_OBJ_P(return_value));
+		zend_string *abs = zend_string_init(ZSTR_VAL(path), ZSTR_LEN(path), 0);
+		char resolved[MAXPATHLEN];
+
+		if (nb->host && expand_filepath(ZSTR_VAL(path), resolved)) {
+			zend_string_release(abs);
+			abs = zend_string_init(resolved, strlen(resolved), 0);
+			nb->path = abs;
+			nb->file_off = (uint64_t)offset;
+		} else {
+			zend_string_release(abs);
+		}
 	}
 }
 

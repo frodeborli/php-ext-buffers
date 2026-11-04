@@ -86,6 +86,20 @@ zend_result buffers_buffer_get_info(zend_object *buffer, buffers_buffer_info *ou
 
 zend_object *buffers_file_device(void) { return buf_file_device(); }
 
+bool buffers_buffer_file_origin(zend_object *buffer, const char **path, uint64_t *offset)
+{
+	buf_buffer *b;
+
+	if (!buffers_is_buffer(buffer)) return false;
+	b = buf_buffer_from(buffer);
+	if (b->path) {
+		*path = ZSTR_VAL(b->path);
+		*offset = b->file_off;
+		return true;
+	}
+	return false;
+}
+
 zend_object *buffers_buffer_create_foreign(void *data, size_t length, bool writable, zend_object *device,
 	void (*deleter)(void *ctx), void *ctx)
 {

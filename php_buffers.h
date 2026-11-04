@@ -104,6 +104,7 @@ typedef struct {
 	size_t map_len;
 	intptr_t file;                       /* file descriptor (HANDLE on Windows) of an unmapped file buffer, -1 if none */
 	uint64_t file_off;                   /* where byte 0 of the buffer is in the file */
+	zend_string *path;                   /* the (absolute) path of a mapped file buffer made by fromFile(), for buffers_buffer_file_origin() */
 	void (*deleter)(void *ctx);          /* foreign memory: runs once when the buffer is freed */
 	void *deleter_ctx;
 	zend_object *owner;                  /* held until the buffer is freed */

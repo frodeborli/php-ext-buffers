@@ -145,6 +145,10 @@ typedef struct {
 	int device_id;
 } buffers_buffer_info;
 
+/* A Buffer made by Buffer::fromFile() over a mapped file: its absolute path, and where its byte 0 is in the file (true), so a consumer can refer to the bytes
+ * instead of copying them. False for every other buffer (memory, foreign memory, an unmapped file). The path is valid while the buffer lives. Additive: the version number did not change (a consumer that uses it needs this build of ext-buffers). */
+BUFFERS_API bool buffers_buffer_file_origin(zend_object *buffer, const char **path, uint64_t *offset);
+
 /* true for Buffer objects (the only objects the functions below accept) */
 BUFFERS_API bool buffers_is_buffer(const zend_object *o);
 BUFFERS_API zend_result buffers_buffer_get_info(zend_object *buffer, buffers_buffer_info *out);
