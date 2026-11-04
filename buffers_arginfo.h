@@ -1,5 +1,5 @@
 /* This is a generated file, edit the .stub.php file instead.
- * Stub hash: 5df2f1edd0f317a56efcb15b4a051b73b36ba7dc */
+ * Stub hash: 3f9e82bcdc3092b66b185f579dc4dc9c6ad57f1c */
 
 ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_class_Buffers_DType_bits, 0, 0, IS_LONG, 0)
 ZEND_END_ARG_INFO()
@@ -93,6 +93,9 @@ ZEND_END_ARG_INFO()
 
 #define arginfo_class_Buffers_Buffer_isWritable arginfo_class_Buffers_DType_isByteAligned
 
+ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(arginfo_class_Buffers_Buffer_readOnly, 0, 0, Buffers\\Buffer, 0)
+ZEND_END_ARG_INFO()
+
 #define arginfo_class_Buffers_Buffer_isHostAccessible arginfo_class_Buffers_DType_isByteAligned
 
 ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(arginfo_class_Buffers_Buffer_view, 0, 1, Buffers\\Tensor, 0)
@@ -151,6 +154,7 @@ ZEND_METHOD(Buffers_Buffer, flush);
 ZEND_METHOD(Buffers_Buffer, writeTo);
 ZEND_METHOD(Buffers_Buffer, readFrom);
 ZEND_METHOD(Buffers_Buffer, isWritable);
+ZEND_METHOD(Buffers_Buffer, readOnly);
 ZEND_METHOD(Buffers_Buffer, isHostAccessible);
 ZEND_METHOD(Buffers_Buffer, view);
 ZEND_METHOD(Buffers_Buffer, toString);
@@ -207,6 +211,7 @@ static const zend_function_entry class_Buffers_Buffer_methods[] = {
 	ZEND_ME(Buffers_Buffer, writeTo, arginfo_class_Buffers_Buffer_writeTo, ZEND_ACC_PUBLIC)
 	ZEND_ME(Buffers_Buffer, readFrom, arginfo_class_Buffers_Buffer_readFrom, ZEND_ACC_PUBLIC)
 	ZEND_ME(Buffers_Buffer, isWritable, arginfo_class_Buffers_Buffer_isWritable, ZEND_ACC_PUBLIC)
+	ZEND_ME(Buffers_Buffer, readOnly, arginfo_class_Buffers_Buffer_readOnly, ZEND_ACC_PUBLIC)
 	ZEND_ME(Buffers_Buffer, isHostAccessible, arginfo_class_Buffers_Buffer_isHostAccessible, ZEND_ACC_PUBLIC)
 	ZEND_ME(Buffers_Buffer, view, arginfo_class_Buffers_Buffer_view, ZEND_ACC_PUBLIC)
 	ZEND_ME(Buffers_Buffer, toString, arginfo_class_Buffers_Buffer_toString, ZEND_ACC_PUBLIC)

@@ -157,6 +157,7 @@ final class Buffer {
     public function writeTo($stream, int $offset = 0, ?int $length = null): int;    // memory straight to a stream; bytes written
     public function readFrom($stream, int $offset = 0, ?int $length = null): int;   // stream straight into memory; bytes read
     public function isWritable(): bool;
+    public function readOnly(): Buffer;               // a read-only alias of the same memory (what backends bake into a plan as a constant)
     public function isHostAccessible(): bool;       // authoritative for this buffer (a mapped file is, FileDevice is not)
     public function view(DType $type, int|array|null $shape = null, ?array $strides = null, int $offset = 0): Tensor;
     public function toString(): string;             // a copy of the bytes; Error unless host accessible

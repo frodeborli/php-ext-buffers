@@ -629,6 +629,24 @@ PHP_METHOD(Buffers_Buffer, toString)
 }
 
 PHP_METHOD(Buffers_Buffer, isWritable) { ZEND_PARSE_PARAMETERS_NONE(); RETURN_BOOL(BUF->writable); }
+/* a read-only buffer over the same memory (the original stays writable for whoever has it, and stays alive as long as the new one) */
+PHP_METHOD(Buffers_Buffer, readOnly)
+{
+	zend_object *o;
+
+	ZEND_PARSE_PARAMETERS_NONE();
+	if (!BUF->writable) {
+		RETURN_COPY(ZEND_THIS);
+	}
+	if (buf_buffer_make_ready(BUF) == FAILURE) {
+		RETURN_THROWS();
+	}
+	o = buf_foreign_buffer_new(BUF->base, BUF->len, false, BUF->device, NULL, NULL, Z_OBJ_P(ZEND_THIS));
+	if (!o) {
+		RETURN_THROWS();
+	}
+	RETURN_OBJ(o);
+}
 PHP_METHOD(Buffers_Buffer, isHostAccessible) { ZEND_PARSE_PARAMETERS_NONE(); RETURN_BOOL(BUF->host); }
 
 PHP_METHOD(Buffers_Buffer, view) { buf_buffer_view_impl(Z_OBJ_P(ZEND_THIS), INTERNAL_FUNCTION_PARAM_PASSTHRU); }

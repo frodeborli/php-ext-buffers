@@ -194,6 +194,8 @@ final class Buffer
     public function readFrom(mixed $stream, int $offset = 0, ?int $length = null): int {}
     /** False for read-only file buffers, imported read-only tensors and the like: writes through its tensors throw Error. */
     public function isWritable(): bool {}
+    /** A read-only buffer over the same memory (this one if it is read-only already): what backends bake into a plan as a constant. The new buffer keeps this one alive; writes through this one are seen by it. */
+    public function readOnly(): Buffer {}
     /** Whether the bytes can be read and written from PHP: authoritative for this buffer (a mapped file is, its device is not). */
     public function isHostAccessible(): bool {}
     /**
