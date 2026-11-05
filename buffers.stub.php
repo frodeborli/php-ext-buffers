@@ -268,9 +268,12 @@ final class Tensor implements TensorInterface, \Countable, \ArrayAccess, \Iterat
 #if defined(HAVE_BUFFERS_GD)
     /**
      * A UInt8 tensor of shape [height, width, 4] (R, G, B, A) from a GD image (true color or palette). GD's alpha a (0 opaque ... 127
-     * transparent) becomes 255 - round(a * 255 / 127), exactly (127 - a) * 255 / 127 rounded to nearest: 0 -> 255, 127 -> 0. Needs ext/gd.
+     * transparent) becomes (127 - a) * 255 / 127 rounded to nearest: 0 -> 255, 127 -> 0. Needs ext/gd, built against the same gd.h version as
+     * this extension (Error naming both versions otherwise).
+     * With $into (a writable UInt8 tensor of shape [height, width, 4], contiguous or strided, in host memory) nothing is allocated: the pixels are
+     * written there and $into is returned. ValueError, naming the expected shape, for another dtype or shape.
      */
-    public static function fromGdImage(\GdImage $image): Tensor {}
+    public static function fromGdImage(\GdImage $image, ?Tensor $into = null): Tensor {}
     /**
      * A true color GdImage from a UInt8 tensor of shape [height, width, 3] (RGB), [height, width, 4] (RGBA) or [height, width]
      * (grey). Alpha A (255 opaque) becomes 127 - round(A * 127 / 255), the inverse of fromGdImage(); an RGBA image has

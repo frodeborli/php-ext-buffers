@@ -362,12 +362,14 @@ read-modify-write, so neighbours are untouched and no byte outside the view's ex
   bool and numeric dtypes take no bool. Float dtypes round as elsewhere (overflow gives INF). Complex dtypes are not supported.
 * The tensor is built in CPU memory and moved with `to($device)` if a device is given.
 
-With ext/gd available at build time: `Tensor::fromGdImage(\GdImage $img)` gives a `UInt8` tensor `[height, width, 4]` (R, G, B, A) from a true color
+With ext/gd available at build time: `Tensor::fromGdImage(\GdImage $img, ?Tensor $into = null)` gives a `UInt8` tensor `[height, width, 4]` (R, G, B, A) from a true color
 or palette image. GD's alpha `a` (0 opaque ... 127 transparent) becomes `(127 - a) * 255 / 127` rounded to nearest, so 0 gives 255 and 127 gives 0.
 `$tensor->toGdImage()` takes `UInt8` `[h, w, 3]`, `[h, w, 4]` or `[h, w]` (grey), strided views included, and makes a true color image; alpha `A`
 becomes `127 - round(A * 127 / 255)` (GD has 128 levels: 256 alpha values map to the nearest of them, at most 1 off after a round trip), and
-an RGBA image has `imagesavealpha()` on. Other dtypes or shapes, and empty axes, are an `Error`. Both walk the pixels once in C
-(`benchmarks/gd.php`: 4096 x 4096 in about 100 ms and 80 ms).
+an RGBA image has `imagesavealpha()` on. Other dtypes or shapes, and empty axes, are an `Error`. With `$into` (a writable host-memory `UInt8` tensor `[h, w, 4]`, contiguous or strided) nothing is allocated: the pixels are written there and
+`$into` is returned (`ValueError` naming the expected shape otherwise). Both walk the pixels once in C with one 32-bit store or load per pixel
+when the pixels are contiguous (`benchmarks/gd.php`). The `gd.h` the extension was built with must be the version ext/gd was built with: both
+calls compare it with the `GD_MAJOR_VERSION`, `GD_MINOR_VERSION` and `GD_RELEASE_VERSION` constants of ext/gd and throw an `Error` naming both versions.
 
 ## Debug output and JSON
 

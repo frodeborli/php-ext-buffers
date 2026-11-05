@@ -2,14 +2,43 @@
  *
  * ext/gd is only needed at run time and is not linked: the function that turns a GdImage object into a gdImagePtr is looked up in
  * the loaded gd module, and a GdImage is made by calling imagecreatetruecolor(), so nothing here depends on gd's private structs
- * except the public gdImage fields of gd.h, which must match the libgd that ext/gd runs with. */
+ * except the public gdImage fields of gd.h. Those must match the gd.h that ext/gd was built with, which is checked on every call:
+ * the GD_MAJOR_VERSION, GD_MINOR_VERSION and GD_RELEASE_VERSION constants that ext/gd registers are the version of the header it
+ * was compiled against (the same value as ours when the headers match), which is what decides the struct layout. */
 #include "php_buffers.h"
 #include "zend_exceptions.h"
+#include "zend_constants.h"
 #include "ext/standard/info.h"
 #include <dlfcn.h>
 #include <gd.h>
 
 typedef gdImagePtr (*gd_ptr_fn)(zval *);
+
+/* true if ext/gd is loaded and built against the same gd.h version as this extension; false after throwing */
+static bool gd_check(void)
+{
+	zval *v[3];
+	static const char *const names[3] = { "GD_MAJOR_VERSION", "GD_MINOR_VERSION", "GD_RELEASE_VERSION" };
+	static const long ours[3] = { GD_MAJOR_VERSION, GD_MINOR_VERSION, GD_RELEASE_VERSION };
+
+	if (!zend_hash_str_exists(&module_registry, "gd", sizeof("gd") - 1)) {
+		zend_throw_error(NULL, "ext/gd is not loaded");
+		return false;
+	}
+	for (int i = 0; i < 3; i++) {
+		v[i] = zend_get_constant_str(names[i], strlen(names[i]));
+		if (!v[i] || Z_TYPE_P(v[i]) != IS_LONG) {
+			zend_throw_error(NULL, "Cannot determine the version of GD that ext/gd was built with (%s is not defined)", names[i]);
+			return false;
+		}
+	}
+	if (Z_LVAL_P(v[0]) != ours[0] || Z_LVAL_P(v[1]) != ours[1] || Z_LVAL_P(v[2]) != ours[2]) {
+		zend_throw_error(NULL, "ext/buffers was built against GD %ld.%ld.%ld but ext/gd reports GD %ld.%ld.%ld; rebuild ext/buffers with the matching gd.h",
+			ours[0], ours[1], ours[2], (long)Z_LVAL_P(v[0]), (long)Z_LVAL_P(v[1]), (long)Z_LVAL_P(v[2]));
+		return false;
+	}
+	return true;
+}
 
 /* the gdImagePtr of a GdImage object, or NULL after throwing */
 static gdImagePtr gd_image_of(zval *obj)
@@ -29,63 +58,141 @@ static gdImagePtr gd_image_of(zval *obj)
 	return im;
 }
 
+/* gd alpha a (0 opaque .. 127 transparent) -> 255 .. 0: (127 - a) * 255 / 127 rounded to nearest, which is 2 * a' + (a' >> 6) for a' = 127 - a.
+ * Plain integer arithmetic, so that the compilers can vectorize the pixel loops. */
+static zend_always_inline uint32_t gd_alpha_to_8(uint32_t a)
+{
+	uint32_t r = 127 - (a & 0x7f);
+	return 2 * r + (r >> 6);
+}
+
+/* 255 opaque .. 0 transparent -> gd 127 .. 0: 127 - round(A * 127 / 255); x / 255 is (x + (x >> 8) + 1) >> 8 for x < 65535 (both checked for all A) */
+static zend_always_inline uint32_t gd_alpha_from_8(uint32_t a)
+{
+	uint32_t x = 127 * a + 127;
+	return 127 - ((x + (x >> 8) + 1) >> 8);
+}
+
+/* the RGBA bytes of a pixel as one value: R | G << 8 | B << 16 | A << 24 (the bytes of memory in that order on a little-endian host) */
+static zend_always_inline uint32_t gd_to_rgba(uint32_t px)
+{
+	return ((px >> 16) & 0xff) | (px & 0xff00) | ((px & 0xff) << 16) | (gd_alpha_to_8(px >> 24) << 24);
+}
+
+/* the contiguous rows, one 32-bit store per pixel; O3 so that GCC vectorizes them at the default -O2 as well */
+#if defined(__GNUC__) && !defined(__clang__)
+# pragma GCC push_options
+# pragma GCC optimize("O3")
+#endif
+static void rows_gd_to_rgba(uint32_t *restrict d, const uint32_t *restrict s, int w)
+{
+	for (int x = 0; x < w; x++) d[x] = gd_to_rgba(s[x]);
+}
+
+static void rows_rgba_to_gd(uint32_t *restrict d, const uint32_t *restrict s, int64_t w)
+{
+	for (int64_t x = 0; x < w; x++) {
+		uint32_t p = s[x];
+		d[x] = (gd_alpha_from_8(p >> 24) << 24) | ((p & 0xff) << 16) | (p & 0xff00) | ((p >> 16) & 0xff);
+	}
+}
+#if defined(__GNUC__) && !defined(__clang__)
+# pragma GCC pop_options
+#endif
+
 PHP_METHOD(Buffers_Tensor, fromGdImage)
 {
 	zval *obj;
+	zend_object *into = NULL, *buf = NULL, *view = NULL;
 	gdImagePtr im;
-	zend_object *buf, *view;
-	int64_t shape[3];
+	buf_view *v;
+	int64_t sb0, sb1, sb2;
 	uint32_t pal[gdMaxColors];
-	uint8_t *dst;
+	bool fast, tc;
+	int w, h;
 
-	ZEND_PARSE_PARAMETERS_START(1, 1)
+	ZEND_PARSE_PARAMETERS_START(1, 2)
 		Z_PARAM_ZVAL(obj)
+		Z_PARAM_OPTIONAL
+		Z_PARAM_OBJ_OF_CLASS_OR_NULL(into, buf_ce_tensor)
 	ZEND_PARSE_PARAMETERS_END();
 	if (Z_TYPE_P(obj) != IS_OBJECT || !zend_string_equals_literal(Z_OBJCE_P(obj)->name, "GdImage")) {
 		zend_argument_type_error(1, "must be of type GdImage, %s given", zend_zval_type_name(obj));
 		RETURN_THROWS();
 	}
-	if (!(im = gd_image_of(obj))) RETURN_THROWS();
+	if (!gd_check() || !(im = gd_image_of(obj))) RETURN_THROWS();
 
-	shape[0] = gdImageSY(im);
-	shape[1] = gdImageSX(im);
-	shape[2] = 4;
-	buf = buf_buffer_new_host((uint64_t)shape[0] * (uint64_t)shape[1] * 4);
-	if (!buf) RETURN_THROWS();
-	dst = buf_buffer_from(buf)->base;
+	if (into) {
+		v = buf_view_from(into);
+		if (v->dt != BUF_T_UINT8 || v->ndim != 3 || v->shape[0] != im->sy || v->shape[1] != im->sx || v->shape[2] != 4) {
+			char got[96];
+			size_t n = 0;
 
-	if (im->trueColor) {
-		for (int y = 0; y < im->sy; y++) {
-			const int *src = im->tpixels[y];
-
-			for (int x = 0; x < im->sx; x++, dst += 4) {
-				int px = src[x];
-				/* gd alpha 0 (opaque) .. 127 (transparent) -> 255 .. 0, rounded to nearest */
-				dst[0] = (uint8_t)gdTrueColorGetRed(px);
-				dst[1] = (uint8_t)gdTrueColorGetGreen(px);
-				dst[2] = (uint8_t)gdTrueColorGetBlue(px);
-				dst[3] = (uint8_t)(((127 - gdTrueColorGetAlpha(px)) * 255 + 63) / 127);
+			got[n++] = '[';
+			for (int i = 0; i < v->ndim && n < sizeof got - 24; i++) {
+				n += snprintf(got + n, sizeof got - n, i ? ", %" PRId64 : "%" PRId64, v->shape[i]);
 			}
+			got[n++] = ']';
+			got[n] = 0;
+			zend_argument_value_error(2, "must be a UInt8 tensor of shape [%d, %d, 4], got %s with shape %s",
+				im->sy, im->sx, buf_dtypes[v->dt].name, got);
+			RETURN_THROWS();
+		}
+		if (!buf_view_check_access(v)) RETURN_THROWS();
+		if (!v->writable) {
+			zend_throw_error(NULL, "Cannot write to a read-only Tensor");
+			RETURN_THROWS();
 		}
 	} else {
+		buf = buf_buffer_new_host_uninit((uint64_t)im->sy * (uint64_t)im->sx * 4);   /* every byte is written below */
+		if (!buf) RETURN_THROWS();
+		view = buf_view_new(buf, BUF_T_UINT8, 3, (int64_t[]){im->sy, im->sx, 4}, (int64_t[]){(int64_t)im->sx * 4, 4, 1},
+			buf_buffer_from(buf)->base, true, false);
+		v = buf_view_from(view);
+	}
+	sb0 = v->sbytes[0]; sb1 = v->sbytes[1]; sb2 = v->sbytes[2];
+#ifdef WORDS_BIGENDIAN
+	fast = false;
+#else
+	fast = sb1 == 4 && sb2 == 1 && !(((uintptr_t)v->data | (uintptr_t)sb0) & 3);   /* one aligned 32-bit store per pixel */
+#endif
+
+	w = im->sx;
+	h = im->sy;
+	tc = im->trueColor;
+	if (!tc) {
 		for (int i = 0; i < gdMaxColors; i++) {
-			pal[i] = (uint32_t)im->red[i] | (uint32_t)im->green[i] << 8 | (uint32_t)im->blue[i] << 16
-				| (uint32_t)(((127 - (im->alpha[i] & 0x7f)) * 255 + 63) / 127) << 24;
+			pal[i] = (uint32_t)im->red[i] | (uint32_t)im->green[i] << 8 | (uint32_t)im->blue[i] << 16 | gd_alpha_to_8(im->alpha[i]) << 24;
 		}
-		for (int y = 0; y < im->sy; y++) {
-			const unsigned char *src = im->pixels[y];
+	}
+	for (int y = 0; y < h; y++) {
+		uint8_t *row = v->data + y * sb0;
 
-			for (int x = 0; x < im->sx; x++, dst += 4) {
-				uint32_t c = pal[src[x]];
+		if (fast) {
+			uint32_t *restrict d = (uint32_t *)row;
 
-				dst[0] = (uint8_t)c;
-				dst[1] = (uint8_t)(c >> 8);
-				dst[2] = (uint8_t)(c >> 16);
-				dst[3] = (uint8_t)(c >> 24);
+			if (tc) {
+				const uint32_t *restrict s = (const uint32_t *)im->tpixels[y];
+				rows_gd_to_rgba(d, s, w);
+			} else {
+				const unsigned char *restrict s = im->pixels[y];
+				for (int x = 0; x < w; x++) d[x] = pal[s[x]];
+			}
+		} else {
+			for (int x = 0; x < w; x++) {
+				uint32_t c = tc ? gd_to_rgba((uint32_t)im->tpixels[y][x]) : pal[im->pixels[y][x]];
+				uint8_t *p = row + x * sb1;
+
+				p[0] = (uint8_t)c;
+				p[sb2] = (uint8_t)(c >> 8);
+				p[2 * sb2] = (uint8_t)(c >> 16);
+				p[3 * sb2] = (uint8_t)(c >> 24);
 			}
 		}
 	}
-	view = buf_view_new(buf, BUF_T_UINT8, 3, shape, (int64_t[]){shape[1] * 4, 4, 1}, buf_buffer_from(buf)->base, true, false);
+	if (into) {
+		RETURN_OBJ_COPY(into);
+	}
 	OBJ_RELEASE(buf);
 	RETURN_OBJ(view);
 }
@@ -115,7 +222,7 @@ PHP_METHOD(Buffers_Tensor, toGdImage)
 		zend_throw_error(NULL, "Tensor::toGdImage(): the height and width must be between 1 and %d", INT_MAX);
 		RETURN_THROWS();
 	}
-	if (!buf_view_check_access(v)) RETURN_THROWS();
+	if (!gd_check() || !buf_view_check_access(v)) RETURN_THROWS();
 	sb0 = v->sbytes[0];
 	sb1 = v->sbytes[1];
 	sb2 = channels > 1 ? v->sbytes[2] : 0;
@@ -138,25 +245,33 @@ PHP_METHOD(Buffers_Tensor, toGdImage)
 		RETURN_THROWS();
 	}
 
-	for (int64_t y = 0; y < h; y++) {
-		const uint8_t *row = v->data + y * sb0;
-		int *dst = im->tpixels[y];
+	{
+#ifdef WORDS_BIGENDIAN
+		bool fast = false;
+#else
+		bool fast = channels == 4 && sb1 == 4 && sb2 == 1 && !(((uintptr_t)v->data | (uintptr_t)sb0) & 3);
+#endif
+		for (int64_t y = 0; y < h; y++) {
+			const uint8_t *row = v->data + y * sb0;
+			uint32_t *dst = (uint32_t *)im->tpixels[y];
 
-		if (channels == 1) {
-			for (int64_t x = 0; x < w; x++) {
-				int g = row[x * sb1];
-				dst[x] = (g << 16) | (g << 8) | g;
-			}
-		} else if (channels == 3) {
-			for (int64_t x = 0; x < w; x++) {
-				const uint8_t *p = row + x * sb1;
-				dst[x] = (p[0] << 16) | (p[sb2] << 8) | p[2 * sb2];
-			}
-		} else {
-			for (int64_t x = 0; x < w; x++) {
-				const uint8_t *p = row + x * sb1;
-				int a = 127 - (p[3 * sb2] * 254 + 255) / 510;   /* 255 opaque .. 0 transparent -> gd 0 .. 127, rounded to nearest */
-				dst[x] = (a << 24) | (p[0] << 16) | (p[sb2] << 8) | p[2 * sb2];
+			if (fast) {
+				rows_rgba_to_gd(dst, (const uint32_t *)row, w);
+			} else if (channels == 1) {
+				for (int64_t x = 0; x < w; x++) {
+					uint32_t g = row[x * sb1];
+					dst[x] = (g << 16) | (g << 8) | g;
+				}
+			} else if (channels == 3) {
+				for (int64_t x = 0; x < w; x++) {
+					const uint8_t *p = row + x * sb1;
+					dst[x] = ((uint32_t)p[0] << 16) | ((uint32_t)p[sb2] << 8) | p[2 * sb2];
+				}
+			} else {
+				for (int64_t x = 0; x < w; x++) {
+					const uint8_t *p = row + x * sb1;
+					dst[x] = (gd_alpha_from_8(p[3 * sb2]) << 24) | ((uint32_t)p[0] << 16) | ((uint32_t)p[sb2] << 8) | p[2 * sb2];
+				}
 			}
 		}
 	}

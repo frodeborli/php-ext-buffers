@@ -1,5 +1,5 @@
 /* This is a generated file, edit the .stub.php file instead.
- * Stub hash: b18856eb624a5fde61fa7c17e18004d84dd985ed */
+ * Stub hash: 2bfd80ba29c7f66b70c49d2a37b2b9f4e29f935e */
 
 ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_class_Buffers_DType_bits, 0, 0, IS_LONG, 0)
 ZEND_END_ARG_INFO()
@@ -143,6 +143,7 @@ ZEND_END_ARG_INFO()
 #if defined(HAVE_BUFFERS_GD)
 ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(arginfo_class_Buffers_Tensor_fromGdImage, 0, 1, Buffers\\Tensor, 0)
 	ZEND_ARG_OBJ_INFO(0, image, GdImage, 0)
+	ZEND_ARG_OBJ_INFO_WITH_DEFAULT_VALUE(0, into, Buffers\\Tensor, 1, "null")
 ZEND_END_ARG_INFO()
 
 ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(arginfo_class_Buffers_Tensor_toGdImage, 0, 0, GdImage, 0)

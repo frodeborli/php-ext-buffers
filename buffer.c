@@ -182,8 +182,8 @@ zend_result buf_buffer_read_file(buf_buffer *b, uint64_t offset, void *dst, size
 	return SUCCESS;
 }
 
-/* a zero-filled host Buffer of `bytes` (>= 0), or NULL after throwing */
-zend_object *buf_buffer_new_host(uint64_t bytes)
+/* a host Buffer of `bytes` (>= 0), zero-filled or not, or NULL after throwing */
+static zend_object *host_new(uint64_t bytes, bool zero)
 {
 	zend_object *o;
 	buf_buffer *b;
@@ -194,13 +194,16 @@ zend_object *buf_buffer_new_host(uint64_t bytes)
 	}
 	o = buffer_create(buf_ce_buffer);
 	b = buf_buffer_from(o);
-	b->alloc = ecalloc(1, (size_t)bytes + BUF_ALIGN);
+	b->alloc = zero ? ecalloc(1, (size_t)bytes + BUF_ALIGN) : emalloc((size_t)bytes + BUF_ALIGN);
 	b->base = (uint8_t *)(((uintptr_t)b->alloc + BUF_ALIGN - 1) & ~(uintptr_t)(BUF_ALIGN - 1));
 	b->len = bytes;
 	b->writable = true;
 	b->inited = true;
 	return o;
 }
+
+zend_object *buf_buffer_new_host(uint64_t bytes) { return host_new(bytes, true); }
+zend_object *buf_buffer_new_host_uninit(uint64_t bytes) { return host_new(bytes, false); }
 
 #define BUF buf_buffer_from(Z_OBJ_P(ZEND_THIS))
 

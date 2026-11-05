@@ -14,8 +14,12 @@ $best = fn(callable $f) => min(array_map(function () use ($f) { $t = hrtime(true
 $t = Tensor::fromGdImage($img);
 printf("%d x %d, %.0f MB of pixels\n", $n, $n, $n * $n * 4 / 1048576);
 printf("fromGdImage: %7.1f ms\n", $best(fn() => Tensor::fromGdImage($img)));
+$dst = (new Buffers\Buffer($n * $n * 4))->view(Buffers\DType::UInt8, [$n, $n, 4]);
+Tensor::fromGdImage($img, $dst);   // touch the destination once
+printf("fromGdImage into an existing tensor: %7.1f ms\n", $best(fn() => Tensor::fromGdImage($img, $dst)));
 printf("toGdImage:   %7.1f ms\n", $best(fn() => $t->toGdImage()));
 $rgb = $t->buffer->view(Buffers\DType::UInt8, [$n, $n, 3], [$n * 4, 4, 1]);   // strided RGB view of the same pixels
+printf("  (imagecreatetruecolor() alone, the allocation part of toGdImage: %.1f ms)\n", $best(fn() => imagecreatetruecolor($n, $n)));
 printf("toGdImage (strided RGB view): %7.1f ms\n", $best(fn() => $rgb->toGdImage()));
 
 // the PHP-only alternative, on a 512 x 512 image: imagecolorat() per pixel into a Buffer (measured, then scaled to the full size)

@@ -43,6 +43,10 @@ $maxerr = 0;
 for ($a = 0; $a < 256; $a++) $maxerr = max($maxerr, abs($round[0][$a][3] - $a));
 echo "max alpha error ", $maxerr, "\n";
 echo $round[0][0][3], ' ', $round[0][255][3], "\n";
+$exact = true;
+$gdimg = $v->toGdImage();
+for ($a = 0; $a < 256; $a++) $exact = $exact && ((imagecolorat($gdimg, $a, 0) >> 24) & 0x7f) === 127 - intdiv(254 * $a + 255, 510);
+var_dump($exact);   // 127 - round(A * 127 / 255) for every A
 
 // 1x1
 $one = imagecreatetruecolor(1, 1);
@@ -133,6 +137,7 @@ UInt8 [1,128,4] [512,4,1]
 bool(true)
 max alpha error 1
 0 255
+bool(true)
 [1,1,4] [[[51,102,153,255]]]
 1x1 10203 true
 3x2 ff0000 00ff00 0000ff 010203 040506 070809 
@@ -162,7 +167,7 @@ Bool: Error: Tensor::toGdImage() needs a UInt8 tensor, this one is Bool
 not an image: TypeError: Buffers\Tensor::fromGdImage(): Argument #1 ($image) must be of type GdImage, stdClass given
 not an object: TypeError: Buffers\Tensor::fromGdImage(): Argument #1 ($image) must be of type GdImage, int given
 read-only buffer is fine: ok
-no arguments: ArgumentCountError: Buffers\Tensor::fromGdImage() expects exactly 1 argument, 0 given
+no arguments: ArgumentCountError: Buffers\Tensor::fromGdImage() expects at least 1 argument, 0 given
 [2048,2048,4] 16777216
 [[1,2,3,255],[9,8,7,255],[200,100,50,0]]
 bool(true)

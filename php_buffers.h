@@ -227,6 +227,8 @@ void buf_dtype_to_zval(int dt, zval *rv);
 void buf_buffer_minit(void);
 zend_result buf_buffer_make_ready(buf_buffer *b);   /* runs the readiness hook if pending */
 zend_object *buf_buffer_new_host(uint64_t bytes);
+/* the same without zeroing: for callers that overwrite every byte */
+zend_object *buf_buffer_new_host_uninit(uint64_t bytes);
 /* a Buffer over foreign memory; `device` (held, may be NULL) as in the C API */
 zend_object *buf_foreign_buffer_new(uint8_t *base, size_t len, bool writable, zend_object *device,
 	void (*deleter)(void *), void *ctx, zend_object *owner);
