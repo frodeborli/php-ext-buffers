@@ -1,5 +1,6 @@
 #!/bin/sh
 # usage: tools/run-phpt.sh <php binary> <build dir> [run-tests.php flags]
+# With an ASan build of PHP, pass --asan (run-tests checks each test for leaks; --XLEAK-- tests are exempt).
 # Runs the phpt suite twice: with ext-buffers alone (tests that need the API consumer skip, and the
 # tests of the behaviour without an operator handler run), then with the API consumer test extension
 # loaded as well. Exit status 1 if either run fails.
