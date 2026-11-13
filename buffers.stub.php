@@ -219,6 +219,22 @@ final class Buffer
  * @property-read Buffer $buffer
  * @property-read int $byteOffset where the view starts in the buffer
  * @property-read int $byteLength
+ *
+ * Byte-indexed accessors: `$u32 = $d->uint32;` then `$u32[$byteOffset]` reads and `$u32[$byteOffset] = $v` writes the little-endian
+ * uint32 at that byte offset of the view. Index syntax costs no method call, so the accessors are the fast path for hot loops.
+ * Each property returns the same accessor object every time.
+ * @property-read DataViewAccessor $int8
+ * @property-read DataViewAccessor $uint8
+ * @property-read DataViewAccessor $int16
+ * @property-read DataViewAccessor $uint16
+ * @property-read DataViewAccessor $int32
+ * @property-read DataViewAccessor $uint32
+ * @property-read DataViewAccessor $int64
+ * @property-read DataViewAccessor $uint64
+ * @property-read DataViewAccessor $float16
+ * @property-read DataViewAccessor $bfloat16
+ * @property-read DataViewAccessor $float32
+ * @property-read DataViewAccessor $float64
  */
 final class DataView
 {
@@ -264,6 +280,38 @@ final class DataView
     public function setFloat8E5M2FNUZ(int $offset, float $value): void {}
     public function getFloat8E8M0FNU(int $offset): float {}
     public function setFloat8E8M0FNU(int $offset, float $value): void {}
+    /** A copy of bytes $offset .. $offset + $length of the view, as a string. ValueError unless the range lies inside the view. */
+    public function getBytes(int $offset, int $length): string {}
+    /** Writes all of $bytes at $offset of the view. ValueError unless they fit: nothing is truncated. */
+    public function setBytes(int $offset, string $bytes): void {}
+    /** Sets bytes $offset .. $offset + $length of the view to $byte (wrapped to 0..255, like setUInt8()). */
+    public function fill(int $offset, int $length, int $byte): void {}
+    /** Copies $length bytes from $source to $target, both offsets in the view. The ranges may overlap (memmove). */
+    public function copyBytes(int $target, int $source, int $length): void {}
+}
+
+/**
+ * Values of one type at any byte offset of a DataView, with index syntax: `$a[$byteOffset]`. The index is a byte offset into the
+ * DataView, not an element number, so neighbouring indexes overlap: `$d->uint32[1]` is bytes 1..4. Valid indexes are
+ * 0 .. byteLength - size; any other int throws ValueError, a non-int TypeError (`isset()` and `??` just report it missing).
+ * Multi-byte values are little-endian. Writes convert like Tensor element writes: integers wrap to the width, floats round, and
+ * UInt64 values above PHP_INT_MAX read as negative ints. Writing to a read-only buffer throws Error. Obtained from a DataView
+ * property ($d->uint32 ...); cannot be instantiated.
+ *
+ * @property-read DType $dtype
+ *
+ * @implements \ArrayAccess<int, int|float>
+ */
+final class DataViewAccessor implements \ArrayAccess
+{
+    /** Whether $offset is a valid byte offset for a value of this type. */
+    public function offsetExists(mixed $offset): bool {}
+    /** The value at byte $offset. */
+    public function offsetGet(mixed $offset): int|float {}
+    /** Writes the value at byte $offset. */
+    public function offsetSet(mixed $offset, mixed $value): void {}
+    /** Always throws: bytes cannot be removed. */
+    public function offsetUnset(mixed $offset): void {}
 }
 
 /**

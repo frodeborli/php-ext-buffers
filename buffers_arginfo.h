@@ -1,5 +1,5 @@
 /* This is a generated file, edit the .stub.php file instead.
- * Stub hash: b26af3a02a37349ed6d77f699f3eb83d40ecaa4d */
+ * Stub hash: e6ac0d3b4620838b486da460c3937dcb3f72ef81 */
 
 ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_class_Buffers_DType_bits, 0, 0, IS_LONG, 0)
 ZEND_END_ARG_INFO()
@@ -218,6 +218,38 @@ ZEND_END_ARG_INFO()
 
 #define arginfo_class_Buffers_DataView_setFloat8E8M0FNU arginfo_class_Buffers_DataView_setFloat8E3M4
 
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_class_Buffers_DataView_getBytes, 0, 2, IS_STRING, 0)
+	ZEND_ARG_TYPE_INFO(0, offset, IS_LONG, 0)
+	ZEND_ARG_TYPE_INFO(0, length, IS_LONG, 0)
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_class_Buffers_DataView_setBytes, 0, 2, IS_VOID, 0)
+	ZEND_ARG_TYPE_INFO(0, offset, IS_LONG, 0)
+	ZEND_ARG_TYPE_INFO(0, bytes, IS_STRING, 0)
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_class_Buffers_DataView_fill, 0, 3, IS_VOID, 0)
+	ZEND_ARG_TYPE_INFO(0, offset, IS_LONG, 0)
+	ZEND_ARG_TYPE_INFO(0, length, IS_LONG, 0)
+	ZEND_ARG_TYPE_INFO(0, byte, IS_LONG, 0)
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_class_Buffers_DataView_copyBytes, 0, 3, IS_VOID, 0)
+	ZEND_ARG_TYPE_INFO(0, target, IS_LONG, 0)
+	ZEND_ARG_TYPE_INFO(0, source, IS_LONG, 0)
+	ZEND_ARG_TYPE_INFO(0, length, IS_LONG, 0)
+ZEND_END_ARG_INFO()
+
+#define arginfo_class_Buffers_DataViewAccessor_offsetExists arginfo_class_Buffers_Shape_offsetExists
+
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_MASK_EX(arginfo_class_Buffers_DataViewAccessor_offsetGet, 0, 1, MAY_BE_LONG|MAY_BE_DOUBLE)
+	ZEND_ARG_TYPE_INFO(0, offset, IS_MIXED, 0)
+ZEND_END_ARG_INFO()
+
+#define arginfo_class_Buffers_DataViewAccessor_offsetSet arginfo_class_Buffers_Shape_offsetSet
+
+#define arginfo_class_Buffers_DataViewAccessor_offsetUnset arginfo_class_Buffers_Shape_offsetUnset
+
 #define arginfo_class_Buffers_Tensor_count arginfo_class_Buffers_DType_bits
 
 #define arginfo_class_Buffers_Tensor_offsetExists arginfo_class_Buffers_Shape_offsetExists
@@ -332,6 +364,14 @@ ZEND_METHOD(Buffers_DataView, getFloat8E5M2FNUZ);
 ZEND_METHOD(Buffers_DataView, setFloat8E5M2FNUZ);
 ZEND_METHOD(Buffers_DataView, getFloat8E8M0FNU);
 ZEND_METHOD(Buffers_DataView, setFloat8E8M0FNU);
+ZEND_METHOD(Buffers_DataView, getBytes);
+ZEND_METHOD(Buffers_DataView, setBytes);
+ZEND_METHOD(Buffers_DataView, fill);
+ZEND_METHOD(Buffers_DataView, copyBytes);
+ZEND_METHOD(Buffers_DataViewAccessor, offsetExists);
+ZEND_METHOD(Buffers_DataViewAccessor, offsetGet);
+ZEND_METHOD(Buffers_DataViewAccessor, offsetSet);
+ZEND_METHOD(Buffers_DataViewAccessor, offsetUnset);
 ZEND_METHOD(Buffers_Tensor, count);
 ZEND_METHOD(Buffers_Tensor, offsetExists);
 ZEND_METHOD(Buffers_Tensor, offsetGet);
@@ -441,6 +481,18 @@ static const zend_function_entry class_Buffers_DataView_methods[] = {
 	ZEND_ME(Buffers_DataView, setFloat8E5M2FNUZ, arginfo_class_Buffers_DataView_setFloat8E5M2FNUZ, ZEND_ACC_PUBLIC)
 	ZEND_ME(Buffers_DataView, getFloat8E8M0FNU, arginfo_class_Buffers_DataView_getFloat8E8M0FNU, ZEND_ACC_PUBLIC)
 	ZEND_ME(Buffers_DataView, setFloat8E8M0FNU, arginfo_class_Buffers_DataView_setFloat8E8M0FNU, ZEND_ACC_PUBLIC)
+	ZEND_ME(Buffers_DataView, getBytes, arginfo_class_Buffers_DataView_getBytes, ZEND_ACC_PUBLIC)
+	ZEND_ME(Buffers_DataView, setBytes, arginfo_class_Buffers_DataView_setBytes, ZEND_ACC_PUBLIC)
+	ZEND_ME(Buffers_DataView, fill, arginfo_class_Buffers_DataView_fill, ZEND_ACC_PUBLIC)
+	ZEND_ME(Buffers_DataView, copyBytes, arginfo_class_Buffers_DataView_copyBytes, ZEND_ACC_PUBLIC)
+	ZEND_FE_END
+};
+
+static const zend_function_entry class_Buffers_DataViewAccessor_methods[] = {
+	ZEND_ME(Buffers_DataViewAccessor, offsetExists, arginfo_class_Buffers_DataViewAccessor_offsetExists, ZEND_ACC_PUBLIC)
+	ZEND_ME(Buffers_DataViewAccessor, offsetGet, arginfo_class_Buffers_DataViewAccessor_offsetGet, ZEND_ACC_PUBLIC)
+	ZEND_ME(Buffers_DataViewAccessor, offsetSet, arginfo_class_Buffers_DataViewAccessor_offsetSet, ZEND_ACC_PUBLIC)
+	ZEND_ME(Buffers_DataViewAccessor, offsetUnset, arginfo_class_Buffers_DataViewAccessor_offsetUnset, ZEND_ACC_PUBLIC)
 	ZEND_FE_END
 };
 

@@ -179,6 +179,15 @@ final class DataView {                              // single values at any byte
     public function __construct(Buffer $buffer, int $offset = 0, ?int $length = null);
     public function getFloat32(int $offset, bool $bigEndian = false): float;   // and Int8 ... Float64, BFloat16, Float16, Float8*
     public function setFloat32(int $offset, float $value, bool $bigEndian = false): void;
+    public function getBytes(int $offset, int $length): string;               // byte ranges, see DataView below
+    public function setBytes(int $offset, string $bytes): void;
+    public function fill(int $offset, int $length, int $byte): void;
+    public function copyBytes(int $target, int $source, int $length): void;  // overlap-safe
+    // read-only accessors, $d->uint32[$byteOffset]: DataViewAccessor $int8 ... $uint64, $float16, $bfloat16, $float32, $float64
+}
+
+final class DataViewAccessor implements ArrayAccess { // values of one type at any byte offset: $a[$byteOffset], isset($a[$byteOffset]), $a[$byteOffset] = x
+    // read-only: DType $dtype
 }
 ```
 
@@ -259,6 +268,47 @@ $n = $d->getUInt32(5, bigEndian: true);      // network byte order
   accessible, throws `Error`. Integers wrap to the width when set; `UInt64` values above `PHP_INT_MAX` read as negative ints, like `unpack()`.
   Floats round as `Tensor` element writes do. On 32-bit PHP, `Int64`, `UInt64` and `UInt32` throw `Error`.
 
+
+#### Byte ranges: `getBytes`, `setBytes`, `fill`, `copyBytes`
+
+```php
+$s = $d->getBytes(4, 16);                    // a copy of bytes 4..19 of the view, as a string
+$d->setBytes(4, $s);                         // writes all of $s at byte 4
+$d->fill(0, 64, 0);                          // memset: 64 zero bytes from byte 0
+$d->copyBytes(100, 96, 32);                  // memmove: 32 bytes from 96 to 100, overlap-safe
+```
+
+* Raw bytes: no encoding, no NUL termination, no byte order. One `memcpy` / `memset` / `memmove` each.
+* Offsets are relative to the view. A range must lie inside the view or the call throws `ValueError` naming the argument, before
+  anything is written: `setBytes` never truncates. Empty ranges are valid, also at `byteLength`.
+* `fill`'s `$byte` wraps to 0..255, like `setUInt8`. `copyBytes` takes the target first, like `memmove` and `setBytes`.
+* Writes on a read-only buffer throw `Error`, as does any access to memory that is not host accessible.
+
+#### Accessors: `$d->uint32[$byteOffset]`
+
+A method call costs more than index syntax, so for hot loops a `DataView` also hands out one **accessor** per type, read with
+index syntax where **the index is a byte offset**:
+
+```php
+$d   = new DataView($buf);
+$u32 = $d->uint32;                           // a DataViewAccessor; the same object on every read
+$x   = $u32[5];                              // the uint32 in bytes 5..8 of the view: $d->getUInt32(5)
+$u32[6] = 0xDEADBEEF;                        // bytes 6..9 (overlapping the previous one): $d->setUInt32(6, ...)
+```
+
+* Properties `int8`, `uint8`, `int16`, `uint16`, `int32`, `uint32`, `int64`, `uint64`, `float16`, `bfloat16`, `float32`, `float64`;
+  the accessor's `$dtype` says which. The one-byte float formats are only available through `get`/`set`.
+* **Little-endian.** Big-endian values go through `get`/`set` with `$bigEndian = true`.
+* Valid indexes are `0 .. byteLength - size`. Other ints throw `ValueError`, non-ints `TypeError`; `isset()` and `??` just say no/null,
+  and `empty()` looks at the value. `$a[] = x` and `unset($a[i])` throw.
+* Values convert as in [element access](#element-access): integers wrap, a float written to an integer type is truncated, floats round
+  to nearest even. Read-only buffers throw `Error` on write; memory that is not host accessible throws `Error` on access.
+* An accessor keeps the buffer alive and caches the address of the view's first byte, like a `Tensor`. Access is a type check, one
+  bounds check and a load or store through the engine's dimension handlers: no method call, and the same cost for every type.
+  It cannot be instantiated, cloned or serialized.
+
+This is what code that addresses memory by byte needs: binary formats, network protocols, and WebAssembly linear memory, where every
+load and store is a typed value at an arbitrary byte address.
 ### Shape
 
 `new Shape([2, 3])`; `$shape[-1]` counts from the end; an out-of-range index throws `ValueError`; `offsetSet`/`offsetUnset`
