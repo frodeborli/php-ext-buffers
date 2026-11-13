@@ -209,6 +209,64 @@ final class Buffer
 }
 
 /**
+ * Single values at any byte offset of a Buffer, like JavaScript's DataView over an ArrayBuffer: get<DType>($offset) and
+ * set<DType>($offset, $value) for every whole-byte dtype except Bool and the complex ones, named after the DType cases. $offset is in
+ * bytes from the start of the view, bounds-checked against its length (ValueError). Multi-byte values are **little-endian by default**
+ * (JavaScript defaults to big-endian); pass $bigEndian = true for big-endian. Integers wrap to the width when set; UInt64 values above
+ * PHP_INT_MAX read as negative ints (like unpack()). Floats round as Tensor element writes do. Setting on a read-only buffer throws Error,
+ * as does any access to memory that is not host accessible. Int64, UInt64 and UInt32 throw Error on 32-bit PHP.
+ *
+ * @property-read Buffer $buffer
+ * @property-read int $byteOffset where the view starts in the buffer
+ * @property-read int $byteLength
+ */
+final class DataView
+{
+    /** A window of $length bytes ($length null: to the end) from $offset of $buffer. ValueError if it does not fit. */
+    public function __construct(Buffer $buffer, int $offset = 0, ?int $length = null) {}
+    public function getInt8(int $offset): int {}
+    public function setInt8(int $offset, int $value): void {}
+    public function getUInt8(int $offset): int {}
+    public function setUInt8(int $offset, int $value): void {}
+    public function getInt16(int $offset, bool $bigEndian = false): int {}
+    public function setInt16(int $offset, int $value, bool $bigEndian = false): void {}
+    public function getInt32(int $offset, bool $bigEndian = false): int {}
+    public function setInt32(int $offset, int $value, bool $bigEndian = false): void {}
+    public function getInt64(int $offset, bool $bigEndian = false): int {}
+    public function setInt64(int $offset, int $value, bool $bigEndian = false): void {}
+    public function getUInt16(int $offset, bool $bigEndian = false): int {}
+    public function setUInt16(int $offset, int $value, bool $bigEndian = false): void {}
+    public function getUInt32(int $offset, bool $bigEndian = false): int {}
+    public function setUInt32(int $offset, int $value, bool $bigEndian = false): void {}
+    public function getUInt64(int $offset, bool $bigEndian = false): int {}
+    public function setUInt64(int $offset, int $value, bool $bigEndian = false): void {}
+    public function getFloat16(int $offset, bool $bigEndian = false): float {}
+    public function setFloat16(int $offset, float $value, bool $bigEndian = false): void {}
+    public function getBFloat16(int $offset, bool $bigEndian = false): float {}
+    public function setBFloat16(int $offset, float $value, bool $bigEndian = false): void {}
+    public function getFloat32(int $offset, bool $bigEndian = false): float {}
+    public function setFloat32(int $offset, float $value, bool $bigEndian = false): void {}
+    public function getFloat64(int $offset, bool $bigEndian = false): float {}
+    public function setFloat64(int $offset, float $value, bool $bigEndian = false): void {}
+    public function getFloat8E3M4(int $offset): float {}
+    public function setFloat8E3M4(int $offset, float $value): void {}
+    public function getFloat8E4M3(int $offset): float {}
+    public function setFloat8E4M3(int $offset, float $value): void {}
+    public function getFloat8E4M3B11FNUZ(int $offset): float {}
+    public function setFloat8E4M3B11FNUZ(int $offset, float $value): void {}
+    public function getFloat8E4M3FN(int $offset): float {}
+    public function setFloat8E4M3FN(int $offset, float $value): void {}
+    public function getFloat8E4M3FNUZ(int $offset): float {}
+    public function setFloat8E4M3FNUZ(int $offset, float $value): void {}
+    public function getFloat8E5M2(int $offset): float {}
+    public function setFloat8E5M2(int $offset, float $value): void {}
+    public function getFloat8E5M2FNUZ(int $offset): float {}
+    public function setFloat8E5M2FNUZ(int $offset, float $value): void {}
+    public function getFloat8E8M0FNU(int $offset): float {}
+    public function setFloat8E8M0FNU(int $offset, float $value): void {}
+}
+
+/**
  * An n-dimensional window onto a buffer: $v[$i][$j] chains one int offset per axis; partial chains
  * are sub-views of the same memory. Read-only properties (computed when read; reading them
  * allocates only what the value needs, never anything on the access path):

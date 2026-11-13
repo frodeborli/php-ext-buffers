@@ -204,7 +204,7 @@ ok              ok [2,3] [3,1]
 strided offset  ValueError: with the given strides and offset extends beyond the end of the buffer (24 bytes)
 bad dtype       ValueError: Invalid dtype 99
 beyond          ValueError: with the given strides and offset extends beyond the end of the buffer (24 bytes)
-misaligned      ValueError: must be a multiple of the element size (2 bytes)
+misaligned      ok [1] [1]
 neg dim         ValueError: must contain only non-negative values
 zero stride     ValueError: must contain only values of at least 1
 packed stride   ValueError: axis 0 of a packed Float6E3M2FN view has a stride of 3 elements = 18 bits, which is not a whole number of bytes; pass explicit strides that are multiples of 4 elements

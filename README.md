@@ -173,6 +173,13 @@ final class Tensor implements TensorInterface, Countable, ArrayAccess, IteratorA
     public function to(Device $device): Tensor;
     // count() = length of the first axis; foreach iterates the first axis; $v[i], isset($v[i]), $v[i] = x
 }
+
+final class DataView {                              // single values at any byte offset, see DataView below
+    // read-only: Buffer $buffer, int $byteOffset, int $byteLength
+    public function __construct(Buffer $buffer, int $offset = 0, ?int $length = null);
+    public function getFloat32(int $offset, bool $bigEndian = false): float;   // and Int8 ... Float64, BFloat16, Float16, Float8*
+    public function setFloat32(int $offset, float $value, bool $bigEndian = false): void;
+}
 ```
 
 ### `view()`
@@ -182,7 +189,10 @@ final class Tensor implements TensorInterface, Countable, ArrayAccess, IteratorA
   element** (see below).
 * `strides`: in elements, one per dimension, each at least 1 (negative and zero strides are rejected);
   `null` = C-contiguous. Overlapping strides are allowed.
-* `offset`: bytes, a multiple of the element size (any byte offset for the packed formats).
+* `offset`: bytes, any offset: a `Float32` at byte 1 can be viewed, read and written like any other (elements are loaded and stored
+  with `memcpy`, so alignment never matters to PHP code). Alignment matters only to native code that loads through typed pointers: it
+  checks the data pointer itself and may refuse an unaligned view (see [C API](#c-api)). For single values at any byte offset there is
+  [`DataView`](#dataview).
 * Everything is validated once, with overflow-safe arithmetic, so element access needs only a bounds check. A view
   keeps its buffer alive. Empty views (a dimension of 0) are valid.
 * On 32-bit PHP, `Int64`, `UInt64` and `UInt32` are rejected with a `ValueError` (their values do not fit a PHP
@@ -228,6 +238,26 @@ Its single element is the read-write property **`$v->value`**: `$v->value` reads
 conversion rules of the dtype (like `$v[$i] = 3` on a 1-D view). It is a virtual property with get and set hooks, so nothing
 is stored per view. On a view with axes (`ndim > 0`) both throw `Error("value is only available on 0-d views; index the view
 instead")`. Read-only buffers, memory that is not host accessible and pending buffers behave as they do for element access.
+
+### DataView
+
+`new DataView(Buffer $buffer, int $offset = 0, ?int $length = null)` reads and writes single values at any byte offset of a buffer, like
+JavaScript's `DataView` over an `ArrayBuffer` (`Buffer` itself stays minimal). Read-only properties `$buffer`, `$byteOffset`, `$byteLength`.
+
+```php
+$d = new DataView($buf, 16);                 // bytes 16 .. end of $buf
+$d->setFloat32(1, 1.5);                      // any offset, relative to the view
+$x = $d->getFloat32(1);                      // 1.5
+$n = $d->getUInt32(5, bigEndian: true);      // network byte order
+```
+
+* `get<T>(int $offset, bool $bigEndian = false)` and `set<T>(int $offset, $value, bool $bigEndian = false)` for `Int16`, `Int32`, `Int64`,
+  `UInt16`, `UInt32`, `UInt64`, `Float16`, `BFloat16`, `Float32` and `Float64`; `Int8`, `UInt8` and the one-byte floats (`Float8E3M4` ...
+  `Float8E8M0FNU`) take no byte order. The names are the `DType` case names.
+* **Little-endian by default** (JavaScript's default is big-endian); `$bigEndian = true` matches `pack()`'s `n`/`N`/`J`/`E`/`G` formats.
+* `$offset` is bounds-checked against the view (`ValueError`); setting on a read-only buffer, and any access to memory that is not host
+  accessible, throws `Error`. Integers wrap to the width when set; `UInt64` values above `PHP_INT_MAX` read as negative ints, like `unpack()`.
+  Floats round as `Tensor` element writes do. On 32-bit PHP, `Int64`, `UInt64` and `UInt32` throw `Error`.
 
 ### Shape
 
@@ -398,10 +428,12 @@ and `buffers_device_dlpack()`).
   with `ndim` 0. The device is the buffer's: `kDLCPU` for host memory and for a mapped file, a foreign device's own type and id passed through
   unchanged (the pointer is an opaque handle and is never dereferenced). An unmapped file buffer cannot be exported ("transfer to the host
   first with to()"). The export holds the buffer; the deleter releases it. A pending buffer is made ready first (see [Readiness](#readiness)).
+  A view at an offset that is not a multiple of the element size is exported as it is: DLPack allows any `byte_offset`, but consumers that load through typed
+  pointers may reject it.
 * **Import** wraps the foreign memory in a `Buffer` and returns a `Tensor`; the tensor's deleter runs exactly once, when that buffer is
   freed (and, if the import is rejected, the caller still owns the tensor). For host-accessible tensors the buffer covers exactly the
   tensor's extent, so `$v->offset` starts at 0; for other devices the opaque data pointer and byte offset are kept. Any device, one lane,
-  0-8 dimensions, strides of at least 1 and (for host memory) data aligned to the element size are imported; **padded** sub-byte tensors
+  0-8 dimensions and strides of at least 1 are imported (host data need not be aligned: the view is then unaligned); **padded** sub-byte tensors
   are rejected; versions below 1.2 may pass NULL strides (compact row-major). Anything else throws `ValueError` with the reason.
   Devices that are not on the CPU become a `ForeignDevice` (host-accessible only for CUDA-host, ROCm-host and CUDA-managed).
 * The DLPack device type of the `Device` class of another extension is declared with `buffers_register_device_type()`.
@@ -418,7 +450,7 @@ and has phpt tests; read it as the example.
 |------|-----------|
 | classes, dtypes | `buffers_get_class()`, `buffers_dtype_describe()`, `buffers_dtype_to_zval()`, `buffers_dtype_from_object()`, `buffers_dtype_from_dlpack()` |
 | devices | `buffers_cpu_device()`, `buffers_file_device()`, `buffers_implement_device()` (declare `$name`, `$id`, `$hostAccessible` with three get hooks), `buffers_register_device_type()`, `buffers_device_dlpack()`, `buffers_register_transfer()`, `buffers_tensor_to()` |
-| tensors | `buffers_is_tensor()`, `buffers_tensor_get_info()` (data pointer, dtype, ndim, shape, strides in elements, byte offset, buffer object, writable), `buffers_tensor_create()` (validated exactly like `view()`) |
+| tensors | `buffers_is_tensor()`, `buffers_tensor_get_info()` (data pointer, dtype, ndim, shape, strides in elements, byte offset, buffer object, writable; views may start at any byte offset and the pointer is handed over as it is: strides are in elements, so the tensor is aligned exactly when `data % size == 0`, which a consumer that needs alignment checks itself), `buffers_tensor_create()` (validated exactly like `view()`) |
 | buffers | `buffers_is_buffer()`, `buffers_buffer_get_info()` (base, length, writable, host accessible, device), `buffers_buffer_create_foreign()` (memory + deleter + device), `buffers_buffer_create_owned()` (memory kept alive by a PHP object: holds a reference to the owner and releases it on free, no deleter), `buffers_buffer_file_origin()` (the path and offset of a mapped `Buffer::fromFile()` buffer, additive, no version bump: refer to the bytes instead of copying them), `buffers_hold()`, `buffers_release()` |
 | shapes, tensors | `buffers_shape_create()`, `buffers_shape_dims()`, `buffers_implement_tensor_interface()` (declare the virtual properties of `TensorInterface` with three get hooks) |
 | elements | `buffers_convert()` (n elements between any two dtypes, strided, every format: integers wrap, floats round like `ml_dtypes`; for extensions that compute on elements) |

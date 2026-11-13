@@ -91,9 +91,9 @@ nested        Error: A 0-d view has no axes
 arguments
 strides for 0 dims ValueError: Buffers\Buffer::view(): Argument #3 ($strides) must have one entry per dimension (0)
 offset at the end  ValueError: Buffers\Buffer::view(): Argument #2 ($shape) with the given strides and offset extends beyond the end of the buffer (16 bytes)
-past the end       ValueError: Buffers\Buffer::view(): Argument #4 ($offset) must be a multiple of the element size (4 bytes)
+past the end       ValueError: Buffers\Buffer::view(): Argument #2 ($shape) with the given strides and offset extends beyond the end of the buffer (16 bytes)
 last byte          ok ndim=0 offset=15
-misaligned         ValueError: Buffers\Buffer::view(): Argument #4 ($offset) must be a multiple of the element size (4 bytes)
+misaligned         ok ndim=0 offset=2
 packed fp6         ok ndim=0 offset=15
 packed fp4 at end  ValueError: Buffers\Buffer::view(): Argument #2 ($shape) with the given strides and offset extends beyond the end of the buffer (16 bytes)
 Buffers\Buffer::view(): Argument #2 ($shape) with the given strides and offset extends beyond the end of the buffer (0 bytes)

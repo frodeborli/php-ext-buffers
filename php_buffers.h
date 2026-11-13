@@ -251,6 +251,9 @@ void buf_view_extent(const buf_view *v, uint64_t *first, uint64_t *len);
  * element in readable memory; NULL after throwing */
 zend_object *buf_view_copy_host(const buf_view *v, const uint8_t *src);
 
+/* dataview.c */
+void buf_dataview_minit(void);
+
 /* capsule.c: DLPack for the C API */
 zend_result buf_view_export(zend_object *view, DLManagedTensorVersioned **out);
 zend_object *buf_view_import(DLManagedTensorVersioned *t);

@@ -671,6 +671,68 @@ PHP_FUNCTION(bat_export)
 	t->deleter(t);
 }
 
+/* the elements of host memory in C order, their bytes concatenated (whole-byte dtypes; strides in elements) */
+static void append_elements(smart_str *out, int ndim, const int64_t *shape, const int64_t *strides, int axis, const uint8_t *p, size_t size)
+{
+	if (axis == ndim) {
+		smart_str_appendl(out, (const char *)p, size);
+		return;
+	}
+	for (int64_t i = 0; i < shape[axis]; i++) append_elements(out, ndim, shape, strides, axis + 1, p + i * strides[axis] * (int64_t)size, size);
+}
+
+static void add_elements(zval *arr, int ndim, const int64_t *shape, const int64_t *strides, const uint8_t *p, size_t size)
+{
+	smart_str el = {0};
+
+	add_assoc_bool(arr, "data_aligned", (uintptr_t)p % size == 0);
+	append_elements(&el, ndim, shape, strides, 0, p, size);
+	smart_str_0(&el);
+	if (el.s) add_assoc_str(arr, "elements", el.s);
+	else add_assoc_string(arr, "elements", "");
+}
+
+/* bat_tensor_bytes(Tensor $v): what buffers_tensor_get_info() hands out for a host view of a whole-byte dtype, with the elements read through
+ * the pointer (bytewise, so at any address) */
+PHP_FUNCTION(bat_tensor_bytes)
+{
+	zend_object *v;
+	buffers_tensor_info i;
+	buffers_buffer_info bi;
+
+	ZEND_PARSE_PARAMETERS_START(1, 1)
+		Z_PARAM_OBJ(v)
+	ZEND_PARSE_PARAMETERS_END();
+	if (buffers_tensor_get_info(v, &i) == FAILURE || buffers_buffer_get_info(i.buffer, &bi) == FAILURE || buffers_buffer_ensure_ready(i.buffer) == FAILURE) {
+		RETURN_THROWS();
+	}
+	array_init(return_value);
+	add_assoc_bool(return_value, "writable", i.writable);
+	add_assoc_long(return_value, "byte_offset", i.byte_offset);
+	list_i64(return_value, "strides", i.strides, i.ndim);
+	add_elements(return_value, i.ndim, i.shape, i.strides, i.data, buffers_dtype_describe(i.dtype)->size);
+}
+
+/* bat_export_bytes(Tensor $v): a DLPack export of a host view of a whole-byte dtype, with the elements read through it, then the deleter */
+PHP_FUNCTION(bat_export_bytes)
+{
+	zend_object *v;
+	DLManagedTensorVersioned *t;
+	DLTensor *d;
+
+	ZEND_PARSE_PARAMETERS_START(1, 1)
+		Z_PARAM_OBJ(v)
+	ZEND_PARSE_PARAMETERS_END();
+	if (buffers_dlpack_export(v, &t) == FAILURE) RETURN_THROWS();
+	d = &t->dl_tensor;
+	array_init(return_value);
+	add_assoc_bool(return_value, "read_only", (t->flags & DLPACK_FLAG_BITMASK_READ_ONLY) != 0);
+	add_assoc_long(return_value, "byte_offset", (zend_long)d->byte_offset);
+	list_i64(return_value, "strides", d->strides, d->ndim);
+	add_elements(return_value, d->ndim, d->shape, d->strides, (const uint8_t *)d->data + d->byte_offset, d->dtype.bits / 8);
+	t->deleter(t);
+}
+
 /* bat_roundtrip(Tensor $v): export through the C API and import the tensor again */
 PHP_FUNCTION(bat_roundtrip)
 {
@@ -936,6 +998,8 @@ static const zend_function_entry functions[] = {
 	PHP_FE(bat_dtype_info, ai_bat_dtype_info)
 	PHP_FE(bat_device_buffer, ai_bat_device_buffer)
 	PHP_FE(bat_export, ai_bat_export)
+	PHP_FE(bat_tensor_bytes, ai_bat_export)
+	PHP_FE(bat_export_bytes, ai_bat_export)
 	PHP_FE(bat_roundtrip, ai_bat_roundtrip)
 	PHP_FE(bat_shape, ai_bat_shape)
 	PHP_FE(bat_shape_dims, ai_bat_shape_dims)

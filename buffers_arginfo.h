@@ -1,5 +1,5 @@
 /* This is a generated file, edit the .stub.php file instead.
- * Stub hash: 2bfd80ba29c7f66b70c49d2a37b2b9f4e29f935e */
+ * Stub hash: b26af3a02a37349ed6d77f699f3eb83d40ecaa4d */
 
 ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_class_Buffers_DType_bits, 0, 0, IS_LONG, 0)
 ZEND_END_ARG_INFO()
@@ -108,6 +108,116 @@ ZEND_END_ARG_INFO()
 ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_class_Buffers_Buffer_toString, 0, 0, IS_STRING, 0)
 ZEND_END_ARG_INFO()
 
+ZEND_BEGIN_ARG_INFO_EX(arginfo_class_Buffers_DataView___construct, 0, 0, 1)
+	ZEND_ARG_OBJ_INFO(0, buffer, Buffers\\Buffer, 0)
+	ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, offset, IS_LONG, 0, "0")
+	ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, length, IS_LONG, 1, "null")
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_class_Buffers_DataView_getInt8, 0, 1, IS_LONG, 0)
+	ZEND_ARG_TYPE_INFO(0, offset, IS_LONG, 0)
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_class_Buffers_DataView_setInt8, 0, 2, IS_VOID, 0)
+	ZEND_ARG_TYPE_INFO(0, offset, IS_LONG, 0)
+	ZEND_ARG_TYPE_INFO(0, value, IS_LONG, 0)
+ZEND_END_ARG_INFO()
+
+#define arginfo_class_Buffers_DataView_getUInt8 arginfo_class_Buffers_DataView_getInt8
+
+#define arginfo_class_Buffers_DataView_setUInt8 arginfo_class_Buffers_DataView_setInt8
+
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_class_Buffers_DataView_getInt16, 0, 1, IS_LONG, 0)
+	ZEND_ARG_TYPE_INFO(0, offset, IS_LONG, 0)
+	ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, bigEndian, _IS_BOOL, 0, "false")
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_class_Buffers_DataView_setInt16, 0, 2, IS_VOID, 0)
+	ZEND_ARG_TYPE_INFO(0, offset, IS_LONG, 0)
+	ZEND_ARG_TYPE_INFO(0, value, IS_LONG, 0)
+	ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, bigEndian, _IS_BOOL, 0, "false")
+ZEND_END_ARG_INFO()
+
+#define arginfo_class_Buffers_DataView_getInt32 arginfo_class_Buffers_DataView_getInt16
+
+#define arginfo_class_Buffers_DataView_setInt32 arginfo_class_Buffers_DataView_setInt16
+
+#define arginfo_class_Buffers_DataView_getInt64 arginfo_class_Buffers_DataView_getInt16
+
+#define arginfo_class_Buffers_DataView_setInt64 arginfo_class_Buffers_DataView_setInt16
+
+#define arginfo_class_Buffers_DataView_getUInt16 arginfo_class_Buffers_DataView_getInt16
+
+#define arginfo_class_Buffers_DataView_setUInt16 arginfo_class_Buffers_DataView_setInt16
+
+#define arginfo_class_Buffers_DataView_getUInt32 arginfo_class_Buffers_DataView_getInt16
+
+#define arginfo_class_Buffers_DataView_setUInt32 arginfo_class_Buffers_DataView_setInt16
+
+#define arginfo_class_Buffers_DataView_getUInt64 arginfo_class_Buffers_DataView_getInt16
+
+#define arginfo_class_Buffers_DataView_setUInt64 arginfo_class_Buffers_DataView_setInt16
+
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_class_Buffers_DataView_getFloat16, 0, 1, IS_DOUBLE, 0)
+	ZEND_ARG_TYPE_INFO(0, offset, IS_LONG, 0)
+	ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, bigEndian, _IS_BOOL, 0, "false")
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_class_Buffers_DataView_setFloat16, 0, 2, IS_VOID, 0)
+	ZEND_ARG_TYPE_INFO(0, offset, IS_LONG, 0)
+	ZEND_ARG_TYPE_INFO(0, value, IS_DOUBLE, 0)
+	ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, bigEndian, _IS_BOOL, 0, "false")
+ZEND_END_ARG_INFO()
+
+#define arginfo_class_Buffers_DataView_getBFloat16 arginfo_class_Buffers_DataView_getFloat16
+
+#define arginfo_class_Buffers_DataView_setBFloat16 arginfo_class_Buffers_DataView_setFloat16
+
+#define arginfo_class_Buffers_DataView_getFloat32 arginfo_class_Buffers_DataView_getFloat16
+
+#define arginfo_class_Buffers_DataView_setFloat32 arginfo_class_Buffers_DataView_setFloat16
+
+#define arginfo_class_Buffers_DataView_getFloat64 arginfo_class_Buffers_DataView_getFloat16
+
+#define arginfo_class_Buffers_DataView_setFloat64 arginfo_class_Buffers_DataView_setFloat16
+
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_class_Buffers_DataView_getFloat8E3M4, 0, 1, IS_DOUBLE, 0)
+	ZEND_ARG_TYPE_INFO(0, offset, IS_LONG, 0)
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_class_Buffers_DataView_setFloat8E3M4, 0, 2, IS_VOID, 0)
+	ZEND_ARG_TYPE_INFO(0, offset, IS_LONG, 0)
+	ZEND_ARG_TYPE_INFO(0, value, IS_DOUBLE, 0)
+ZEND_END_ARG_INFO()
+
+#define arginfo_class_Buffers_DataView_getFloat8E4M3 arginfo_class_Buffers_DataView_getFloat8E3M4
+
+#define arginfo_class_Buffers_DataView_setFloat8E4M3 arginfo_class_Buffers_DataView_setFloat8E3M4
+
+#define arginfo_class_Buffers_DataView_getFloat8E4M3B11FNUZ arginfo_class_Buffers_DataView_getFloat8E3M4
+
+#define arginfo_class_Buffers_DataView_setFloat8E4M3B11FNUZ arginfo_class_Buffers_DataView_setFloat8E3M4
+
+#define arginfo_class_Buffers_DataView_getFloat8E4M3FN arginfo_class_Buffers_DataView_getFloat8E3M4
+
+#define arginfo_class_Buffers_DataView_setFloat8E4M3FN arginfo_class_Buffers_DataView_setFloat8E3M4
+
+#define arginfo_class_Buffers_DataView_getFloat8E4M3FNUZ arginfo_class_Buffers_DataView_getFloat8E3M4
+
+#define arginfo_class_Buffers_DataView_setFloat8E4M3FNUZ arginfo_class_Buffers_DataView_setFloat8E3M4
+
+#define arginfo_class_Buffers_DataView_getFloat8E5M2 arginfo_class_Buffers_DataView_getFloat8E3M4
+
+#define arginfo_class_Buffers_DataView_setFloat8E5M2 arginfo_class_Buffers_DataView_setFloat8E3M4
+
+#define arginfo_class_Buffers_DataView_getFloat8E5M2FNUZ arginfo_class_Buffers_DataView_getFloat8E3M4
+
+#define arginfo_class_Buffers_DataView_setFloat8E5M2FNUZ arginfo_class_Buffers_DataView_setFloat8E3M4
+
+#define arginfo_class_Buffers_DataView_getFloat8E8M0FNU arginfo_class_Buffers_DataView_getFloat8E3M4
+
+#define arginfo_class_Buffers_DataView_setFloat8E8M0FNU arginfo_class_Buffers_DataView_setFloat8E3M4
+
 #define arginfo_class_Buffers_Tensor_count arginfo_class_Buffers_DType_bits
 
 #define arginfo_class_Buffers_Tensor_offsetExists arginfo_class_Buffers_Shape_offsetExists
@@ -181,6 +291,47 @@ ZEND_METHOD(Buffers_Buffer, readOnly);
 ZEND_METHOD(Buffers_Buffer, isHostAccessible);
 ZEND_METHOD(Buffers_Buffer, view);
 ZEND_METHOD(Buffers_Buffer, toString);
+ZEND_METHOD(Buffers_DataView, __construct);
+ZEND_METHOD(Buffers_DataView, getInt8);
+ZEND_METHOD(Buffers_DataView, setInt8);
+ZEND_METHOD(Buffers_DataView, getUInt8);
+ZEND_METHOD(Buffers_DataView, setUInt8);
+ZEND_METHOD(Buffers_DataView, getInt16);
+ZEND_METHOD(Buffers_DataView, setInt16);
+ZEND_METHOD(Buffers_DataView, getInt32);
+ZEND_METHOD(Buffers_DataView, setInt32);
+ZEND_METHOD(Buffers_DataView, getInt64);
+ZEND_METHOD(Buffers_DataView, setInt64);
+ZEND_METHOD(Buffers_DataView, getUInt16);
+ZEND_METHOD(Buffers_DataView, setUInt16);
+ZEND_METHOD(Buffers_DataView, getUInt32);
+ZEND_METHOD(Buffers_DataView, setUInt32);
+ZEND_METHOD(Buffers_DataView, getUInt64);
+ZEND_METHOD(Buffers_DataView, setUInt64);
+ZEND_METHOD(Buffers_DataView, getFloat16);
+ZEND_METHOD(Buffers_DataView, setFloat16);
+ZEND_METHOD(Buffers_DataView, getBFloat16);
+ZEND_METHOD(Buffers_DataView, setBFloat16);
+ZEND_METHOD(Buffers_DataView, getFloat32);
+ZEND_METHOD(Buffers_DataView, setFloat32);
+ZEND_METHOD(Buffers_DataView, getFloat64);
+ZEND_METHOD(Buffers_DataView, setFloat64);
+ZEND_METHOD(Buffers_DataView, getFloat8E3M4);
+ZEND_METHOD(Buffers_DataView, setFloat8E3M4);
+ZEND_METHOD(Buffers_DataView, getFloat8E4M3);
+ZEND_METHOD(Buffers_DataView, setFloat8E4M3);
+ZEND_METHOD(Buffers_DataView, getFloat8E4M3B11FNUZ);
+ZEND_METHOD(Buffers_DataView, setFloat8E4M3B11FNUZ);
+ZEND_METHOD(Buffers_DataView, getFloat8E4M3FN);
+ZEND_METHOD(Buffers_DataView, setFloat8E4M3FN);
+ZEND_METHOD(Buffers_DataView, getFloat8E4M3FNUZ);
+ZEND_METHOD(Buffers_DataView, setFloat8E4M3FNUZ);
+ZEND_METHOD(Buffers_DataView, getFloat8E5M2);
+ZEND_METHOD(Buffers_DataView, setFloat8E5M2);
+ZEND_METHOD(Buffers_DataView, getFloat8E5M2FNUZ);
+ZEND_METHOD(Buffers_DataView, setFloat8E5M2FNUZ);
+ZEND_METHOD(Buffers_DataView, getFloat8E8M0FNU);
+ZEND_METHOD(Buffers_DataView, setFloat8E8M0FNU);
 ZEND_METHOD(Buffers_Tensor, count);
 ZEND_METHOD(Buffers_Tensor, offsetExists);
 ZEND_METHOD(Buffers_Tensor, offsetGet);
@@ -245,6 +396,51 @@ static const zend_function_entry class_Buffers_Buffer_methods[] = {
 	ZEND_ME(Buffers_Buffer, isHostAccessible, arginfo_class_Buffers_Buffer_isHostAccessible, ZEND_ACC_PUBLIC)
 	ZEND_ME(Buffers_Buffer, view, arginfo_class_Buffers_Buffer_view, ZEND_ACC_PUBLIC)
 	ZEND_ME(Buffers_Buffer, toString, arginfo_class_Buffers_Buffer_toString, ZEND_ACC_PUBLIC)
+	ZEND_FE_END
+};
+
+static const zend_function_entry class_Buffers_DataView_methods[] = {
+	ZEND_ME(Buffers_DataView, __construct, arginfo_class_Buffers_DataView___construct, ZEND_ACC_PUBLIC)
+	ZEND_ME(Buffers_DataView, getInt8, arginfo_class_Buffers_DataView_getInt8, ZEND_ACC_PUBLIC)
+	ZEND_ME(Buffers_DataView, setInt8, arginfo_class_Buffers_DataView_setInt8, ZEND_ACC_PUBLIC)
+	ZEND_ME(Buffers_DataView, getUInt8, arginfo_class_Buffers_DataView_getUInt8, ZEND_ACC_PUBLIC)
+	ZEND_ME(Buffers_DataView, setUInt8, arginfo_class_Buffers_DataView_setUInt8, ZEND_ACC_PUBLIC)
+	ZEND_ME(Buffers_DataView, getInt16, arginfo_class_Buffers_DataView_getInt16, ZEND_ACC_PUBLIC)
+	ZEND_ME(Buffers_DataView, setInt16, arginfo_class_Buffers_DataView_setInt16, ZEND_ACC_PUBLIC)
+	ZEND_ME(Buffers_DataView, getInt32, arginfo_class_Buffers_DataView_getInt32, ZEND_ACC_PUBLIC)
+	ZEND_ME(Buffers_DataView, setInt32, arginfo_class_Buffers_DataView_setInt32, ZEND_ACC_PUBLIC)
+	ZEND_ME(Buffers_DataView, getInt64, arginfo_class_Buffers_DataView_getInt64, ZEND_ACC_PUBLIC)
+	ZEND_ME(Buffers_DataView, setInt64, arginfo_class_Buffers_DataView_setInt64, ZEND_ACC_PUBLIC)
+	ZEND_ME(Buffers_DataView, getUInt16, arginfo_class_Buffers_DataView_getUInt16, ZEND_ACC_PUBLIC)
+	ZEND_ME(Buffers_DataView, setUInt16, arginfo_class_Buffers_DataView_setUInt16, ZEND_ACC_PUBLIC)
+	ZEND_ME(Buffers_DataView, getUInt32, arginfo_class_Buffers_DataView_getUInt32, ZEND_ACC_PUBLIC)
+	ZEND_ME(Buffers_DataView, setUInt32, arginfo_class_Buffers_DataView_setUInt32, ZEND_ACC_PUBLIC)
+	ZEND_ME(Buffers_DataView, getUInt64, arginfo_class_Buffers_DataView_getUInt64, ZEND_ACC_PUBLIC)
+	ZEND_ME(Buffers_DataView, setUInt64, arginfo_class_Buffers_DataView_setUInt64, ZEND_ACC_PUBLIC)
+	ZEND_ME(Buffers_DataView, getFloat16, arginfo_class_Buffers_DataView_getFloat16, ZEND_ACC_PUBLIC)
+	ZEND_ME(Buffers_DataView, setFloat16, arginfo_class_Buffers_DataView_setFloat16, ZEND_ACC_PUBLIC)
+	ZEND_ME(Buffers_DataView, getBFloat16, arginfo_class_Buffers_DataView_getBFloat16, ZEND_ACC_PUBLIC)
+	ZEND_ME(Buffers_DataView, setBFloat16, arginfo_class_Buffers_DataView_setBFloat16, ZEND_ACC_PUBLIC)
+	ZEND_ME(Buffers_DataView, getFloat32, arginfo_class_Buffers_DataView_getFloat32, ZEND_ACC_PUBLIC)
+	ZEND_ME(Buffers_DataView, setFloat32, arginfo_class_Buffers_DataView_setFloat32, ZEND_ACC_PUBLIC)
+	ZEND_ME(Buffers_DataView, getFloat64, arginfo_class_Buffers_DataView_getFloat64, ZEND_ACC_PUBLIC)
+	ZEND_ME(Buffers_DataView, setFloat64, arginfo_class_Buffers_DataView_setFloat64, ZEND_ACC_PUBLIC)
+	ZEND_ME(Buffers_DataView, getFloat8E3M4, arginfo_class_Buffers_DataView_getFloat8E3M4, ZEND_ACC_PUBLIC)
+	ZEND_ME(Buffers_DataView, setFloat8E3M4, arginfo_class_Buffers_DataView_setFloat8E3M4, ZEND_ACC_PUBLIC)
+	ZEND_ME(Buffers_DataView, getFloat8E4M3, arginfo_class_Buffers_DataView_getFloat8E4M3, ZEND_ACC_PUBLIC)
+	ZEND_ME(Buffers_DataView, setFloat8E4M3, arginfo_class_Buffers_DataView_setFloat8E4M3, ZEND_ACC_PUBLIC)
+	ZEND_ME(Buffers_DataView, getFloat8E4M3B11FNUZ, arginfo_class_Buffers_DataView_getFloat8E4M3B11FNUZ, ZEND_ACC_PUBLIC)
+	ZEND_ME(Buffers_DataView, setFloat8E4M3B11FNUZ, arginfo_class_Buffers_DataView_setFloat8E4M3B11FNUZ, ZEND_ACC_PUBLIC)
+	ZEND_ME(Buffers_DataView, getFloat8E4M3FN, arginfo_class_Buffers_DataView_getFloat8E4M3FN, ZEND_ACC_PUBLIC)
+	ZEND_ME(Buffers_DataView, setFloat8E4M3FN, arginfo_class_Buffers_DataView_setFloat8E4M3FN, ZEND_ACC_PUBLIC)
+	ZEND_ME(Buffers_DataView, getFloat8E4M3FNUZ, arginfo_class_Buffers_DataView_getFloat8E4M3FNUZ, ZEND_ACC_PUBLIC)
+	ZEND_ME(Buffers_DataView, setFloat8E4M3FNUZ, arginfo_class_Buffers_DataView_setFloat8E4M3FNUZ, ZEND_ACC_PUBLIC)
+	ZEND_ME(Buffers_DataView, getFloat8E5M2, arginfo_class_Buffers_DataView_getFloat8E5M2, ZEND_ACC_PUBLIC)
+	ZEND_ME(Buffers_DataView, setFloat8E5M2, arginfo_class_Buffers_DataView_setFloat8E5M2, ZEND_ACC_PUBLIC)
+	ZEND_ME(Buffers_DataView, getFloat8E5M2FNUZ, arginfo_class_Buffers_DataView_getFloat8E5M2FNUZ, ZEND_ACC_PUBLIC)
+	ZEND_ME(Buffers_DataView, setFloat8E5M2FNUZ, arginfo_class_Buffers_DataView_setFloat8E5M2FNUZ, ZEND_ACC_PUBLIC)
+	ZEND_ME(Buffers_DataView, getFloat8E8M0FNU, arginfo_class_Buffers_DataView_getFloat8E8M0FNU, ZEND_ACC_PUBLIC)
+	ZEND_ME(Buffers_DataView, setFloat8E8M0FNU, arginfo_class_Buffers_DataView_setFloat8E8M0FNU, ZEND_ACC_PUBLIC)
 	ZEND_FE_END
 };
 

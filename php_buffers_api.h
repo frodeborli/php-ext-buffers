@@ -185,7 +185,7 @@ BUFFERS_API zend_result buffers_buffer_ensure_ready(zend_object *buffer);
 /* ---- views ----------------------------------------------------------------------------- */
 
 typedef struct {
-	uint8_t *data;                       /* address of element 0 (buffer base + byte_offset) */
+	uint8_t *data;                       /* address of element 0 (buffer base + byte_offset); any address, see below */
 	int dtype;                           /* BUFFERS_DT_* */
 	int ndim;                            /* 0 to BUFFERS_MAX_NDIM */
 	int64_t shape[BUFFERS_MAX_NDIM];
@@ -196,7 +196,12 @@ typedef struct {
 } buffers_tensor_info;
 
 BUFFERS_API bool buffers_is_tensor(const zend_object *o);
-/* Does not wait for readiness: call buffers_buffer_ensure_ready(info.buffer) before reading the data. */
+/* Alignment: a view may start at any byte offset (Buffer::view(), buffers_tensor_create(), a DLPack import), so `data` need not be a
+ * multiple of the element size. Strides are in elements, so a tensor is aligned (every element at a multiple of its size) exactly when
+ * size <= 1 || (uintptr_t)info.data % buffers_dtype_describe(info.dtype)->size == 0 (packed dtypes have size 0: always byte aligned).
+ * A consumer that loads elements through typed pointers (float *, SIMD) checks that itself and refuses, copies or uses memcpy;
+ * buffers_convert() works at any address.
+ * Does not wait for readiness: call buffers_buffer_ensure_ready(info.buffer) before reading the data. */
 BUFFERS_API zend_result buffers_tensor_get_info(zend_object *view, buffers_tensor_info *out);
 
 /* A Tensor over `buffer`, validated exactly like Buffer::view(): `strides` in elements
@@ -226,9 +231,10 @@ BUFFERS_API zend_object *buffers_tensor_to(zend_object *view, zend_object *devic
 /* ---- DLPack ---------------------------------------------------------------------------- */
 
 /* Exports a view. The tensor is malloc'd; whoever ends up owning it calls its deleter exactly once.
- * Waits for readiness first. The view's buffer is held until the deleter runs. */
+ * Waits for readiness first. The view's buffer is held until the deleter runs. An unaligned view (see above) is exported as it is:
+ * DLPack allows any byte_offset, but data + byte_offset is then not a multiple of the element size, and consumers may reject it. */
 BUFFERS_API zend_result buffers_dlpack_export(zend_object *view, DLManagedTensorVersioned **out);
-/* Imports a tensor of any device. On success the tensor is owned by the returned view's Buffer (its
+/* Imports a tensor of any device; host data need not be aligned to the element size. On success the tensor is owned by the returned view's Buffer (its
  * deleter runs when that buffer is freed) and a new Tensor reference is returned; on failure an
  * exception is thrown, NULL is returned and the caller still owns the tensor. */
 BUFFERS_API zend_object *buffers_dlpack_import(DLManagedTensorVersioned *tensor);

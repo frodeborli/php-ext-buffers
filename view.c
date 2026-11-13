@@ -749,9 +749,6 @@ zend_object *buf_view_make(zend_object *bufobj, int dt, int ndim, const int64_t 
 	if (offset < 0 || (uint64_t)offset > b->len) {
 		FAIL(4, "must be between 0 and the byte length of the buffer");
 	}
-	if (!packed && offset % size) {
-		FAIL(4, "must be a multiple of the element size (%d bytes)", (int)size);
-	}
 	for (int i = 0; i < ndim; i++) {
 		if (shape_in[i] < 0) {
 			FAIL(2, "must contain only non-negative values");
@@ -869,7 +866,7 @@ void buf_buffer_view_impl(zend_object *bufobj, INTERNAL_FUNCTION_PARAMETERS)
 
 	if (!shape_zv || Z_TYPE_P(shape_zv) == IS_NULL) {
 		/* with an offset that buf_view_make() is about to reject, any shape will do */
-		if (offset >= 0 && (uint64_t)offset <= b->len && (packed || offset % buf_dtypes[dt].size == 0)) {
+		if (offset >= 0 && (uint64_t)offset <= b->len) {
 			uint64_t rest = b->len - (uint64_t)offset;
 
 			if (packed) {

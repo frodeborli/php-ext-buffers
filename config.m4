@@ -12,7 +12,7 @@ PHP_ARG_WITH([buffers-gd],
 
 if test "$PHP_BUFFERS" != "no"; then
   AC_DEFINE(HAVE_BUFFERS, 1, [ Have buffers support ])
-  buffers_sources="buffers.c dtype.c device.c shape.c buffer.c props.c view.c capsule.c transfer.c convert.c api.c"
+  buffers_sources="buffers.c dtype.c device.c shape.c buffer.c props.c view.c capsule.c transfer.c convert.c api.c dataview.c"
 
   if test "$PHP_BUFFERS_GD" != "no"; then
     AC_MSG_CHECKING([for gd.h])

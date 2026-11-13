@@ -33,6 +33,7 @@ PHP_MINIT_FUNCTION(buffers)
 	buf_shape_minit();
 	buf_buffer_minit();
 	buf_view_minit();
+	buf_dataview_minit();
 	return SUCCESS;
 }
 

@@ -71,8 +71,8 @@ too big 2d             ValueError: Buffers\Buffer::view(): Argument #2 ($shape) 
 strides overreach      ValueError: Buffers\Buffer::view(): Argument #2 ($shape) with the given strides and offset extends beyond the end of the buffer (24 bytes)
 offset beyond          ValueError: Buffers\Buffer::view(): Argument #4 ($offset) must be between 0 and the byte length of the buffer
 negative offset        ValueError: Buffers\Buffer::view(): Argument #4 ($offset) must be between 0 and the byte length of the buffer
-misaligned offset      ValueError: Buffers\Buffer::view(): Argument #4 ($offset) must be a multiple of the element size (2 bytes)
-uneven default shape   ValueError: Buffers\Buffer::view(): Argument #4 ($offset) must be a multiple of the element size (4 bytes)
+misaligned offset      ValueError: Buffers\Buffer::view(): Argument #2 ($shape) is required: the buffer length minus the offset is not a multiple of the element size (2 bytes)
+uneven default shape   ValueError: Buffers\Buffer::view(): Argument #2 ($shape) is required: the buffer length minus the offset is not a multiple of the element size (4 bytes)
 negative dim           ValueError: Buffers\Buffer::view(): Argument #2 ($shape) must contain only non-negative values
 negative int shape     ValueError: Buffers\Buffer::view(): Argument #2 ($shape) must be non-negative
 empty shape            ok shape=[] strides=[] off=0 dtype=UInt8

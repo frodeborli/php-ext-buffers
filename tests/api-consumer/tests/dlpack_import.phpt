@@ -198,8 +198,8 @@ NULL strides 1.3   ValueError: Tensors without strides are illegal since DLPack 
 negative dim       ValueError: Negative dimension in shape
 zero stride        ValueError: Zero and negative strides are not supported
 negative stride    ValueError: Zero and negative strides are not supported
-misaligned offset  ValueError: TensorInterface data is not aligned to the element size (2 bytes)
-misaligned f64     ValueError: TensorInterface data is not aligned to the element size (8 bytes)
+misaligned offset: accepted
+misaligned f64: accepted
 major version 2    ValueError: Unsupported DLPack major version 2 (expected 1)
 major version 0    ValueError: Unsupported DLPack major version 0 (expected 1)
 an imported tensor is released when its view is
