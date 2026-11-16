@@ -2,7 +2,7 @@
 
 The shared representation of n-dimensional typed data for PHP: `Buffers\Buffer` (bytes on some device: allocated memory,
 a memory-mapped file, memory of other extensions), `Buffers\Tensor` windows onto it (n-D, strided, every machine-learning
-dtype including bfloat16, float8, packed float6, float4 and int2/int4/uint2/uint4, and complex), `Buffers\Shape`, the
+dtype including bfloat16, float8, packed float6, float4 and int2/int4/uint2/uint4, and complex), `Buffers\Shape`,
 the `Buffers\TensorAggregate` and `Buffers\Device` interfaces, exact element-wise arithmetic on tensors (`+ - * / % ** << >> & | ^ ~`,
 with broadcasting and defined type promotion), and a versioned C API (`php_buffers_api.h`) with readiness and transfer hooks and [DLPack](https://github.com/dmlc/dlpack) import and export for other extensions. Written in C,
 no dependencies, PHP 8.3 - 8.5 (NTS and ZTS; 8.3 with the [differences](#php-83) below), with build files for Linux, macOS and Windows
@@ -112,7 +112,7 @@ setup code, not for inner loops. Making a sub-view stores nothing for them.
 `$view[$x][$y][$z]++` does **not** work: PHP rejects it with "Indirect modification of overloaded element". Use
 `$view[$x][$y][$z] += 1`.
 
-### Arithmetic
+### Arithmetic speed
 
 Nanoseconds per element for one operator on tensors of 1,000,000 elements (`benchmarks/arith.php`, PHP 8.5.12 NTS without
 the JIT, best of 7), against the same work in a PHP loop over arrays:
@@ -200,9 +200,9 @@ final class Tensor implements TensorAggregate, Countable, ArrayAccess, IteratorA
     // read-only: DType $dtype, Shape $shape, int $ndim, list<int> $strides (in elements), int $offset (bytes), Buffer $buffer
     // read-write, 0-d views only: mixed $value
     // operators: + - * / % ** << >> & | ^ ~ element-wise, see "Arithmetic"
+    public const MAX_NDIM = 8;                      // the most axes a tensor can have
     public function getTensor(): Tensor;            // itself
     public function getDType(): DType;
-    public const MAX_NDIM = 8;                      // the most axes a tensor can have
     public function getShape(): Shape;
     public function slice(int $axis, int $start, ?int $length = null, int $step = 1): Tensor;   // views: see "Views"
     public function transpose(int $axis1 = -2, int $axis2 = -1): Tensor;
@@ -473,6 +473,7 @@ $u32[6] = 0xDEADBEEF;                        // bytes 6..9 (overlapping the prev
 
 This is what code that addresses memory by byte needs: binary formats, network protocols, and WebAssembly linear memory, where every
 load and store is a typed value at an arbitrary byte address.
+
 ### Shape
 
 `new Shape([2, 3])`; `$shape[-1]` counts from the end; an out-of-range index throws `ValueError`; `offsetSet`/`offsetUnset`
@@ -678,7 +679,7 @@ and `buffers_device_dlpack()`).
 
 ## C API
 
-`php_buffers_api.h` (installed to `ext/buffers/`, `BUFFERS_API_VERSION` 2, `buffers_api_version()` at run time) is the
+`php_buffers_api.h` (installed to `ext/buffers/`, `BUFFERS_API_VERSION` 3, `buffers_api_version()` at run time) is the
 only thing another extension needs; it never sees the layout of buffers or tensors. The symbols are exported from
 `buffers.so` (also in the release binaries, which hide everything else), so load order matters:
 declare `ZEND_MOD_REQUIRED("buffers")`. `tests/api-consumer/` is a complete small extension that uses nothing else
@@ -689,7 +690,7 @@ and has phpt tests; read it as the example.
 | classes, dtypes | `buffers_get_class()`, `buffers_dtype_describe()`, `buffers_dtype_count()` (the dtypes of the loaded extension: check values against it, not against the compiled `BUFFERS_DT_COUNT`), `buffers_dtype_to_zval()`, `buffers_dtype_from_object()`, `buffers_dtype_from_dlpack()` |
 | devices | `buffers_cpu_device()`, `buffers_file_device()`, `buffers_implement_device()` (declare `$name`, `$id`, `$hostAccessible` with three get hooks), `buffers_register_device_type()`, `buffers_device_dlpack()`, `buffers_register_transfer()`, `buffers_tensor_to()` |
 | tensors | `buffers_is_tensor()`, `buffers_tensor_get_info()` (data pointer, dtype, ndim, shape, strides in elements, byte offset, buffer object, writable; views may start at any byte offset and the pointer is handed over as it is: strides are in elements, so the tensor is aligned exactly when `data % size == 0`, which a consumer that needs alignment checks itself), `buffers_tensor_create()` (validated exactly like `view()`) |
-| buffers | `buffers_is_buffer()`, `buffers_buffer_get_info()` (base, length, writable, host accessible, device), `buffers_buffer_create_foreign()` (memory + deleter + device), `buffers_buffer_create_owned()` (memory kept alive by a PHP object: holds a reference to the owner and releases it on free, no deleter), `buffers_buffer_file_origin()` (the path and offset of a mapped `Buffer::fromFile()` buffer, additive, no version bump: refer to the bytes instead of copying them), `buffers_hold()`, `buffers_release()` |
+| buffers | `buffers_is_buffer()`, `buffers_buffer_get_info()` (base, length, writable, host accessible, device), `buffers_buffer_create_foreign()` (memory + deleter + device), `buffers_buffer_create_owned()` (memory kept alive by a PHP object: holds a reference to the owner and releases it on free, no deleter), `buffers_buffer_file_origin()` (the path and offset of a mapped `Buffer::fromFile()` buffer: refer to the bytes instead of copying them), `buffers_hold()`, `buffers_release()` |
 | shapes, tensors | `buffers_shape_create()`, `buffers_shape_dims()`; `buffers_get_class(BUFFERS_CE_TENSOR_AGGREGATE)` for classes that implement `TensorAggregate` (its three methods, like any interface) |
 | elements | `buffers_convert()` (n elements between any two dtypes, strided, every format: integers wrap, floats round like `ml_dtypes`; for extensions that compute on elements) |
 | properties | `buffers_declare_virtual_props()` (read-only virtual properties with get hooks, for any internal class) |
@@ -705,7 +706,7 @@ buffer does and is released afterwards (`tests/api-consumer/tests/owner.phpt`). 
 
 ### Operators and other extensions
 
-Tensor arithmetic is ext-buffers' own (C API 3 removed C API 2's process-wide operator hook). An extension with lazy or
+Tensor arithmetic is ext-buffers' own. An extension with lazy or
 accelerated arithmetic gives its own classes a `do_operation` handler. PHP asks only the left operand's handler when it
 has one, so a `Tensor` on the left hands the operation to the right operand's handler when that operand's class has one:
 `$tensor + $expression` reaches the extension exactly like `$expression + $tensor`

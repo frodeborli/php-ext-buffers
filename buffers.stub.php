@@ -42,7 +42,7 @@ enum DType: string
     case Complex128 = 'complex128';
     case BComplex32 = 'bcomplex32';
 
-    /** Width of one element in bits: 4, 6, 8 ... 128. */
+    /** Width of one element in bits: 2, 4, 6, 8 ... 128. */
     public function bits(): int {}
     /** Bytes one element occupies, or null for the packed sub-byte formats (Int2, Int4, UInt2, UInt4, Float6*, Float4*). */
     public function byteSize(): ?int {}
@@ -160,7 +160,6 @@ final class Buffer
 {
     /** Zero-filled, 64-byte aligned host memory that counts toward memory_limit. */
     public function __construct(int $byteLength) {}
-    /** A writable host Buffer holding a copy of $data. */
     /** A buffer holding a copy of $data. With $writable = false it is read-only, like a mapped file: backends that bake constants into a plan (onnxruntime) do so for read-only tensors only. */
     public static function fromString(string $data, bool $writable = true): Buffer {}
     /**
@@ -203,8 +202,8 @@ final class Buffer
     public function isHostAccessible(): bool {}
     /**
      * $shape: null is 1-D over the rest of the buffer, an int is 1-D of that length, an array has 0 to 8
-     * dimensions ([] makes a 0-d view of one element). $strides are in elements, each at least 1 (null is
-     * C-contiguous). $offset is in bytes. Packed sub-byte dtypes have extra rules, see the README.
+     * dimensions ([] makes a 0-d view of one element). $strides are in elements, each at least 0 (null is
+     * C-contiguous; a stride of 0 on an axis longer than 1 makes the view read-only). $offset is in bytes. Packed sub-byte dtypes have extra rules, see the README.
      */
     public function view(DType $type, int|array|null $shape = null, ?array $strides = null, int $offset = 0): Tensor {}
     /** A copy of the bytes. Throws Error unless the buffer is host accessible. */
