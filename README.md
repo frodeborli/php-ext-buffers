@@ -3,7 +3,7 @@
 The shared representation of n-dimensional typed data for PHP: `Buffers\Buffer` (bytes on some device: allocated memory,
 a memory-mapped file, memory of other extensions), `Buffers\Tensor` windows onto it (n-D, strided, every machine-learning
 dtype including bfloat16, float8, packed float6, float4 and int2/int4/uint2/uint4, and complex), `Buffers\Shape`, the
-`Buffers\TensorInterface` and `Buffers\Device` interfaces, exact element-wise arithmetic on tensors (`+ - * / % ** << >> & | ^ ~`,
+the `Buffers\TensorAggregate` and `Buffers\Device` interfaces, exact element-wise arithmetic on tensors (`+ - * / % ** << >> & | ^ ~`,
 with broadcasting and defined type promotion), and a versioned C API (`php_buffers_api.h`) with readiness and transfer hooks and [DLPack](https://github.com/dmlc/dlpack) import and export for other extensions. Written in C,
 no dependencies, PHP 8.3 - 8.5 (NTS and ZTS; 8.3 with the [differences](#php-83) below) on Linux; macOS and Windows build files are included but untested (see
 [Verification](#verification)).
@@ -129,16 +129,16 @@ enum DType: string { case Bool, Int2, Int4, Int8, Int16, Int32, Int64, UInt2, UI
     public function isComplex(): bool;
 }
 
-interface TensorInterface {                  // only internal classes can implement it (see "TensorInterface")
-    public ?DType $dtype { get; }
-    public Shape $shape { get; }
-    public int $ndim { get; }
+interface TensorAggregate {                  // anything that is or can produce a tensor; PHP classes can implement it
+    public function getTensor(): Tensor;     // the numbers (an implementation may compute or load them)
+    public function getDType(): ?DType;      // without computing anything; null if not known yet
+    public function getShape(): Shape;       // without computing anything
 }
 
 final class Shape implements ArrayAccess, Countable, IteratorAggregate, JsonSerializable {
     public bool $concrete { get; }                  // every dimension is an int
-    public int|TensorInterface $size { get; }       // product; Error if not concrete (see "Shape")
-    public function __construct(array $dims);       // list of ints >= 0 and 0-d TensorInterfaces
+    public int|TensorAggregate $size { get; }       // product; Error if not concrete (see "Shape")
+    public function __construct(array $dims);       // list of ints >= 0 and 0-d TensorAggregates
     public function count(): int;
     public function toArray(): array;
 }
@@ -169,9 +169,13 @@ final class Buffer {
     public function toString(): string;             // a copy of the bytes; Error unless host accessible
 }
 
-final class Tensor implements TensorInterface, Countable, ArrayAccess, IteratorAggregate, JsonSerializable {
+final class Tensor implements TensorAggregate, Countable, ArrayAccess, IteratorAggregate, JsonSerializable {
     // read-only: DType $dtype, Shape $shape, int $ndim, list<int> $strides (in elements), int $offset (bytes), Buffer $buffer
     // read-write, 0-d views only: mixed $value
+    // operators: + - * / % ** << >> & | ^ ~ element-wise, see "Arithmetic"
+    public function getTensor(): Tensor;            // itself
+    public function getDType(): DType;
+    public function getShape(): Shape;
     public function to(Device $device): Tensor;
     // count() = length of the first axis; foreach iterates the first axis; $v[i], isset($v[i]), $v[i] = x
 }
@@ -226,8 +230,8 @@ that ext-buffers gives each class with such properties (also classes of other ex
 subclasses inherit them). Reading, writing `$value`, `isset()`, `??`, the read-only errors and the allocation-free sub-views behave as on 8.4.
 What differs on 8.3 (support ends when 8.3 does, 2028-01-01):
 
-* The properties are not declared: Reflection, `property_exists()`, `get_object_vars()`, `(array)` and `var_export()` do not see them, and
-  `TensorInterface` declares none (interface properties are 8.4+). `var_dump()` and `print_r()` are unchanged.
+* The properties are not declared: Reflection, `property_exists()`, `get_object_vars()`, `(array)` and `var_export()` do not see them.
+  `var_dump()` and `print_r()` are unchanged. (`TensorAggregate` has methods, not properties, so it is the same on every version.)
 * An extension class that PHP code may extend and that declares properties with `buffers_declare_virtual_props()` must, on 8.3, serve
   them from its own `read_property` handler, or a subclass's own `__get` would replace ext-buffers' (see `php_buffers_api.h`). The classes
   of ext-buffers are final.
@@ -258,7 +262,7 @@ argument and the reason. Elements of memory that is not host accessible (see Dev
 
 `$buf->view(DType::Float32, [])` is a view of exactly one element: `ndim` 0, `shape` `[]`, `strides` `[]`. It has no axes, so
 `count()`, `foreach`, `$v[0]`, `isset($v[0])` and friends throw `Error("A 0-d view has no axes")`. It is a
-`TensorInterface`, shares memory with other views of the buffer, and can be exported and imported through the C API.
+`TensorAggregate`, shares memory with other views of the buffer, and can be exported and imported through the C API.
 
 Its single element is the read-write property **`$v->value`**: `$v->value` reads it, `$v->value = 3` writes it with the normal
 conversion rules of the dtype (like `$v[$i] = 3` on a 1-D view). It is a virtual property with get and set hooks, so nothing
@@ -268,7 +272,7 @@ instead")`. Read-only buffers, memory that is not host accessible and pending bu
 ### Arithmetic
 
 `+ - * / % ** << >> & | ^ ~` (and `+=` etc., unary `-`) work element-wise on tensors and PHP `int`/`float`/`bool` scalars,
-computed at once in C into a new C-contiguous tensor in host memory. The rules (full text in
+computed at once into a new C-contiguous tensor on the operands' device (host memory: ext-buffers' own C loops). The rules (full text in
 [docs/proposal-arithmetic.md](docs/proposal-arithmetic.md)) are the [Python Array API standard's](https://data-apis.org/array-api/)
 with PHP's integer semantics:
 
@@ -295,9 +299,19 @@ $m = Tensor::fromArray([[1, 2], [3, 4]], DType::Int16) + $bias;   // Int16, the 
 * `Bool` takes only `& | ^ ~` with `Bool`; storage-only formats (8/6/4-bit floats, packed integers) and complex dtypes have no
   arithmetic (`TypeError`: `convert()` first).
 * `$a += $b` is `$a = $a + $b`: other variables and views of the old tensor keep their values. A failed operation leaves
-  `$a` unchanged.
-* An operand of a class with arithmetic of its own (an extension class such as `Skein\Expression`) gets the operation, on
-  either side. Comparisons (`==`, `<`) are not element-wise: a tensor equals only itself.
+  `$a` unchanged. When nothing can observe the difference, the result is written into `$a`'s own memory without
+  allocating: `$a` holds the only reference to its tensor and that tensor the only reference to its buffer (no other view,
+  `DataView` or extension holds it), the buffer is writable host memory that has not been exported (DLPack) or mapped
+  from a file, and the result has `$a`'s dtype and shape. So `$pos += $vel * $dt;` in a simulation loop does not allocate
+  for `$pos`.
+* Other operands: an object of a class with arithmetic of its own (an extension class such as `Skein\Expression`) gets the
+  operation, on either side; any other `TensorAggregate` (a PHP class) is computed through its `getTensor()`; anything
+  else (strings, arrays, `null`, other objects) is PHP's `TypeError`. Comparisons (`==`, `<`) are not element-wise: a
+  tensor equals only itself.
+* Tensors on another device (a GPU) are computed by a backend that the extension owning the device registered; without
+  one, or for operands on different devices, it is an `Error` naming the devices (no implicit copies).
+* Speed: plain C loops the compiler vectorizes, with a variant per CPU class (SSE2, AVX2, AVX-512 on x86-64) chosen when
+  the extension loads; every variant gives the same bits. See Performance for measurements.
 
 ### DataView
 
@@ -363,17 +377,30 @@ load and store is a typed value at an arbitrary byte address.
 ### Shape
 
 `new Shape([2, 3])`; `$shape[-1]` counts from the end; an out-of-range index throws `ValueError`; `offsetSet`/`offsetUnset`
-throw `Error` (a Shape is immutable); `==` compares by value. A dimension is an int or a **0-d `TensorInterface`** (a symbolic
-dimension, for extensions that build deferred computations). `$shape->size` is the product when the shape is
+throw `Error` (a Shape is immutable); `==` compares by value. A dimension is an int or a **0-d `TensorAggregate`** (a symbolic
+dimension, for extensions that build deferred computations; 0-d means its `getShape()` has no dimensions). `$shape->size` is the product when the shape is
 concrete (`ValueError` above `PHP_INT_MAX`); for a non-concrete shape it throws `Error` in this version, since no
 extension that could compute a symbolic product exists yet. The shape of a `Tensor` is always concrete.
 
-### TensorInterface
+### TensorAggregate
 
-`TensorInterface` is the common face of anything with a dtype and a shape. `Tensor` implements it, and so can classes of
-other extensions (a deferred tensor, say) through `buffers_implement_tensor_interface()`. It **cannot be implemented in PHP code**: a
-user class declaring `implements TensorInterface` is a fatal error ("only internal classes can implement it"), which keeps the
-set of tensors under the control of extensions that can honour the C API.
+`TensorAggregate` is the common face of anything that is a tensor or can produce one: a `Tensor` (which returns itself), a
+lazy expression of another extension, or a plain PHP class (a sensor, a column of a database result, a file format):
+
+```php
+use Buffers\{DType, Shape, Tensor, TensorAggregate};
+
+final class Thermometer implements TensorAggregate {
+    public function getTensor(): Tensor { return Tensor::fromArray($this->readAll(), DType::Float32); }
+    public function getDType(): DType { return DType::Float32; }
+    public function getShape(): Shape { return new Shape([$this->count]); }
+}
+$celsius = $thermometer - 273.15;     // arithmetic calls getTensor()
+```
+
+`getDType()` and `getShape()` describe the tensor without producing it (`getDType()` may return `null` when the dtype is not
+known yet); `getTensor()` produces it, and may compute or load it. Arithmetic accepts a `TensorAggregate` operand of a
+class without arithmetic of its own by calling `getTensor()` (see Arithmetic).
 
 ### Devices and files
 
@@ -422,8 +449,11 @@ once. `/dev/shm` (or any tmpfs) keeps it in memory. **There is no synchronisatio
 ## Dtypes
 
 Follows [ml_dtypes](https://github.com/jax-ml/ml_dtypes) 0.5.4 for every format, byte for byte (see
-[Verification](#verification)). Elements are stored in the **host's native byte order**, like NumPy's default, PyTorch,
-DLPack and JavaScript typed arrays (there is no byte-order option); no code assumes little-endian.
+[Verification](#verification)). Elements are stored **little-endian on every machine**, like WebAssembly memory,
+safetensors, GGUF and ONNX files, so the same bytes mean the same numbers everywhere (there is no byte-order option;
+`DataView` reads and writes either order explicitly). Every supported 64-bit platform is little-endian, where this
+costs nothing; on a big-endian machine elements are byte-swapped on access, and DLPack exchange (which uses the host's
+order) of multi-byte dtypes is refused.
 
 | `DType`              | value                | bits | bytes | DLPack code/bits (C API) | notes |
 |----------------------|----------------------|-----:|------:|------------------|-------|
@@ -553,18 +583,18 @@ and has phpt tests; read it as the example.
 | devices | `buffers_cpu_device()`, `buffers_file_device()`, `buffers_implement_device()` (declare `$name`, `$id`, `$hostAccessible` with three get hooks), `buffers_register_device_type()`, `buffers_device_dlpack()`, `buffers_register_transfer()`, `buffers_tensor_to()` |
 | tensors | `buffers_is_tensor()`, `buffers_tensor_get_info()` (data pointer, dtype, ndim, shape, strides in elements, byte offset, buffer object, writable; views may start at any byte offset and the pointer is handed over as it is: strides are in elements, so the tensor is aligned exactly when `data % size == 0`, which a consumer that needs alignment checks itself), `buffers_tensor_create()` (validated exactly like `view()`) |
 | buffers | `buffers_is_buffer()`, `buffers_buffer_get_info()` (base, length, writable, host accessible, device), `buffers_buffer_create_foreign()` (memory + deleter + device), `buffers_buffer_create_owned()` (memory kept alive by a PHP object: holds a reference to the owner and releases it on free, no deleter), `buffers_buffer_file_origin()` (the path and offset of a mapped `Buffer::fromFile()` buffer, additive, no version bump: refer to the bytes instead of copying them), `buffers_hold()`, `buffers_release()` |
-| shapes, tensors | `buffers_shape_create()`, `buffers_shape_dims()`, `buffers_implement_tensor_interface()` (declare the virtual properties of `TensorInterface` with three get hooks) |
+| shapes, tensors | `buffers_shape_create()`, `buffers_shape_dims()`; `buffers_get_class(BUFFERS_CE_TENSOR_AGGREGATE)` for classes that implement `TensorAggregate` (its three methods, like any interface) |
 | elements | `buffers_convert()` (n elements between any two dtypes, strided, every format: integers wrap, floats round like `ml_dtypes`; for extensions that compute on elements) |
 | properties | `buffers_declare_virtual_props()` (read-only virtual properties with get hooks, for any internal class) |
 | DLPack | `buffers_dlpack_export()`, `buffers_dlpack_import()` (see above) |
-| arithmetic | `buffers_dtype_promote()` (the result dtype of an operator, for implementations that must agree with ext-buffers, such as lazy graphs) |
+| arithmetic | `buffers_dtype_promote()` (the result dtype of an operator, for implementations that must agree with ext-buffers, such as lazy graphs), `buffers_register_backend()` (arithmetic on another device, or faster arithmetic on the host, see below) |
 | hooks | `buffers_buffer_set_ready_callback()`, `buffers_buffer_set_pending()`, `buffers_buffer_ensure_ready()` |
 
 **Memory owned by a PHP object** (for example RubixML's Tensor-Ext keeps contiguous row-major float64 data in C): create
 a buffer with `buffers_buffer_create_owned(data, length, writable, NULL, owner_object)` and a view with
 `buffers_tensor_create(buffer, BUFFERS_DT_FLOAT64, 2, shape, NULL, 0)`; the owner stays alive as long as any view or
 buffer does and is released afterwards (`tests/api-consumer/tests/owner.phpt`). Strides are fully supported by views
-(pass them to `buffers_tensor_create()`); only the `TensorInterface` interface omits them.
+(pass them to `buffers_tensor_create()`); only the `TensorAggregate` interface omits them.
 
 ### Operators and other extensions
 
@@ -574,6 +604,13 @@ has one, so a `Tensor` on the left hands the operation to the right operand's ha
 `$tensor + $expression` reaches the extension exactly like `$expression + $tensor`
 (`tests/api-consumer/tests/operators_foreign.phpt`). `buffers_dtype_promote()` gives the result dtype of every operator,
 and `tests/promotion.tsv` is the conformance table, so a lazy implementation can produce the same dtypes.
+
+**Backends.** `buffers_register_backend()` (from `MINIT`, any number) registers a capability check and an implementation:
+ext-buffers validates the operands and works out the result dtype and shape, then asks the backends, newest first, whether
+they can compute the operation on these operands (their devices, dtypes, layouts), and falls back to its own C loops for
+host memory. A backend must produce exactly the results the rules define (`+ - * /` and integer operations bit for bit,
+`**` within its bound) and passes the same conformance tests; it may only be faster. Without a capable backend, operands
+on another device are an `Error`.
 
 ### Readiness
 
