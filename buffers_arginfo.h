@@ -1,5 +1,5 @@
 /* This is a generated file, edit the .stub.php file instead.
- * Stub hash: eeedfd86fbb985857ff2c00ea5f1ed8f54c44c52 */
+ * Stub hash: dd9b409e25d880aede7a50d15a563b8cb5a7edbe */
 
 ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_class_Buffers_DType_bits, 0, 0, IS_LONG, 0)
 ZEND_END_ARG_INFO()
@@ -266,6 +266,40 @@ ZEND_END_ARG_INFO()
 
 #define arginfo_class_Buffers_Tensor_getShape arginfo_class_Buffers_TensorAggregate_getShape
 
+ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(arginfo_class_Buffers_Tensor_slice, 0, 2, Buffers\\Tensor, 0)
+	ZEND_ARG_TYPE_INFO(0, axis, IS_LONG, 0)
+	ZEND_ARG_TYPE_INFO(0, start, IS_LONG, 0)
+	ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, length, IS_LONG, 1, "null")
+	ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, step, IS_LONG, 0, "1")
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(arginfo_class_Buffers_Tensor_transpose, 0, 0, Buffers\\Tensor, 0)
+	ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, axis1, IS_LONG, 0, "-2")
+	ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, axis2, IS_LONG, 0, "-1")
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(arginfo_class_Buffers_Tensor_permute, 0, 1, Buffers\\Tensor, 0)
+	ZEND_ARG_TYPE_INFO(0, axes, IS_ARRAY, 0)
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(arginfo_class_Buffers_Tensor_reshape, 0, 1, Buffers\\Tensor, 0)
+	ZEND_ARG_TYPE_INFO(0, shape, IS_ARRAY, 0)
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(arginfo_class_Buffers_Tensor_squeeze, 0, 0, Buffers\\Tensor, 0)
+	ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, axis, IS_LONG, 1, "null")
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(arginfo_class_Buffers_Tensor_unsqueeze, 0, 1, Buffers\\Tensor, 0)
+	ZEND_ARG_TYPE_INFO(0, axis, IS_LONG, 0)
+ZEND_END_ARG_INFO()
+
+#define arginfo_class_Buffers_Tensor_broadcastTo arginfo_class_Buffers_Tensor_reshape
+
+ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(arginfo_class_Buffers_Tensor_copy, 0, 0, Buffers\\Tensor, 0)
+	ZEND_ARG_OBJ_INFO_WITH_DEFAULT_VALUE(0, into, Buffers\\Tensor, 1, "null")
+ZEND_END_ARG_INFO()
+
 #define arginfo_class_Buffers_Tensor_count arginfo_class_Buffers_DType_bits
 
 #define arginfo_class_Buffers_Tensor_offsetExists arginfo_class_Buffers_Shape_offsetExists
@@ -391,6 +425,14 @@ ZEND_METHOD(Buffers_DataViewAccessor, offsetUnset);
 ZEND_METHOD(Buffers_Tensor, getTensor);
 ZEND_METHOD(Buffers_Tensor, getDType);
 ZEND_METHOD(Buffers_Tensor, getShape);
+ZEND_METHOD(Buffers_Tensor, slice);
+ZEND_METHOD(Buffers_Tensor, transpose);
+ZEND_METHOD(Buffers_Tensor, permute);
+ZEND_METHOD(Buffers_Tensor, reshape);
+ZEND_METHOD(Buffers_Tensor, squeeze);
+ZEND_METHOD(Buffers_Tensor, unsqueeze);
+ZEND_METHOD(Buffers_Tensor, broadcastTo);
+ZEND_METHOD(Buffers_Tensor, copy);
 ZEND_METHOD(Buffers_Tensor, count);
 ZEND_METHOD(Buffers_Tensor, offsetExists);
 ZEND_METHOD(Buffers_Tensor, offsetGet);
@@ -526,6 +568,14 @@ static const zend_function_entry class_Buffers_Tensor_methods[] = {
 	ZEND_ME(Buffers_Tensor, getTensor, arginfo_class_Buffers_Tensor_getTensor, ZEND_ACC_PUBLIC)
 	ZEND_ME(Buffers_Tensor, getDType, arginfo_class_Buffers_Tensor_getDType, ZEND_ACC_PUBLIC)
 	ZEND_ME(Buffers_Tensor, getShape, arginfo_class_Buffers_Tensor_getShape, ZEND_ACC_PUBLIC)
+	ZEND_ME(Buffers_Tensor, slice, arginfo_class_Buffers_Tensor_slice, ZEND_ACC_PUBLIC)
+	ZEND_ME(Buffers_Tensor, transpose, arginfo_class_Buffers_Tensor_transpose, ZEND_ACC_PUBLIC)
+	ZEND_ME(Buffers_Tensor, permute, arginfo_class_Buffers_Tensor_permute, ZEND_ACC_PUBLIC)
+	ZEND_ME(Buffers_Tensor, reshape, arginfo_class_Buffers_Tensor_reshape, ZEND_ACC_PUBLIC)
+	ZEND_ME(Buffers_Tensor, squeeze, arginfo_class_Buffers_Tensor_squeeze, ZEND_ACC_PUBLIC)
+	ZEND_ME(Buffers_Tensor, unsqueeze, arginfo_class_Buffers_Tensor_unsqueeze, ZEND_ACC_PUBLIC)
+	ZEND_ME(Buffers_Tensor, broadcastTo, arginfo_class_Buffers_Tensor_broadcastTo, ZEND_ACC_PUBLIC)
+	ZEND_ME(Buffers_Tensor, copy, arginfo_class_Buffers_Tensor_copy, ZEND_ACC_PUBLIC)
 	ZEND_ME(Buffers_Tensor, count, arginfo_class_Buffers_Tensor_count, ZEND_ACC_PUBLIC)
 	ZEND_ME(Buffers_Tensor, offsetExists, arginfo_class_Buffers_Tensor_offsetExists, ZEND_ACC_PUBLIC)
 	ZEND_ME(Buffers_Tensor, offsetGet, arginfo_class_Buffers_Tensor_offsetGet, ZEND_ACC_PUBLIC)

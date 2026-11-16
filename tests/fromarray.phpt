@@ -1,7 +1,7 @@
 --TEST--
 Tensor::fromArray() and toArray(): shape and dtype inference, round trips, 0-d and empty
 --SKIPIF--
-<?php if (!extension_loaded('buffers')) die('skip buffers extension not loaded'); ?>
+<?php if (!extension_loaded('buffers')) die('skip buffers extension not loaded'); if (PHP_INT_SIZE < 8) die('skip 64-bit PHP only: 64-bit dtypes'); ?>
 --FILE--
 <?php
 use Buffers\{Tensor, DType, CpuDevice};

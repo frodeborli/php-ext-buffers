@@ -86,9 +86,18 @@ def encode_chunk(i, start, n):
     return out
 
 
+# formats without NaN: ext-buffers stores a NaN as zero of the same sign (ml_dtypes 0.5.4 flips the sign); everything else
+# is compared with ml_dtypes as it is
+NO_NAN = ("float6_e2m3fn", "float6_e3m2fn", "float4_e2m1fn")
+
+
 def ref_codes(i, f):
     r = f.astype(DTYPES[i])
-    return r.view(np.uint16 if BITS[i] > 8 else np.uint8).astype(np.uint16)
+    codes = r.view(np.uint16 if BITS[i] > 8 else np.uint8).astype(np.uint16)
+    if NAMES[i] in NO_NAN:
+        nan = np.isnan(f)
+        codes[nan] = np.where(np.signbit(f[nan]), 1 << (BITS[i] - 1), 0).astype(np.uint16)
+    return codes
 
 
 def encode(which):

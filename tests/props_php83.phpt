@@ -30,9 +30,9 @@ var_dump($b->byteLength, $b->device === CpuDevice::get(), $b->device->name, $b->
 $sh = new Shape([2, 3]);
 var_dump($sh->concrete, $sh->size);
 $d = new DataView($b, 4, 16);
-var_dump($d->byteOffset, $d->byteLength, $d->buffer === $b, $d->uint32 === $d->uint32, $d->uint32->dtype);
-$d->uint32[1] = 0xAABBCCDD;
-var_dump(dechex($d->uint32[1]), $d->uint8[1]);
+var_dump($d->byteOffset, $d->byteLength, $d->buffer === $b, $d->uint16 === $d->uint16, $d->uint16->dtype);
+$d->uint16[1] = 0xCCDD;
+var_dump(dechex($d->uint16[1]), $d->uint8[1]);
 attempt(function () use ($d) { $d->byteLength = 1; });
 echo "not declared on PHP 8.3\n";
 var_dump(property_exists($v, 'dtype'), get_object_vars($b), method_exists($v, '__get'));
@@ -93,8 +93,8 @@ int(4)
 int(16)
 bool(true)
 bool(true)
-enum(Buffers\DType::UInt32)
-string(8) "aabbccdd"
+enum(Buffers\DType::UInt16)
+string(4) "ccdd"
 int(221)
 Error: Property Buffers\DataView::$byteLength is read-only
 not declared on PHP 8.3

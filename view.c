@@ -754,8 +754,8 @@ zend_object *buf_view_make(zend_object *bufobj, int dt, int ndim, const int64_t 
 	}
 	if (strides_in) {
 		for (int i = 0; i < ndim; i++) {
-			if (strides_in[i] < 1) {
-				FAIL(3, "must contain only values of at least 1");
+			if (strides_in[i] < 0) {
+				FAIL(3, "must contain only values of at least 0 (0 repeats an element along the axis: a read-only broadcast)");
 			}
 			st[i] = strides_in[i];
 		}
@@ -828,7 +828,7 @@ zend_object *buf_view_make(zend_object *bufobj, int dt, int ndim, const int64_t 
 		}
 	}
 
-	return buf_view_new(bufobj, dt, ndim, shape, sb, b->base + offset, b->writable, b->slow);
+	return buf_view_new(bufobj, dt, ndim, shape, sb, b->base + offset, b->writable && !buf_is_broadcast(ndim, shape, st), b->slow);
 }
 
 void buf_buffer_view_impl(zend_object *bufobj, INTERNAL_FUNCTION_PARAMETERS)
@@ -894,7 +894,7 @@ void buf_buffer_view_impl(zend_object *bufobj, INTERNAL_FUNCTION_PARAMETERS)
 	}
 
 	if (strides_ht) {
-		if (!read_dims(strides_ht, st, &n, 3, 1)) RETURN_THROWS();
+		if (!read_dims(strides_ht, st, &n, 3, 0)) RETURN_THROWS();
 		if (n != ndim) {
 			zend_argument_value_error(3, "must have one entry per dimension (%d)", ndim);
 			RETURN_THROWS();
@@ -1454,6 +1454,426 @@ PHP_METHOD(Buffers_Tensor, getTensor) { ZEND_PARSE_PARAMETERS_NONE(); RETURN_OBJ
 PHP_METHOD(Buffers_Tensor, getDType) { hook_dtype(INTERNAL_FUNCTION_PARAM_PASSTHRU); }
 PHP_METHOD(Buffers_Tensor, getShape) { hook_shape(INTERNAL_FUNCTION_PARAM_PASSTHRU); }
 
+/* ---- views: slice, transpose, permute, reshape, squeeze, unsqueeze, broadcastTo; copy -------------------------------
+ * Each returns a new Tensor over the same memory (a view), computed from the shape and byte strides of this one. Packed
+ * sub-byte dtypes keep their last axis last, contiguous (its elements are bits apart) and starting on a whole byte, so
+ * operations that would move, step or split it mid-byte are a ValueError, never a hidden copy. A result with a stride of
+ * 0 on an axis of more than one element (broadcastTo()) is read-only. */
+
+static bool view_axis(const buf_view *v, zend_long axis, uint32_t argn, int extra, int *out)
+{
+	zend_long n = v->ndim + extra;
+
+	if (axis < -n || axis >= n) {
+		if (n == 0) zend_argument_value_error(argn, "is out of range: a 0-d tensor has no axes");
+		else zend_argument_value_error(argn, "must be between %ld and %ld, " ZEND_LONG_FMT " given", (long)-n, (long)(n - 1), axis);
+		return false;
+	}
+	*out = (int)(axis < 0 ? axis + n : axis);
+	return true;
+}
+
+static zend_object *view_derived(const buf_view *v, int ndim, const int64_t *shape, const int64_t *sbytes, uint8_t *data)
+{
+	int64_t st[BUF_MAX_NDIM];
+	bool packed = buf_dtypes[v->dt].size == 0;
+
+	for (int i = 0; i < ndim; i++) st[i] = packed && i == ndim - 1 ? 1 : sbytes[i];
+	return buf_view_new(v->buf, v->dt, ndim, shape, sbytes, data, v->writable && !buf_is_broadcast(ndim, shape, st), v->slow);
+}
+
+PHP_METHOD(Buffers_Tensor, slice)
+{
+	zend_long axis, start, step = 1, length = 0;
+	bool length_null = true;
+	buf_view *v = VIEW;
+	int ax;
+	int64_t shape[BUF_MAX_NDIM], sb[BUF_MAX_NDIM], dim, avail;
+	uint8_t *data = v->data;
+	bool packed = buf_dtypes[v->dt].size == 0;
+
+	ZEND_PARSE_PARAMETERS_START(2, 4)
+		Z_PARAM_LONG(axis)
+		Z_PARAM_LONG(start)
+		Z_PARAM_OPTIONAL
+		Z_PARAM_LONG_OR_NULL(length, length_null)
+		Z_PARAM_LONG(step)
+	ZEND_PARSE_PARAMETERS_END();
+	if (!view_axis(v, axis, 1, 0, &ax)) RETURN_THROWS();
+	dim = v->shape[ax];
+	if (start < 0 || start > dim) {
+		zend_argument_value_error(2, "must be between 0 and the length of axis %d (%lld), " ZEND_LONG_FMT " given", ax, (long long)dim, start);
+		RETURN_THROWS();
+	}
+	if (step < 1) {
+		zend_argument_value_error(4, "must be at least 1, " ZEND_LONG_FMT " given", step);
+		RETURN_THROWS();
+	}
+	avail = (dim - start + step - 1) / step;   /* elements from start to the end, every step-th */
+	if (length_null) {
+		length = (zend_long)avail;
+	} else if (length < 0 || length > avail) {
+		zend_argument_value_error(3, "must be between 0 and %lld (the elements from %ld to the end of axis %d with step %ld), " ZEND_LONG_FMT " given",
+			(long long)avail, (long)start, ax, (long)step, length);
+		RETURN_THROWS();
+	}
+	memcpy(shape, v->shape, sizeof shape);
+	memcpy(sb, v->sbytes, sizeof sb);
+	if (packed && ax == v->ndim - 1) {
+		int64_t bits = buf_dtypes[v->dt].bits;
+
+		if (step != 1 || (start * bits) % 8) {
+			zend_value_error("A slice of the last axis of a packed %s tensor must have step 1 and start on a whole byte (a multiple of %d elements)",
+				buf_dtypes[v->dt].name, bits == 4 ? 2 : bits == 2 ? 4 : 4);
+			RETURN_THROWS();
+		}
+		data += start * bits / 8;
+	} else {
+		data += start * sb[ax];
+		sb[ax] *= step;
+	}
+	shape[ax] = length;
+	RETURN_OBJ(view_derived(v, v->ndim, shape, sb, data));
+}
+
+PHP_METHOD(Buffers_Tensor, permute)
+{
+	HashTable *axes = NULL;
+	buf_view *v = VIEW;
+	int perm[BUF_MAX_NDIM], n = 0;
+	bool seen[BUF_MAX_NDIM] = {false};
+	int64_t shape[BUF_MAX_NDIM], sb[BUF_MAX_NDIM];
+	zval *z;
+
+	ZEND_PARSE_PARAMETERS_START(1, 1)
+		Z_PARAM_ARRAY_HT(axes)
+	ZEND_PARSE_PARAMETERS_END();
+	{
+		if (zend_hash_num_elements(axes) != (uint32_t)v->ndim) {
+			zend_argument_value_error(1, "must list each of the %d axes once", v->ndim);
+			RETURN_THROWS();
+		}
+		ZEND_HASH_FOREACH_VAL(axes, z) {
+			int ax;
+
+			ZVAL_DEREF(z);
+			if (Z_TYPE_P(z) != IS_LONG) {
+				zend_argument_type_error(1, "must contain only integers, %s given", zend_zval_type_name(z));
+				RETURN_THROWS();
+			}
+			if (!view_axis(v, Z_LVAL_P(z), 1, 0, &ax)) RETURN_THROWS();
+			if (seen[ax]) {
+				zend_argument_value_error(1, "must list each of the %d axes once (axis %d appears twice)", v->ndim, ax);
+				RETURN_THROWS();
+			}
+			seen[ax] = true;
+			perm[n++] = ax;
+		} ZEND_HASH_FOREACH_END();
+	}
+	if (buf_dtypes[v->dt].size == 0 && v->ndim > 0 && perm[v->ndim - 1] != v->ndim - 1) {
+		zend_value_error("The last axis of a packed %s tensor must stay last: its elements are bits apart", buf_dtypes[v->dt].name);
+		RETURN_THROWS();
+	}
+	for (int i = 0; i < v->ndim; i++) {
+		shape[i] = v->shape[perm[i]];
+		sb[i] = v->sbytes[perm[i]];
+	}
+	RETURN_OBJ(view_derived(v, v->ndim, shape, sb, v->data));
+}
+
+/* transpose(axis1 = -2, axis2 = -1): the two axes swapped (by default the last two: a matrix transpose) */
+PHP_METHOD(Buffers_Tensor, transpose)
+{
+	zend_long a1 = -2, a2 = -1;
+	buf_view *v = VIEW;
+	int x, y;
+	int64_t shape[BUF_MAX_NDIM], sb[BUF_MAX_NDIM], t;
+
+	ZEND_PARSE_PARAMETERS_START(0, 2)
+		Z_PARAM_OPTIONAL
+		Z_PARAM_LONG(a1)
+		Z_PARAM_LONG(a2)
+	ZEND_PARSE_PARAMETERS_END();
+	if (!view_axis(v, a1, 1, 0, &x) || !view_axis(v, a2, 2, 0, &y)) RETURN_THROWS();
+	if (buf_dtypes[v->dt].size == 0 && x != y && (x == v->ndim - 1 || y == v->ndim - 1)) {
+		zend_value_error("The last axis of a packed %s tensor must stay last: its elements are bits apart", buf_dtypes[v->dt].name);
+		RETURN_THROWS();
+	}
+	memcpy(shape, v->shape, sizeof shape);
+	memcpy(sb, v->sbytes, sizeof sb);
+	t = shape[x]; shape[x] = shape[y]; shape[y] = t;
+	t = sb[x]; sb[x] = sb[y]; sb[y] = t;
+	RETURN_OBJ(view_derived(v, v->ndim, shape, sb, v->data));
+}
+
+/* The byte strides of `nshape` over the memory of a view with `oshape` and `osb`, without copying, or false. NumPy's
+ * algorithm: axes of length 1 are dropped, then old and new axes are matched in groups of equal element count; inside a
+ * group the old axes must be laid out contiguously one after the other. `elem` is the byte size of an element (the
+ * stride a trailing new axis of length 1 gets). */
+static bool reshape_strides(int ond, const int64_t *oshape, const int64_t *osb, int nnd, const int64_t *nshape, int64_t elem, int64_t *nsb)
+{
+	int64_t os[BUF_MAX_NDIM], ost[BUF_MAX_NDIM];
+	int on = 0, oi = 0, oj = 1, ni = 0, nj = 1;
+
+	for (int i = 0; i < ond; i++) {
+		if (oshape[i] != 1) { os[on] = oshape[i]; ost[on] = osb[i]; on++; }
+	}
+	while (ni < nnd && oi < on) {
+		int64_t np = nshape[ni], op = os[oi];
+
+		while (np != op) {
+			if (np < op) np *= nshape[nj++];
+			else op *= os[oj++];
+		}
+		for (int k = oi; k < oj - 1; k++) {
+			if (ost[k] != os[k + 1] * ost[k + 1]) return false;   /* not contiguous inside the group */
+		}
+		nsb[nj - 1] = ost[oj - 1];
+		for (int k = nj - 1; k > ni; k--) nsb[k - 1] = nsb[k] * nshape[k];
+		ni = nj++;
+		oi = oj++;
+	}
+	/* remaining new axes (all of length 1) */
+	for (int k = ni; k < nnd; k++) nsb[k] = ni > 0 ? nsb[ni - 1] : elem;
+	return true;
+}
+
+PHP_METHOD(Buffers_Tensor, reshape)
+{
+	HashTable *ht;
+	buf_view *v = VIEW;
+	int64_t nshape[BUF_MAX_NDIM], nsb[BUF_MAX_NDIM] = {0}, total = 1, known = 1;
+	int nnd = 0, infer = -1;
+	bool packed = buf_dtypes[v->dt].size == 0;
+	zval *z;
+
+	ZEND_PARSE_PARAMETERS_START(1, 1)
+		Z_PARAM_ARRAY_HT(ht)
+	ZEND_PARSE_PARAMETERS_END();
+	ZEND_HASH_FOREACH_VAL(ht, z) {
+		ZVAL_DEREF(z);
+		if (Z_TYPE_P(z) != IS_LONG) {
+			zend_argument_type_error(1, "must contain only integers, %s given", zend_zval_type_name(z));
+			RETURN_THROWS();
+		}
+		if (nnd == BUF_MAX_NDIM) {
+			zend_argument_value_error(1, "must have at most %d elements", BUF_MAX_NDIM);
+			RETURN_THROWS();
+		}
+		if (Z_LVAL_P(z) == -1 && infer < 0) {
+			infer = nnd;
+			nshape[nnd++] = 1;
+			continue;
+		}
+		if (Z_LVAL_P(z) < 0) {
+			zend_argument_value_error(1, "must contain only non-negative values and at most one -1");
+			RETURN_THROWS();
+		}
+		nshape[nnd++] = Z_LVAL_P(z);
+		if (buf_mul_ovf(known, Z_LVAL_P(z), &known)) {
+			zend_argument_value_error(1, "describes more elements than can be addressed");
+			RETURN_THROWS();
+		}
+	} ZEND_HASH_FOREACH_END();
+	for (int i = 0; i < v->ndim; i++) total *= v->shape[i];
+	if (infer >= 0) {
+		if (known == 0 || total % known) {
+			zend_argument_value_error(1, "cannot infer the -1 dimension: %lld elements do not divide into the other dimensions", (long long)total);
+			RETURN_THROWS();
+		}
+		nshape[infer] = total / known;
+		known = total;
+	}
+	if (known != total) {
+		zend_argument_value_error(1, "must describe the same number of elements (%lld), %lld given", (long long)total, (long long)known);
+		RETURN_THROWS();
+	}
+	if (packed) {
+		/* the packed last axis stays as it is; the leading axes reshape over whole rows */
+		if (v->ndim == 0 || nnd == 0 || nshape[nnd - 1] != v->shape[v->ndim - 1]) {
+			zend_value_error("A packed %s tensor can only be reshaped with the same last axis (%lld): its elements are bits apart",
+				buf_dtypes[v->dt].name, (long long)(v->ndim ? v->shape[v->ndim - 1] : 0));
+			RETURN_THROWS();
+		}
+		if (total && !reshape_strides(v->ndim - 1, v->shape, v->sbytes, nnd - 1, nshape, 1, nsb)) goto copy;
+		nsb[nnd - 1] = 0;
+	} else if (total == 0) {
+		int64_t acc = buf_dtypes[v->dt].size;
+
+		for (int i = nnd - 1; i >= 0; i--) { nsb[i] = acc; acc *= nshape[i] ? nshape[i] : 1; }
+	} else if (!reshape_strides(v->ndim, v->shape, v->sbytes, nnd, nshape, buf_dtypes[v->dt].size, nsb)) {
+		goto copy;
+	}
+	RETURN_OBJ(view_derived(v, nnd, nshape, nsb, v->data));
+copy:
+	zend_value_error("Cannot reshape this tensor as a view: its strides do not allow the new shape; reshape a contiguous copy() instead");
+	RETURN_THROWS();
+}
+
+PHP_METHOD(Buffers_Tensor, squeeze)
+{
+	zend_long axis = 0;
+	bool axis_null = true;
+	buf_view *v = VIEW;
+	int64_t shape[BUF_MAX_NDIM], sb[BUF_MAX_NDIM];
+	int n = 0, only = -1;
+
+	ZEND_PARSE_PARAMETERS_START(0, 1)
+		Z_PARAM_OPTIONAL
+		Z_PARAM_LONG_OR_NULL(axis, axis_null)
+	ZEND_PARSE_PARAMETERS_END();
+	if (!axis_null) {
+		if (!view_axis(v, axis, 1, 0, &only)) RETURN_THROWS();
+		if (v->shape[only] != 1) {
+			zend_argument_value_error(1, "must be an axis of length 1, axis %d has length %lld", only, (long long)v->shape[only]);
+			RETURN_THROWS();
+		}
+	}
+	for (int i = 0; i < v->ndim; i++) {
+		bool drop = only >= 0 ? i == only : v->shape[i] == 1;
+
+		if (drop && buf_dtypes[v->dt].size == 0 && i == v->ndim - 1) drop = false;   /* the packed last axis stays */
+		if (drop) continue;
+		shape[n] = v->shape[i];
+		sb[n] = v->sbytes[i];
+		n++;
+	}
+	if (only >= 0 && n == v->ndim) {
+		zend_value_error("The last axis of a packed %s tensor cannot be removed: its elements are bits apart", buf_dtypes[v->dt].name);
+		RETURN_THROWS();
+	}
+	RETURN_OBJ(view_derived(v, n, shape, sb, v->data));
+}
+
+PHP_METHOD(Buffers_Tensor, unsqueeze)
+{
+	zend_long axis;
+	buf_view *v = VIEW;
+	int at, n = 0;
+	int64_t shape[BUF_MAX_NDIM], sb[BUF_MAX_NDIM];
+
+	ZEND_PARSE_PARAMETERS_START(1, 1)
+		Z_PARAM_LONG(axis)
+	ZEND_PARSE_PARAMETERS_END();
+	if (v->ndim == BUF_MAX_NDIM) {
+		zend_value_error("A tensor has at most %d axes", BUF_MAX_NDIM);
+		RETURN_THROWS();
+	}
+	if (!view_axis(v, axis, 1, 1, &at)) RETURN_THROWS();
+	if (buf_dtypes[v->dt].size == 0 && v->ndim > 0 && at == v->ndim) {
+		zend_value_error("A new axis cannot follow the last axis of a packed %s tensor: its elements are bits apart", buf_dtypes[v->dt].name);
+		RETURN_THROWS();
+	}
+	for (int i = 0; i <= v->ndim; i++) {
+		if (i == at) {
+			shape[n] = 1;
+			sb[n] = i < v->ndim ? (v->sbytes[i] ? v->sbytes[i] * v->shape[i] : buf_dtypes[v->dt].size) : buf_dtypes[v->dt].size;
+			n++;
+		}
+		if (i < v->ndim) {
+			shape[n] = v->shape[i];
+			sb[n] = v->sbytes[i];
+			n++;
+		}
+	}
+	RETURN_OBJ(view_derived(v, n, shape, sb, v->data));
+}
+
+/* copy(?Tensor $into = null): the elements, byte for byte, into a new C-contiguous tensor or into $into (a writable tensor
+ * of the same dtype and shape, returned). A copy into memory that overlaps the source goes through a temporary. */
+PHP_METHOD(Buffers_Tensor, copy)
+{
+	zend_object *into = NULL;
+	buf_view *v = VIEW, *w;
+	zend_object *tmp = NULL;
+	const buf_view *src;
+	bool packed = buf_dtypes[v->dt].size == 0;
+
+	ZEND_PARSE_PARAMETERS_START(0, 1)
+		Z_PARAM_OPTIONAL
+		Z_PARAM_OBJ_OF_CLASS_OR_NULL(into, buf_ce_tensor)
+	ZEND_PARSE_PARAMETERS_END();
+	if (!buf_view_check_access(v)) RETURN_THROWS();
+	if (!into) {
+		zend_object *res = buf_view_copy_host(v, v->data);
+
+		if (!res) RETURN_THROWS();
+		RETURN_OBJ(res);
+	}
+	w = buf_view_from(into);
+	if (w->dt != v->dt || w->ndim != v->ndim || memcmp(w->shape, v->shape, sizeof(int64_t) * v->ndim) != 0) {
+		zend_argument_value_error(1, "must have the dtype and shape of the tensor (%s, %d axes)", buf_dtypes[v->dt].name, v->ndim);
+		RETURN_THROWS();
+	}
+	if (!w->writable) {
+		zend_throw_error(NULL, "Cannot write to a read-only Tensor");
+		RETURN_THROWS();
+	}
+	if (!buf_view_check_access(w)) RETURN_THROWS();
+	src = v;
+	if (w->buf == v->buf) {   /* the same memory: read everything before writing anything */
+		tmp = buf_view_copy_host(v, v->data);
+		if (!tmp) RETURN_THROWS();
+		src = buf_view_from(tmp);
+	}
+	if (view_elements(v) > 0) {
+		if (v->ndim == 0) {
+			if (packed) pk_put(w->data, 0, buf_dtypes[v->dt].bits, pk_get(src->data, 0, buf_dtypes[v->dt].bits));
+			else memcpy(w->data, src->data, buf_dtypes[v->dt].size);
+		} else {
+			copy_axis(src, 0, src->data, w->data, w->sbytes, packed);
+		}
+	}
+	if (tmp) OBJ_RELEASE(tmp);
+	RETURN_OBJ_COPY(into);
+}
+
+PHP_METHOD(Buffers_Tensor, broadcastTo)
+{
+	HashTable *ht;
+	buf_view *v = VIEW;
+	int64_t nshape[BUF_MAX_NDIM], sb[BUF_MAX_NDIM];
+	int nnd = 0;
+	zval *z;
+
+	ZEND_PARSE_PARAMETERS_START(1, 1)
+		Z_PARAM_ARRAY_HT(ht)
+	ZEND_PARSE_PARAMETERS_END();
+	ZEND_HASH_FOREACH_VAL(ht, z) {
+		ZVAL_DEREF(z);
+		if (Z_TYPE_P(z) != IS_LONG || Z_LVAL_P(z) < 0) {
+			zend_argument_value_error(1, "must contain only non-negative integers");
+			RETURN_THROWS();
+		}
+		if (nnd == BUF_MAX_NDIM) {
+			zend_argument_value_error(1, "must have at most %d elements", BUF_MAX_NDIM);
+			RETURN_THROWS();
+		}
+		nshape[nnd++] = Z_LVAL_P(z);
+	} ZEND_HASH_FOREACH_END();
+	if (nnd < v->ndim) {
+		zend_argument_value_error(1, "must have at least as many axes as the tensor (%d)", v->ndim);
+		RETURN_THROWS();
+	}
+	for (int i = 0; i < nnd; i++) {
+		int j = i - (nnd - v->ndim);   /* the tensor's axis aligned with axis i, from the right */
+
+		if (j < 0) { sb[i] = 0; continue; }
+		if (v->shape[j] == nshape[i]) { sb[i] = v->sbytes[j]; continue; }
+		if (v->shape[j] != 1) {
+			zend_argument_value_error(1, "is not a broadcast of the tensor's shape: axis %d has length %lld, which is neither %lld nor 1",
+				j, (long long)v->shape[j], (long long)nshape[i]);
+			RETURN_THROWS();
+		}
+		if (buf_dtypes[v->dt].size == 0 && j == v->ndim - 1) {
+			zend_value_error("The last axis of a packed %s tensor cannot be broadcast: its elements are bits apart", buf_dtypes[v->dt].name);
+			RETURN_THROWS();
+		}
+		sb[i] = 0;
+	}
+	RETURN_OBJ(view_derived(v, nnd, nshape, sb, v->data));
+}
+
 /* ---- registration --------------------------------------------------------------------------- */
 
 static void init_view_handlers(zend_object_handlers *h)
@@ -1491,6 +1911,7 @@ void buf_view_minit(void)
 	buf_ce_tensor->ce_flags |= ZEND_ACC_FINAL | ZEND_ACC_NO_DYNAMIC_PROPERTIES | ZEND_ACC_NOT_SERIALIZABLE;
 	buf_ce_tensor->create_object = view_create_blank; /* real instances come from buf_view_new() */
 	buf_declare_hooked_props(buf_ce_tensor, view_props, 7); /* before the interface that requires them */
+	zend_declare_class_constant_long(buf_ce_tensor, "MAX_NDIM", sizeof("MAX_NDIM") - 1, BUF_MAX_NDIM);
 	zend_class_implements(buf_ce_tensor, 4, buf_ce_tensor_agg, zend_ce_countable, zend_ce_arrayaccess, zend_ce_aggregate);
 	if (buf_json_serializable()) {
 		zend_class_implements(buf_ce_tensor, 1, buf_json_serializable());

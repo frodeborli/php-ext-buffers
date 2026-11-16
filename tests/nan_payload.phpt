@@ -1,5 +1,5 @@
 --TEST--
-NaN conversions: float16 keeps the payload like numpy, the other formats canonicalise like ml_dtypes
+NaN conversions: float16 keeps the payload like numpy, the 8-bit formats canonicalise like ml_dtypes, float6/float4 store zero of the same sign
 --SKIPIF--
 <?php if (!extension_loaded('buffers')) die('skip buffers extension not loaded'); ?>
 --FILE--
@@ -55,11 +55,11 @@ Float8E8M0FNU  7ff8000000000000 -> ff
 Float8E8M0FNU  fff8000000000000 -> ff
 Float8E8M0FNU  7ff0000000000001 -> ff
 Float8E8M0FNU  ffffffffffffffff -> ff
-Float6E2M3FN   7ff8000000000000 -> 20
-Float6E2M3FN   fff8000000000000 -> 00
-Float6E2M3FN   7ff0000000000001 -> 20
-Float6E2M3FN   ffffffffffffffff -> 00
-Float4E2M1FN   7ff8000000000000 -> 08
-Float4E2M1FN   fff8000000000000 -> 00
-Float4E2M1FN   7ff0000000000001 -> 08
-Float4E2M1FN   ffffffffffffffff -> 00
+Float6E2M3FN   7ff8000000000000 -> 00
+Float6E2M3FN   fff8000000000000 -> 20
+Float6E2M3FN   7ff0000000000001 -> 00
+Float6E2M3FN   ffffffffffffffff -> 20
+Float4E2M1FN   7ff8000000000000 -> 00
+Float4E2M1FN   fff8000000000000 -> 08
+Float4E2M1FN   7ff0000000000001 -> 00
+Float4E2M1FN   ffffffffffffffff -> 08

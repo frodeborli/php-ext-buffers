@@ -14,6 +14,11 @@ $v = bat_import(UINT, 8, 1, [2, 3], [3, 1]);
 var_dump($v->dtype, $v->shape->toArray(), $v->strides, $v->offset, $v[1][2], $v->buffer instanceof Buffer, $v->buffer instanceof Buffer);
 var_dump($v->buffer->isWritable(), $v->buffer->byteLength);
 $v[1][2] = 77; var_dump($v[1][2]);
+echo "a broadcast (stride 0) imports as a read-only view: ";
+$z = bat_import(UINT, 8, 1, [2, 2], [0, 1]);
+var_dump($z->strides, $z[0][1] === $z[1][1]);
+try { $z[0][0] = 1; } catch (Error $e) { echo $e->getMessage(), "\n"; }
+unset($z);
 echo counts(), "\n"; unset($v); echo counts(), "\n";
 
 echo "byte offset and strides\n";
@@ -69,7 +74,6 @@ $cases = [
   'NULL strides 1.3'  => [UINT, 8, 1, [2, 3], null],
   '9 dims'            => [UINT, 8, 1, [1,1,1,1,1,1,1,1,1], [1,1,1,1,1,1,1,1,1]],
   'negative dim'      => [UINT, 8, 1, [-1], [1]],
-  'zero stride'       => [UINT, 8, 1, [2, 2], [0, 1]],
   'negative stride'   => [UINT, 8, 1, [2, 2], [-2, 1]],
   'misaligned offset' => [INT, 16, 1, [2], [1], 0, 1, 1],
   'misaligned f64'    => [FLOAT, 64, 1, [2], [1], 0, 1, 4],
@@ -117,8 +121,16 @@ bool(true)
 bool(true)
 int(6)
 int(77)
-1/0
-1/1
+a broadcast (stride 0) imports as a read-only view: array(2) {
+  [0]=>
+  int(0)
+  [1]=>
+  int(1)
+}
+bool(true)
+Cannot write to a read-only Tensor
+2/1
+2/2
 byte offset and strides
 int(0)
 array(2) {
@@ -196,8 +208,7 @@ packed fp4 odd row ValueError: Axis 0 of a packed sub-byte tensor has a stride o
 NULL strides 1.3   ValueError: Tensors without strides are illegal since DLPack 1.2
 9 dims             ValueError: Unsupported number of dimensions (9); expected 0 to 8
 negative dim       ValueError: Negative dimension in shape
-zero stride        ValueError: Zero and negative strides are not supported
-negative stride    ValueError: Zero and negative strides are not supported
+negative stride    ValueError: Negative strides are not supported
 misaligned offset: accepted
 misaligned f64: accepted
 major version 2    ValueError: Unsupported DLPack major version 2 (expected 1)

@@ -1,7 +1,7 @@
 --TEST--
 Tensor::fromArray(): ragged arrays, range checks, type errors
 --SKIPIF--
-<?php if (!extension_loaded('buffers')) die('skip buffers extension not loaded'); ?>
+<?php if (!extension_loaded('buffers')) die('skip buffers extension not loaded'); if (PHP_INT_SIZE < 8) die('skip 64-bit PHP only: 64-bit dtypes'); ?>
 --FILE--
 <?php
 use Buffers\{Tensor, DType};

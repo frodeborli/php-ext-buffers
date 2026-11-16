@@ -82,8 +82,8 @@ string in shape        TypeError: Buffers\Buffer::view(): Argument #2 ($shape) m
 float in shape         TypeError: Buffers\Buffer::view(): Argument #2 ($shape) must contain only integers, float given
 string shape           TypeError: Buffers\Buffer::view(): Argument #2 ($shape) must be of type array|int|null, string given
 strides wrong count    ValueError: Buffers\Buffer::view(): Argument #3 ($strides) must have one entry per dimension (2)
-zero stride            ValueError: Buffers\Buffer::view(): Argument #3 ($strides) must contain only values of at least 1
-negative stride        ValueError: Buffers\Buffer::view(): Argument #3 ($strides) must contain only values of at least 1
+zero stride            ok shape=[2,2] strides=[0,1] off=0 dtype=UInt8
+negative stride        ValueError: Buffers\Buffer::view(): Argument #3 ($strides) must contain only non-negative values
 huge shape             ValueError: (too large)
 huge stride            ValueError: (too large)
 overflow product       ValueError: (too large)

@@ -1,7 +1,7 @@
 --TEST--
 DataView: single values at any byte offset, little-endian by default, matching pack()/unpack()
 --SKIPIF--
-<?php if (!extension_loaded('buffers')) die('skip buffers extension not loaded'); ?>
+<?php if (!extension_loaded('buffers')) die('skip buffers extension not loaded'); if (PHP_INT_SIZE < 8) die('skip 64-bit PHP only: 64-bit dtypes'); ?>
 --FILE--
 <?php
 use Buffers\{DType, Buffer, DataView};

@@ -89,7 +89,7 @@ static void store(int dt, uint8_t *p, int64_t i, const wide *w)
 	else if ((w->cls == BUF_INT || w->cls == BUF_UINT) && dt != BUF_T_FLOAT64 && dt != BUF_T_COMPLEX128)
 		/* an integer to a format no wider than Float32: rounded to Float32 once (as numpy and ml_dtypes do), not through a
 		 * double, which would round a 64-bit integer twice */
-		d = w->cls == BUF_UINT ? (double)(float)(uint64_t)w->i : (double)(float)w->i;
+		d = (double)(float)buf_int_for_rounding((uint64_t)w->i, w->cls == BUF_INT);
 	else d = as_double(w);
 	switch (dt) {
 	case BUF_T_INT2: case BUF_T_INT4: case BUF_T_UINT2: case BUF_T_UINT4:

@@ -265,8 +265,8 @@ Float6E2M3FN
   1.0E-10    code=00 0.0
   INF        code=1f 7.5
   -INF       code=3f -7.5
-  NAN        code=20 -0
-  -NAN       code=00 0.0
+  NAN        code=00 0.0
+  -NAN       code=20 -0
 Float6E3M2FN
   0.0        code=00 0.0
   -0.0       code=20 -0
@@ -291,8 +291,8 @@ Float6E3M2FN
   1.0E-10    code=00 0.0
   INF        code=1f 28.0
   -INF       code=3f -28.0
-  NAN        code=20 -0
-  -NAN       code=00 0.0
+  NAN        code=00 0.0
+  -NAN       code=20 -0
 Float4E2M1FN
   0.0        code=00 0.0
   -0.0       code=08 -0
@@ -317,8 +317,8 @@ Float4E2M1FN
   1.0E-10    code=00 0.0
   INF        code=07 6.0
   -INF       code=0f -6.0
-  NAN        code=08 -0
-  -NAN       code=00 0.0
+  NAN        code=00 0.0
+  -NAN       code=08 -0
 decode every code
 Float8E3M4           256 codes, md5 29022d0b44a1cb48af09c56301801f87
 Float8E4M3           256 codes, md5 b12935c48a7565a05fe17c4378e2bd7f

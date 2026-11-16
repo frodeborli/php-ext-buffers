@@ -56,7 +56,7 @@ BUF_INLINE uint32_t buf_enc(uint64_t u, int SE, int SM, int SB, int E, int M, in
 
 	if (a > infbits) { /* NaN */
 		if (kind == BUF_K_FNUZ) return sbit;
-		if (kind == BUF_K_SAT) return s ? 0 : sbit; /* ml_dtypes quirk: the sign is inverted */
+		if (kind == BUF_K_SAT) return sgn; /* no NaN in the format: zero of the same sign */
 		if (kind == BUF_K_HALF) {
 			uint32_t r = inf + (uint32_t)((a & ((1ull << SM) - 1)) >> (SM - M));
 			return sgn | (r == inf ? r + 1 : r); /* a payload that would shift out still has to be a NaN */

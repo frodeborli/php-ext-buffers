@@ -335,12 +335,42 @@ final class DataViewAccessor implements \ArrayAccess
  */
 final class Tensor implements TensorAggregate, \Countable, \ArrayAccess, \IteratorAggregate, \JsonSerializable
 {
+    /** The most axes a tensor can have. (Registered by the extension at startup.) */
+    public const int MAX_NDIM = 8;
     /** Itself. */
     public function getTensor(): Tensor {}
     /** The same as $dtype. */
     public function getDType(): DType {}
     /** The same as $shape. */
     public function getShape(): Shape {}
+    /**
+     * A view of every $step-th element of $axis from $start: $length of them, or as many as fit (null). $start is between 0 and
+     * the length of the axis, $step at least 1. A packed dtype's last axis takes only step 1 and a start on a whole byte.
+     */
+    public function slice(int $axis, int $start, ?int $length = null, int $step = 1): Tensor {}
+    /** A view with $axis1 and $axis2 swapped; by default the last two (a matrix transpose). */
+    public function transpose(int $axis1 = -2, int $axis2 = -1): Tensor {}
+    /** A view with the axes in another order: axis i of the result is axis $axes[i] of this tensor. */
+    public function permute(array $axes): Tensor {}
+    /**
+     * A view with another shape of the same number of elements (one dimension may be -1: inferred). ValueError when the
+     * strides do not allow a view; reshape a copy() then. A packed dtype keeps its last axis.
+     */
+    public function reshape(array $shape): Tensor {}
+    /** A view without the axes of length 1, or without just $axis (which must have length 1). */
+    public function squeeze(?int $axis = null): Tensor {}
+    /** A view with a new axis of length 1 at position $axis (0 to ndim; negative counts from the end). */
+    public function unsqueeze(int $axis): Tensor {}
+    /**
+     * A read-only view with $shape: axes are aligned from the right, and an axis of length 1 (or a missing one) repeats its
+     * element with a stride of 0.
+     */
+    public function broadcastTo(array $shape): Tensor {}
+    /**
+     * The elements, byte for byte: a new C-contiguous host tensor, or written into $into (a writable tensor of the same dtype
+     * and shape), which is returned. Overlapping memory is handled.
+     */
+    public function copy(?Tensor $into = null): Tensor {}
     /** The length of the first axis. A 0-d view has no axes: Error. */
     public function count(): int {}
     /** Whether $offset is a valid index of the first axis. */

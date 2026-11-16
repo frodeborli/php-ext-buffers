@@ -35,7 +35,9 @@
 
 /* ---- dtypes ---------------------------------------------------------------------------- */
 
-/* The order of the cases of the Buffers\DType enum. */
+/* The order of the cases of the Buffers\DType enum. Dtypes are only ever appended, never reordered or removed, so these values
+ * are stable; but a later version may have more: compare a dtype with buffers_dtype_count() (not BUFFERS_DT_COUNT, the count
+ * this header was compiled with) before indexing a table, and treat values you do not know as unsupported. */
 enum {
 	BUFFERS_DT_BOOL, BUFFERS_DT_INT2, BUFFERS_DT_INT4, BUFFERS_DT_INT8, BUFFERS_DT_INT16, BUFFERS_DT_INT32, BUFFERS_DT_INT64,
 	BUFFERS_DT_UINT2, BUFFERS_DT_UINT4, BUFFERS_DT_UINT8, BUFFERS_DT_UINT16, BUFFERS_DT_UINT32, BUFFERS_DT_UINT64,
@@ -60,6 +62,8 @@ typedef struct {
 
 /* dtype is a BUFFERS_DT_* value */
 BUFFERS_API const buffers_dtype_desc *buffers_dtype_describe(int dtype);
+/* The number of dtypes of the loaded ext-buffers (BUFFERS_DT_COUNT or more) */
+BUFFERS_API int buffers_dtype_count(void);
 /* the Buffers\DType case object (a new reference in *rv) */
 BUFFERS_API void buffers_dtype_to_zval(int dtype, zval *rv);
 /* index of a Buffers\DType case object */

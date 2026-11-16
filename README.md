@@ -202,7 +202,16 @@ final class Tensor implements TensorAggregate, Countable, ArrayAccess, IteratorA
     // operators: + - * / % ** << >> & | ^ ~ element-wise, see "Arithmetic"
     public function getTensor(): Tensor;            // itself
     public function getDType(): DType;
+    public const MAX_NDIM = 8;                      // the most axes a tensor can have
     public function getShape(): Shape;
+    public function slice(int $axis, int $start, ?int $length = null, int $step = 1): Tensor;   // views: see "Views"
+    public function transpose(int $axis1 = -2, int $axis2 = -1): Tensor;
+    public function permute(array $axes): Tensor;
+    public function reshape(array $shape): Tensor;
+    public function squeeze(?int $axis = null): Tensor;
+    public function unsqueeze(int $axis): Tensor;
+    public function broadcastTo(array $shape): Tensor;
+    public function copy(?Tensor $into = null): Tensor;   // the elements, byte for byte: a new contiguous tensor, or into $into
     public function convert(DType $dtype, ?array $axes = null): Tensor;   // another dtype (see "Conversion") and/or axis order; a new host tensor
     public function to(Device $device): Tensor;     // the same tensor on another device (see "Devices and files")
     public static function fromArray(array|int|float|bool $data, ?DType $dtype = null, ?Device $device = null): Tensor;
@@ -234,7 +243,8 @@ final class DataViewAccessor implements ArrayAccess { // values of one type at a
 * `shape`: `null` = 1-D covering the rest of the buffer (the remaining size must be a whole number of elements);
   an `int` = 1-D of that length; an `array` of 0-8 non-negative ints = n-D. **`[]` makes a 0-d view of one
   element** (see below).
-* `strides`: in elements, one per dimension, each at least 1 (negative and zero strides are rejected);
+* `strides`: in elements, one per dimension, each at least 0 (negative strides are rejected). A stride of 0 repeats one element along
+  an axis (a broadcast); a view with a stride of 0 on an axis of more than one element is read-only;
   `null` = C-contiguous. Overlapping strides are allowed.
 * `offset`: bytes, any offset: a `Float32` at byte 1 can be viewed, read and written like any other (elements are loaded and stored
   with `memcpy`, so alignment never matters to PHP code). Alignment matters only to native code that loads through typed pointers: it
@@ -281,6 +291,39 @@ is a scalar.
 | `Bool`               | `bool`                                    | `bool` only                                             |
 | float dtypes         | `float`                                   | `int` or `float`, rounded to nearest even               |
 | `Complex*`           | `[re, im]`                                | a number, or `[re, im]`                                 |
+
+### Views
+
+These methods return a new `Tensor` over the same memory (a view): writing through it changes the original, and nothing
+is copied. Negative axes count from the end.
+
+```php
+$m = Tensor::fromArray(range(0, 11), DType::Float32)->reshape([3, 4]);
+$m->slice(1, 1, 2);            // columns 1 and 2: [3, 2]
+$m->slice(0, 0, null, 2);      // every other row: [2, 4]
+$m->transpose();               // [4, 3]; transpose($a, $b) swaps any two axes
+$m->permute([1, 0]);           // the axes in any order
+$m->reshape([2, -1]);          // [2, 6]; -1 is inferred
+$m->unsqueeze(0)->squeeze();   // [1, 3, 4], back to [3, 4]
+Tensor::fromArray([1, 2, 3, 4], DType::Float32)->broadcastTo([3, 4]);   // read-only, stride 0 on axis 0
+$m->transpose()->copy();       // a contiguous copy
+```
+
+* `slice($axis, $start, $length = null, $step = 1)`: every `$step`-th element of the axis from `$start` (0 to the axis length),
+  `$length` of them or as many as fit. `$step` is at least 1.
+* `reshape($shape)`: the same elements in another shape, with at most one `-1`. When the strides do not allow a view (a
+  transposed tensor into fewer axes, for example) it is a `ValueError`; `$t->copy()->reshape(...)` copies first. It never
+  copies by itself, so whether the result shares memory does not depend on the layout.
+* `squeeze()` drops every axis of length 1, `squeeze($axis)` just that one (it must have length 1); `unsqueeze($axis)` adds one
+  at position `$axis` (0 to `ndim`).
+* `broadcastTo($shape)`: axes are aligned from the right; an axis of length 1, or a missing one, repeats its element with a
+  stride of 0. The result is read-only.
+* `copy(?Tensor $into = null)` copies the elements byte for byte (NaN payloads included): into a new C-contiguous tensor in host
+  memory, or into `$into`, a writable tensor of the same dtype and shape, which is returned. That is how to write into memory that
+  other views share on purpose (`$src->copy($big->slice(1, 1, 2))`); a copy into memory overlapping the source reads all of it first.
+* The packed sub-byte dtypes keep their last axis last and contiguous: `slice()` of it takes step 1 and a start on a whole byte,
+  `reshape()` keeps its length, and `transpose()`, `permute()`, `unsqueeze()` and `broadcastTo()` cannot move or repeat it
+  (`ValueError`).
 
 ### Conversion
 
@@ -363,8 +406,9 @@ $m = Tensor::fromArray([[1, 2], [3, 4]], DType::Int16) + $bias;   // Int16, the 
   `<=>` gives 1. A tensor is truthy like every object. `Buffer`, `DataView` and devices compare the same way.
 * Tensors on another device (a GPU) are computed by a backend that the extension owning the device registered; without
   one, or for operands on different devices, it is an `Error` naming the devices (no implicit copies).
-* Speed: plain C loops the compiler vectorizes, with a variant per CPU class (SSE2, AVX2, AVX-512 on x86-64) chosen when
-  the extension loads; every variant gives the same bits. See Performance for measurements.
+* Speed: plain C loops the compiler vectorizes. Built with GCC for x86-64 Linux (glibc), each loop exists for the baseline,
+  x86-64-v3 (AVX2) and x86-64-v4 (AVX-512), and the dynamic loader picks the one for the CPU; every variant gives the same
+  bits. See Performance for measurements.
 
 ### DataView
 
@@ -503,12 +547,18 @@ once. `/dev/shm` (or any tmpfs) keeps it in memory. **There is no synchronisatio
 
 ## Dtypes
 
-Follows [ml_dtypes](https://github.com/jax-ml/ml_dtypes) 0.5.4 for every format, byte for byte (see
+Follows [ml_dtypes](https://github.com/jax-ml/ml_dtypes) 0.5.4 for every format, byte for byte, except that NaN written into the
+float6/float4 formats (which have no NaN) is stored as zero of the same sign (see
 [Verification](#verification)). Elements are stored **little-endian on every machine**, like WebAssembly memory,
 safetensors, GGUF and ONNX files, so the same bytes mean the same numbers everywhere (there is no byte-order option;
 `DataView` reads and writes either order explicitly). Every supported 64-bit platform is little-endian, where this
 costs nothing; on a big-endian machine elements are byte-swapped on access, and DLPack exchange (which uses the host's
 order) of multi-byte dtypes is refused.
+
+Every dtype is a format of single elements. Block-scaled formats (MXFP4/6/8, NVFP4, the quantization blocks of GGUF) are
+not dtypes: stored as separate planes they are a tensor of elements plus a tensor of scales (for example `Float4E2M1FN`
+and `Float8E8M0FNU`); stored interleaved they are `UInt8` bytes that the library knowing the block layout interprets.
+DType cases are only ever added, never reordered or removed.
 
 | `DType`              | value                | bits | bytes | DLPack code/bits (C API) | notes |
 |----------------------|----------------------|-----:|------:|------------------|-------|
@@ -536,8 +586,8 @@ order) of multi-byte dtypes is refused.
 | `Float4E2M1FN`       | `float4_e2m1fn`      | 4    | null  | 17 / 4           | **packed**; saturating |
 
 Conversions from PHP's double go through float32 first for every format except `Float16` (direct from double),
-exactly as ml_dtypes does, and round to nearest even. Writing NaN into the saturating float6/float4 formats stores
-ml_dtypes' quirk: a NaN with the sign bit clear becomes negative zero and one with it set becomes positive zero. The
+exactly as ml_dtypes does, and round to nearest even. The saturating float6/float4 formats have no NaN: writing NaN stores
+zero of the same sign (`-NaN` gives `-0`). The
 small formats (at most 8 bits) decode through a 256-entry lookup table built at startup from the same format
 descriptors the encoder uses; the encoders are integer bit manipulation specialised per format (no floating point
 rounding mode is involved).
@@ -619,7 +669,7 @@ and `buffers_device_dlpack()`).
 * **Import** wraps the foreign memory in a `Buffer` and returns a `Tensor`; the tensor's deleter runs exactly once, when that buffer is
   freed (and, if the import is rejected, the caller still owns the tensor). For host-accessible tensors the buffer covers exactly the
   tensor's extent, so `$v->offset` starts at 0; for other devices the opaque data pointer and byte offset are kept. Any device, one lane,
-  0-8 dimensions and strides of at least 1 are imported (host data need not be aligned: the view is then unaligned); **padded** sub-byte tensors
+  0-8 dimensions and strides of at least 0 are imported (a stride of 0 on an axis of more than one element gives a read-only view) (host data need not be aligned: the view is then unaligned); **padded** sub-byte tensors
   are rejected; versions below 1.2 may pass NULL strides (compact row-major). Anything else throws `ValueError` with the reason.
   Devices that are not on the CPU become a `ForeignDevice` (host-accessible only for CUDA-host, ROCm-host and CUDA-managed).
 * The DLPack device type of the `Device` class of another extension is declared with `buffers_register_device_type()`.
@@ -634,7 +684,7 @@ and has phpt tests; read it as the example.
 
 | Area | Functions |
 |------|-----------|
-| classes, dtypes | `buffers_get_class()`, `buffers_dtype_describe()`, `buffers_dtype_to_zval()`, `buffers_dtype_from_object()`, `buffers_dtype_from_dlpack()` |
+| classes, dtypes | `buffers_get_class()`, `buffers_dtype_describe()`, `buffers_dtype_count()` (the dtypes of the loaded extension: check values against it, not against the compiled `BUFFERS_DT_COUNT`), `buffers_dtype_to_zval()`, `buffers_dtype_from_object()`, `buffers_dtype_from_dlpack()` |
 | devices | `buffers_cpu_device()`, `buffers_file_device()`, `buffers_implement_device()` (declare `$name`, `$id`, `$hostAccessible` with three get hooks), `buffers_register_device_type()`, `buffers_device_dlpack()`, `buffers_register_transfer()`, `buffers_tensor_to()` |
 | tensors | `buffers_is_tensor()`, `buffers_tensor_get_info()` (data pointer, dtype, ndim, shape, strides in elements, byte offset, buffer object, writable; views may start at any byte offset and the pointer is handed over as it is: strides are in elements, so the tensor is aligned exactly when `data % size == 0`, which a consumer that needs alignment checks itself), `buffers_tensor_create()` (validated exactly like `view()`) |
 | buffers | `buffers_is_buffer()`, `buffers_buffer_get_info()` (base, length, writable, host accessible, device), `buffers_buffer_create_foreign()` (memory + deleter + device), `buffers_buffer_create_owned()` (memory kept alive by a PHP object: holds a reference to the owner and releases it on free, no deleter), `buffers_buffer_file_origin()` (the path and offset of a mapped `Buffer::fromFile()` buffer, additive, no version bump: refer to the bytes instead of copying them), `buffers_hold()`, `buffers_release()` |

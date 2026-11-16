@@ -230,33 +230,15 @@ static uint16_t enc_bf16_from_double(double d)
 	return (uint16_t)buf_enc(u, 11, 52, 1023, 8, 7, 127, BUF_K_IEEE);
 }
 
-/* a 64-bit integer magnitude as a double that rounds like it to any format of at most 51 bits: exact below 2^53, else the
- * dropped bits are folded into a sticky lowest bit (rounding to odd), so the later rounding sees "more than half" */
-static double sticky_double(uint64_t m)
-{
-	int k = 0;
-
-	if (m < (1ull << 53)) return (double)m;
-	while ((m >> k) >= (1ull << 53)) k++;
-	return ldexp((double)((m >> k) | ((m & ((1ull << k) - 1)) != 0)), k);
-}
-
 /* an integer (bits: two's complement when is_signed) rounded to the float result dtype rt, as a float (rt narrower than Float64) */
 static float int_to_rt(uint64_t bits, bool is_signed, int rt)
 {
-	bool neg = is_signed && (int64_t)bits < 0;
-	uint64_t mag = neg ? 0 - bits : bits;
+	double d = buf_int_for_rounding(bits, is_signed);
 
 	switch (rt) {
-	case BUF_T_FLOAT32: return is_signed ? (float)(int64_t)bits : (float)bits;
-	case BUF_T_FLOAT16: {
-		double d = sticky_double(mag);
-		return (float)buf_dec_FLOAT16(buf_enc_FLOAT16(neg ? -d : d));
-	}
-	default: {   /* BFloat16 */
-		double d = sticky_double(mag);
-		return (float)buf_dec_BFLOAT16(enc_bf16_from_double(neg ? -d : d));
-	}
+	case BUF_T_FLOAT32: return (float)d;
+	case BUF_T_FLOAT16: return (float)buf_dec_FLOAT16(buf_enc_FLOAT16(d));
+	default: return (float)buf_dec_BFLOAT16(enc_bf16_from_double(d));   /* BFloat16 */
 	}
 }
 

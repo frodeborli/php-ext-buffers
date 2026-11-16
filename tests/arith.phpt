@@ -59,7 +59,6 @@ $cases = [
     'negative shift' => fn() => $a << -1,
     'shapes' => fn() => $a + Tensor::fromArray([1, 2], DType::Int32),
     'f16 + bf16' => fn() => Tensor::fromArray([1.0], DType::Float16) + Tensor::fromArray([1.0], DType::BFloat16),
-    'u64 + i8' => fn() => Tensor::fromArray([1], DType::UInt64) + $i8,
     'bool arithmetic' => fn() => Tensor::fromArray([true]) + Tensor::fromArray([true]),
     'bool and int' => fn() => Tensor::fromArray([true]) & 1,
     'float shift' => fn() => $f16 << 1,
@@ -135,7 +134,6 @@ negative exponent: ValueError: Negative exponent in an integer power; convert() 
 negative shift: ArithmeticError: Bit shift by negative number
 shapes: ValueError: Operands could not be broadcast together: shapes [2, 3] and [2]
 f16 + bf16: TypeError: Unsupported operand dtypes for +: Float16 and BFloat16 have no common dtype; convert() one of them
-u64 + i8: TypeError: Unsupported operand dtypes for +: UInt64 and Int8 have no common dtype; convert() one of them
 bool arithmetic: TypeError: Unsupported operand dtypes for +: Bool and Bool (Bool supports only & | ^ ~; convert() to an integer dtype for arithmetic)
 bool and int: TypeError: Unsupported operand dtypes for &: Bool and int (Bool combines only with Bool; convert() to an integer dtype)
 float shift: TypeError: Unsupported operand dtypes for <<: Float16 and int (bitwise operators and shifts need integer operands)

@@ -153,8 +153,8 @@ zend_object *buf_view_import(DLManagedTensorVersioned *t)
 		/* a scalar: nothing to read */
 	} else if (d->strides) {
 		for (int i = 0; i < ndim; i++) {
-			if (d->strides[i] < 1) {
-				IMPORT_FAIL("Zero and negative strides are not supported");
+			if (d->strides[i] < 0) {
+				IMPORT_FAIL("Negative strides are not supported");
 			}
 			st[i] = d->strides[i];
 		}
@@ -246,7 +246,8 @@ zend_object *buf_view_import(DLManagedTensorVersioned *t)
 		return NULL;
 	}
 	/* the buffer now owns the tensor: its deleter runs exactly once, when the buffer is freed */
-	view = buf_view_new(buf, dt, ndim, shape, sb, host ? base : base + d->byte_offset, buf_buffer_from(buf)->writable, buf_buffer_from(buf)->slow);
+	view = buf_view_new(buf, dt, ndim, shape, sb, host ? base : base + d->byte_offset,
+		buf_buffer_from(buf)->writable && !buf_is_broadcast(ndim, shape, st), buf_buffer_from(buf)->slow);
 	OBJ_RELEASE(buf);
 	return view;
 }

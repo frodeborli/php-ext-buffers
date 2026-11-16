@@ -1,7 +1,7 @@
 --TEST--
 C API and DLPack with views at any byte offset: the pointer is handed over as it is; unaligned imports
 --SKIPIF--
-<?php if (!extension_loaded('buffers_api_test')) die('skip needs the buffers_api_test extension'); ?>
+<?php if (!extension_loaded('buffers_api_test')) die('skip needs the buffers_api_test extension'); if (PHP_INT_SIZE < 8) die('skip 64-bit PHP only: 64-bit dtypes'); ?>
 --FILE--
 <?php
 use Buffers\{DType, Buffer};
