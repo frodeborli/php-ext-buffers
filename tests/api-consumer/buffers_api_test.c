@@ -637,7 +637,7 @@ static zend_object *bat_transfer(zend_object *view, zend_object *device)
  * with buffers_dlpack_import(). A rejected tensor is released by its deleter, once. */
 typedef struct {
 	DLManagedTensorVersioned t;
-	int64_t shape[16], strides[16]; /* more than BUFFERS_MAX_NDIM, so tests can ask for 9 dimensions */
+	int64_t shape[32], strides[32]; /* more than BUFFERS_MAX_NDIM, so tests can ask for 17 dimensions */
 	void *mem;
 } tensor_ctx;
 
@@ -667,7 +667,7 @@ PHP_FUNCTION(bat_import)
 		Z_PARAM_ARRAY_HT_OR_NULL(strides) Z_PARAM_LONG(flags) Z_PARAM_LONG(device) Z_PARAM_LONG(byte_offset) Z_PARAM_LONG(minor) Z_PARAM_LONG(major) Z_PARAM_LONG(device_id)
 	ZEND_PARSE_PARAMETERS_END();
 
-	if (zend_hash_num_elements(shape) > 16 || (strides && zend_hash_num_elements(strides) > 16)) {
+	if (zend_hash_num_elements(shape) > 32 || (strides && zend_hash_num_elements(strides) > 32)) {
 		zend_argument_value_error(4, "has too many dimensions for the test helper");
 		RETURN_THROWS();
 	}

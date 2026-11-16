@@ -201,7 +201,7 @@ final class Buffer
     /** Whether the bytes can be read and written from PHP: authoritative for this buffer (a mapped file is, its device is not). */
     public function isHostAccessible(): bool {}
     /**
-     * $shape: null is 1-D over the rest of the buffer, an int is 1-D of that length, an array has 0 to 8
+     * $shape: null is 1-D over the rest of the buffer, an int is 1-D of that length, an array has 0 to 16
      * dimensions ([] makes a 0-d view of one element). $strides are in elements, each at least 0 (null is
      * C-contiguous; a stride of 0 on an axis longer than 1 makes the view read-only). $offset is in bytes. Packed sub-byte dtypes have extra rules, see the README.
      */
@@ -335,7 +335,7 @@ final class DataViewAccessor implements \ArrayAccess
 final class Tensor implements TensorAggregate, \Countable, \ArrayAccess, \IteratorAggregate, \JsonSerializable
 {
     /** The most axes a tensor can have. (Registered by the extension at startup.) */
-    public const int MAX_NDIM = 8;
+    public const int MAX_NDIM = 16;
     /** Itself. */
     public function getTensor(): Tensor {}
     /** The same as $dtype. */

@@ -36,7 +36,7 @@
 /* The most axes a tensor of the ext-buffers this header comes with can have. A later version may allow more, without an ABI change
  * (no struct of this API has an array of this size): an extension that keeps axes in fixed arrays of its own checks a tensor's ndim
  * against its own limit (and may compare with buffers_max_ndim(), the limit of the loaded extension). */
-#define BUFFERS_MAX_NDIM 8
+#define BUFFERS_MAX_NDIM 16
 BUFFERS_API int buffers_max_ndim(void);
 
 /* ---- dtypes ---------------------------------------------------------------------------- */

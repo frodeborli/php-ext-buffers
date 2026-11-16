@@ -200,7 +200,7 @@ final class Tensor implements TensorAggregate, Countable, ArrayAccess, IteratorA
     // read-only: DType $dtype, Shape $shape, int $ndim, list<int> $strides (in elements), int $offset (bytes), Buffer $buffer
     // read-write, 0-d views only: mixed $value
     // operators: + - * / % ** << >> & | ^ ~ element-wise, see "Arithmetic"
-    public const MAX_NDIM = 8;                      // the most axes a tensor can have
+    public const MAX_NDIM = 16;                     // the most axes a tensor can have
     public function getTensor(): Tensor;            // itself
     public function getDType(): DType;
     public function getShape(): Shape;
@@ -241,7 +241,7 @@ final class DataViewAccessor implements ArrayAccess { // values of one type at a
 ### `view()`
 
 * `shape`: `null` = 1-D covering the rest of the buffer (the remaining size must be a whole number of elements);
-  an `int` = 1-D of that length; an `array` of 0-8 non-negative ints = n-D. **`[]` makes a 0-d view of one
+  an `int` = 1-D of that length; an `array` of 0-16 non-negative ints = n-D. **`[]` makes a 0-d view of one
   element** (see below).
 * `strides`: in elements, one per dimension, each at least 0 (negative strides are rejected). A stride of 0 repeats one element along
   an axis (a broadcast); a view with a stride of 0 on an axis of more than one element is read-only;
@@ -621,7 +621,7 @@ read-modify-write, so neighbours are untouched and no byte outside the view's ex
 `Tensor::fromArray(array|int|float|bool $data, ?DType $dtype = null, ?Device $device = null)` makes a tensor from nested arrays and
 `$tensor->toArray()` gives them back (the same data as `jsonSerialize()`; a 0-d tensor gives the scalar).
 
-* The shape comes from the first path down the nesting (at most 8 levels); every other path must match it, or `ValueError` names the
+* The shape comes from the first path down the nesting (at most 16 levels); every other path must match it, or `ValueError` names the
   offending path (`ragged array at [2][1]: expected 2 elements, found 1`). Keys are ignored: values are taken in order. `[]` is shape `[0]`,
   `[[], []]` is `[2, 0]`; a scalar gives a 0-d tensor.
 * Without a dtype: int is `Int64` (`Int32` on 32-bit PHP), float `Float64`, bool `Bool`, int mixed with float `Float64`; bool mixed with numbers needs a
@@ -672,7 +672,7 @@ and `buffers_device_dlpack()`).
 * **Import** wraps the foreign memory in a `Buffer` and returns a `Tensor`; the tensor's deleter runs exactly once, when that buffer is
   freed (and, if the import is rejected, the caller still owns the tensor). For host-accessible tensors the buffer covers exactly the
   tensor's extent, so `$v->offset` starts at 0; for other devices the opaque data pointer and byte offset are kept. Any device, one lane,
-  0-8 dimensions and strides of at least 0 are imported (a stride of 0 on an axis of more than one element gives a read-only view) (host data need not be aligned: the view is then unaligned); **padded** sub-byte tensors
+  0-16 dimensions and strides of at least 0 are imported (a stride of 0 on an axis of more than one element gives a read-only view) (host data need not be aligned: the view is then unaligned); **padded** sub-byte tensors
   are rejected; versions below 1.2 may pass NULL strides (compact row-major). Anything else throws `ValueError` with the reason.
   Devices that are not on the CPU become a `ForeignDevice` (host-accessible only for CUDA-host, ROCm-host and CUDA-managed).
 * The DLPack device type of the `Device` class of another extension is declared with `buffers_register_device_type()`.
@@ -757,7 +757,7 @@ What has been run, on Linux x86-64 (Ubuntu host, Debian 12 and Alpine containers
   compared with NumPy `as_strided` over the same bytes; the packed formats checked with NumPy bit operations against ml_dtypes' decode and encode;
   0-d views checked for geometry): 30000 views (seed 101), 1.26 million elements, 14348 write passes, no mismatch.
   `SCRIPT=view_fuzz.py tools/oracle/run-fuzz.sh`: hostile `view()` arguments (including `[]`, and the packed rules) against an exact big-integer
-  model (any byte offset, strides of at least 0): 100000 calls (seed 102), 13340 accepted, 86660 rejected, no mismatch.
+  model (any byte offset, strides of at least 0): 100000 calls (seed 102), 12183 accepted, 87817 rejected, no mismatch.
 * Two processes sharing a `/dev/shm` mapping (`proc_open`), `createFile` + `flush` + reopen, and `writeTo`/`readFrom` over `php://memory`, a file and a
   socket pair (including short writes on a non-blocking socket) are phpt tests.
 * Byte order: a build with `-DBUF_FORCE_SWAP` stores elements byte-swapped on a little-endian host, which is what a big-endian

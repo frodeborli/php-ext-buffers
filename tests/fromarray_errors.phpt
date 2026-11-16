@@ -22,8 +22,8 @@ t('array for scalar, explicit dtype', fn() => Tensor::fromArray([[1, 2], [[3], 4
 t('empty vs not', fn() => Tensor::fromArray([[], [1]]));
 t('not vs empty', fn() => Tensor::fromArray([[1], []]));
 t('first is empty', fn() => Tensor::fromArray([[], [[]]]));
-t('depth 8 is fine', fn() => Tensor::fromArray([[[[[[[[1]]]]]]]]));
-t('depth 9', fn() => Tensor::fromArray([[[[[[[[[1]]]]]]]]]));
+t('depth 16 is fine', fn() => Tensor::fromArray([[[[[[[[[[[[[[[[1]]]]]]]]]]]]]]]]));
+t('depth 17', fn() => Tensor::fromArray([[[[[[[[[[[[[[[[[1]]]]]]]]]]]]]]]]]));
 
 // values that are not numbers
 t('string', fn() => Tensor::fromArray([1, 'a']));
@@ -84,8 +84,8 @@ array for scalar, explicit dtype: ValueError: Tensor::fromArray(): ragged array 
 empty vs not: ValueError: Tensor::fromArray(): ragged array at [1]: expected 0 elements, found 1
 not vs empty: ValueError: Tensor::fromArray(): ragged array at [1]: expected 1 elements, found 0
 first is empty: ValueError: Tensor::fromArray(): ragged array at [1]: expected 0 elements, found 1
-depth 8 is fine: ok [[[[[[[[1]]]]]]]]
-depth 9: ValueError: Tensor::fromArray(): the array is nested more than 8 levels deep
+depth 16 is fine: ok [[[[[[[[[[[[[[[[1]]]]]]]]]]]]]]]]
+depth 17: ValueError: Tensor::fromArray(): the array is nested more than 16 levels deep
 string: ValueError: Tensor::fromArray(): unsupported value at [1]: expected an int, float or bool, found string
 null: ValueError: Tensor::fromArray(): unsupported value at [1][1]: expected an int, float or bool, found null
 object: ValueError: Tensor::fromArray(): unsupported value at [0]: expected an int, float or bool, found stdClass

@@ -30,7 +30,7 @@ $cases = [
   'negative dim'           => [DType::UInt8, [-1]],
   'negative int shape'     => [DType::UInt8, -3],
   'empty shape'            => [DType::UInt8, []],
-  '9 dims'                 => [DType::UInt8, [1,1,1,1,1,1,1,1,1]],
+  '17 dims'                => [DType::UInt8, [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1]],
   '8 dims'                 => [DType::UInt8, [1,1,1,1,1,1,1,1]],
   'string in shape'        => [DType::UInt8, ['3']],
   'float in shape'         => [DType::UInt8, [3.0]],
@@ -76,7 +76,7 @@ uneven default shape   ValueError: Buffers\Buffer::view(): Argument #2 ($shape) 
 negative dim           ValueError: Buffers\Buffer::view(): Argument #2 ($shape) must contain only non-negative values
 negative int shape     ValueError: Buffers\Buffer::view(): Argument #2 ($shape) must be non-negative
 empty shape            ok shape=[] strides=[] off=0 dtype=UInt8
-9 dims                 ValueError: Buffers\Buffer::view(): Argument #2 ($shape) must have at most 8 elements
+17 dims                ValueError: Buffers\Buffer::view(): Argument #2 ($shape) must have at most 16 elements
 8 dims                 ok shape=[1,1,1,1,1,1,1,1] strides=[1,1,1,1,1,1,1,1] off=0 dtype=UInt8
 string in shape        TypeError: Buffers\Buffer::view(): Argument #2 ($shape) must contain only integers, string given
 float in shape         TypeError: Buffers\Buffer::view(): Argument #2 ($shape) must contain only integers, float given

@@ -72,7 +72,7 @@ $cases = [
   'packed fp4 last'   => [17, 4, 1, [4], [2]],
   'packed fp4 odd row'=> [17, 4, 1, [2, 3], [3, 1]],
   'NULL strides 1.3'  => [UINT, 8, 1, [2, 3], null],
-  '9 dims'            => [UINT, 8, 1, [1,1,1,1,1,1,1,1,1], [1,1,1,1,1,1,1,1,1]],
+  '17 dims'           => [UINT, 8, 1, [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1], [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1]],
   'negative dim'      => [UINT, 8, 1, [-1], [1]],
   'negative stride'   => [UINT, 8, 1, [2, 2], [-2, 1]],
   'misaligned offset' => [INT, 16, 1, [2], [1], 0, 1, 1],
@@ -206,7 +206,7 @@ packed fp6 stride  ValueError: Axis 0 of a packed sub-byte tensor has a stride o
 packed fp4 last    ValueError: The last axis of a packed sub-byte tensor must have stride 1
 packed fp4 odd row ValueError: Axis 0 of a packed sub-byte tensor has a stride of 12 bits, which is not a whole number of bytes
 NULL strides 1.3   ValueError: Tensors without strides are illegal since DLPack 1.2
-9 dims             ValueError: Unsupported number of dimensions (9); expected 0 to 8
+17 dims            ValueError: Unsupported number of dimensions (17); expected 0 to 16
 negative dim       ValueError: Negative dimension in shape
 negative stride    ValueError: Negative strides are not supported
 misaligned offset: accepted

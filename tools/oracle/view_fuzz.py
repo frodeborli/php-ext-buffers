@@ -29,7 +29,7 @@ for _ in range(N):
     name = rnd.choice(list(INT) + list(PACKED) * 3)
     ln = rnd.choice([0, 1, 7, 8, 16, 24, 64, 100, 4096])
     esize = INT[name][1] if name in INT else 1
-    ndim = rnd.choice([0, 1, 1, 2, 2, 3, 4, 8, 9])
+    ndim = rnd.choice([0, 1, 1, 2, 2, 3, 4, 8, 16, 17])
     shape = [num() for _ in range(ndim)]
     mode = rnd.random()
     if mode < 0.15: shape = rnd.choice([None, num()])
@@ -56,7 +56,7 @@ def model(c):
         if sh < 0: return "reject"
         shape = [sh]
     else:
-        if len(sh) > 8 or any(x < 0 for x in sh): return "reject"
+        if len(sh) > 16 or any(x < 0 for x in sh): return "reject"
         shape = list(sh)
     nd = len(shape)
     st = c["strides"]
