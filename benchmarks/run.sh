@@ -13,6 +13,9 @@ common="-n -d memory_limit=-1 -d extension=$so $opc -d zend.assertions=-1 -d opc
 tmp=$(mktemp -d)
 $php $common -d opcache.jit=off "$here/bench.php" "$section" > "$tmp/interp.tsv"
 $php $common -d opcache.jit=tracing -d opcache.jit_buffer_size=128M "$here/bench.php" "$section" > "$tmp/jit.tsv"
+cpu=$(sed -n 's/^model name[[:space:]]*: //p' /proc/cpuinfo 2>/dev/null | head -1)
+[ -n "$cpu" ] || cpu=$(sysctl -n machdep.cpu.brand_string 2>/dev/null || uname -m)
+echo "== CPU: $cpu"
 echo "== $($php -r 'echo PHP_VERSION, PHP_ZTS ? " ZTS" : " NTS";'): $( [ "$section" = memory ] && echo "memory per element" || echo "ns per element access (best of N), lower is better")"
 awk -F'\t' 'FNR==NR { i[$1]=$2; if (!($1 in order)) { order[$1]=++n; names[n]=$1 } next } { j[$1]=$2 } END {
   for (k=1;k<=n;k++) { nm=names[k]; if (nm ~ /^memory/) continue; printf "%-34s interpreter %8.1f   JIT %8.1f\n", nm, i[nm], j[nm] } }' "$tmp/interp.tsv" "$tmp/jit.tsv"

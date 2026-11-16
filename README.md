@@ -57,10 +57,12 @@ $f[$y * $width * 4 + $x * 4 + 3] = 255;                  // write
 $base = $y * $width * 4 + 3;  for ($x = 0; $x < $width; $x++) { $a = $f[$base + $x * 4]; }
 ```
 
-Measured on PHP 8.5.12 NTS, x86-64 (Linux), nanoseconds per element access, best of 5-12 runs over a 640x480 RGBA
+Measured on an Intel Xeon E5-2697 v3 (Haswell, 2.6 GHz), PHP 8.5.12 NTS, Linux, nanoseconds per element access, best of 5-12 runs over a 640x480 RGBA
 image. Interpreter = `opcache.jit=off`; JIT = `opcache.jit=tracing`, and a JIT column is only reported when
 opcache's JIT buffer shows that code was actually compiled (`opcache.file_update_protection=0` is required: by
-default opcache silently refuses to compile files younger than two seconds). Reproduce with `benchmarks/run.sh`.
+default opcache silently refuses to compile files younger than two seconds). Reproduce with `benchmarks/run.sh`, which prints the CPU it ran on.
+On a current desktop CPU (AMD Ryzen 9 9950X3D) every row is about 2.5-4x faster, for example the 1-D read idiom 9.0 ns interpreted and
+2.5 ns under the JIT; the ratios between rows are similar.
 
 | access (alpha byte of each pixel)       | interpreter | JIT  | ext-dlpack JIT (same machine) |
 |-----------------------------------------|------------:|-----:|------:|
@@ -82,12 +84,12 @@ default opcache silently refuses to compile files younger than two seconds). Rep
 | `+=`, view 1-D idiom | 29.0 | 15.7 | 15.8 |
 | `+=`, view chained | 70.7 | 62.5 | 61.5 |
 
-Median of three `benchmarks/run.sh` runs of each extension, back to back on the same machine (PHP 8.5.12, JIT buffer verified:
+Median of three `benchmarks/run.sh` runs of each extension, back to back on the same Xeon E5-2697 v3 (PHP 8.5.12, JIT buffer verified:
 "code was compiled"). The last column is the predecessor, ext-dlpack, built the same way: the 1-D and chained paths did not
 regress (every view row is within about 4%, which is the run-to-run noise). The 1-D read idiom is bimodal under the JIT (9.4 ns, and 7.9 ns in
 roughly one run in six, for both extensions: a code-layout effect, not a difference between them).
 
-Other numbers (JIT): a 1-D read costs 7-8 ns and a write 7-11 ns for every integer, float and small-float dtype, including the
+Other numbers (JIT, same Xeon): a 1-D read costs 7-8 ns and a write 7-11 ns for every integer, float and small-float dtype, including the
 packed formats (read 7.8, write 11.1: a shift and mask, and a read-modify-write); `Complex*` reads cost about 41-47 ns
 because they allocate an `[re, im]` array. Reading a property of a view costs 39 ns (`ndim`, `offset`) to 102 ns (`strides`, which builds an
 array; `shape` 92 ns builds a `Shape`); making a sub-view with `$v[$i & 15]` costs 23.5 ns in a loop. Memory per element (1M elements):
@@ -586,9 +588,10 @@ consumer loaded); `tools/valgrind.sh [8.x]`; `tools/docker-test.sh [image ...]` 
 
 ## Not in this version
 
-DLPack in PHP (it is C API only), writable file buffers, `get()`/`set()` methods, array/tuple offsets, `fill/copy/cast/reshape/transpose/slice`,
-clamped writes, padded sub-byte layouts, negative or zero strides, arithmetic by the extension itself (the operator hook
-is for other extensions), a byte-order option.
+DLPack in PHP (it is C API only), `get()`/`set()` methods on `Tensor`, array/tuple offsets, reshape and slice views, in-place
+`fill`/`copy`/`cast` of tensors (`Tensor::convert()` makes a converted, optionally transposed copy; `DataView::fill()` and `copyBytes()` work
+on bytes), clamped writes, padded sub-byte layouts, negative or zero strides, complex dtypes in `Tensor::fromArray()`, arithmetic by the
+extension itself (the operator hook is for other extensions), a byte-order option for `Tensor` (`DataView` takes `$bigEndian`).
 
 ## Licence
 
