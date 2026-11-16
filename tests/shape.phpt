@@ -4,7 +4,7 @@ Shape: validation, negative indices, immutability, iteration, size
 <?php if (!extension_loaded('buffers')) die('skip buffers extension not loaded'); ?>
 --FILE--
 <?php
-use Buffers\{Shape, Buffer, DType, TensorInterface};
+use Buffers\{Shape, Buffer, DType};
 $s = new Shape([2, 3, 4]);
 var_dump(count($s), $s[0], $s[2], $s[-1], $s[-3], $s->toArray(), $s->concrete, $s->size);
 var_dump(isset($s[0]), isset($s[-3]), isset($s[3]), isset($s[-4]), isset($s['x']), $s->offsetExists(1));
@@ -120,11 +120,11 @@ assign method    Error: Cannot modify a Shape: it is immutable
 unset            Error: Cannot modify a Shape: it is immutable
 unset method     Error: Cannot modify a Shape: it is immutable
 negative dim     ValueError: Shape dimension 1 must not be negative, -1 given
-float dim        TypeError: Shape dimension 0 must be of type int|Buffers\TensorInterface, float given
-string dim       TypeError: Shape dimension 0 must be of type int|Buffers\TensorInterface, string given
-object dim       TypeError: Shape dimension 0 must be of type int|Buffers\TensorInterface, stdClass given
-null dim         TypeError: Shape dimension 0 must be of type int|Buffers\TensorInterface, null given
-nested array     TypeError: Shape dimension 0 must be of type int|Buffers\TensorInterface, array given
+float dim        TypeError: Shape dimension 0 must be of type int|Buffers\TensorAggregate, float given
+string dim       TypeError: Shape dimension 0 must be of type int|Buffers\TensorAggregate, string given
+object dim       TypeError: Shape dimension 0 must be of type int|Buffers\TensorAggregate, stdClass given
+null dim         TypeError: Shape dimension 0 must be of type int|Buffers\TensorAggregate, null given
+nested array     TypeError: Shape dimension 0 must be of type int|Buffers\TensorAggregate, array given
 not a list       ValueError: Buffers\Shape::__construct(): Argument #1 ($dims) must be a list
 gap              ValueError: Buffers\Shape::__construct(): Argument #1 ($dims) must be a list
 no arguments     ArgumentCountError: Buffers\Shape::__construct() expects exactly 1 argument, 0 given

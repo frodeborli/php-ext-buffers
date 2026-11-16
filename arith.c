@@ -1,6 +1,6 @@
 /* Tensor arithmetic: the result dtype of an operator (type promotion).
  *
- * The rules of docs/proposal-arithmetic.md: the Python Array API standard's promotion, with its gaps filled. Operands
+ * The rules of docs/arithmetic.md: the Python Array API standard's promotion, with its gaps filled. Operands
  * are dtypes or the three kinds of PHP scalar, which are "weak" (they take the tensor's dtype). tests/promotion.tsv lists
  * the result of every pair and operator; tools/promotion-table.php generates it from a separate implementation of the
  * same rules, and tests/api-consumer/tests/promotion.phpt checks this one against it. */
@@ -129,6 +129,7 @@ int buf_dtype_promote(int a, int b, uint8_t op)
 #include "codec.h"
 #include "zend_exceptions.h"
 #include "zend_smart_str.h"
+#include "zend_interfaces.h"
 #include <math.h>
 
 #define CHUNK 256
@@ -496,7 +497,7 @@ static bool broadcast(const operand *ops, int nops, int *ndim, int64_t *shape)
  * bitwise not" */
 #define THROWN() do { if (op == ZEND_BW_NOT) { ZVAL_NULL(result); return SUCCESS; } return FAILURE; } while (0)
 
-zend_result buf_arith_do_operation(uint8_t op, zval *result, zval *op1, zval *op2)
+static zend_result arith_operation(uint8_t op, zval *result, zval *op1, zval *op2)
 {
 	operand ops[2];
 	int nops = op == ZEND_BW_NOT ? 1 : 2, rt, ndim;
@@ -636,4 +637,51 @@ zend_result buf_arith_do_operation(uint8_t op, zval *result, zval *op1, zval *op
 	OBJ_RELEASE(bufobj);   /* the view holds it */
 	ZVAL_OBJ(result, res);
 	return SUCCESS;
+}
+
+/* Operands, rule 4 of docs/arithmetic.md: an operand of a class that implements TensorAggregate and has no arithmetic of its own (a PHP class:
+ * a sensor, a database column) takes part through its getTensor(). Classes with their own do_operation keep the operation
+ * (rule 3, in arith_operation()). 1 replaced (*tmp holds the tensor), 0 not an aggregate, -1 after throwing */
+static int resolve_aggregate(zval *z, zval *tmp)
+{
+	zend_object *o;
+
+	if (Z_TYPE_P(z) != IS_OBJECT) return 0;
+	o = Z_OBJ_P(z);
+	if (o->ce == buf_ce_tensor || o->handlers->do_operation || !instanceof_function(o->ce, buf_ce_tensor_agg)) return 0;
+	zend_call_method_with_0_params(o, o->ce, NULL, "gettensor", tmp);
+	if (EG(exception)) {
+		zval_ptr_dtor(tmp);
+		ZVAL_UNDEF(tmp);
+		return -1;
+	}
+	if (Z_TYPE_P(tmp) != IS_OBJECT || Z_OBJCE_P(tmp) != buf_ce_tensor) {
+		zend_type_error("%s::getTensor(): Return value must be of type Buffers\\Tensor, %s returned", ZSTR_VAL(o->ce->name), zend_zval_type_name(tmp));
+		zval_ptr_dtor(tmp);
+		ZVAL_UNDEF(tmp);
+		return -1;
+	}
+	return 1;
+}
+
+zend_result buf_arith_do_operation(uint8_t op, zval *result, zval *op1, zval *op2)
+{
+	zval t1, t2;
+	zend_result r;
+	int a, b = 0;
+
+	if (EG(exception)) return FAILURE;
+	ZVAL_UNDEF(&t1);
+	ZVAL_UNDEF(&t2);
+	a = resolve_aggregate(op1, &t1);
+	if (a >= 0 && op != ZEND_BW_NOT) b = resolve_aggregate(op2, &t2);
+	if (a < 0 || b < 0) {
+		zval_ptr_dtor(&t1);
+		if (op == ZEND_BW_NOT) { ZVAL_NULL(result); return SUCCESS; }
+		return FAILURE;
+	}
+	r = arith_operation(op, result, a ? &t1 : op1, b ? &t2 : op2);
+	zval_ptr_dtor(&t1);
+	zval_ptr_dtor(&t2);
+	return r;
 }

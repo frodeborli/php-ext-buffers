@@ -1,5 +1,5 @@
 --TEST--
-Arithmetic: an operand of a class with arithmetic of its own gets the operation, on either side (decision 5)
+Arithmetic: an operand of a class with arithmetic of its own gets the operation, on either side
 --SKIPIF--
 <?php if (!extension_loaded('buffers_api_test')) die('skip needs the buffers_api_test extension'); ?>
 --FILE--

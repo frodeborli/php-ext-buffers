@@ -77,7 +77,7 @@ enum { BUFFERS_SCALAR_BOOL = -2, BUFFERS_SCALAR_INT = -3, BUFFERS_SCALAR_FLOAT =
  * ZEND_BW_OR, ZEND_BW_AND, ZEND_BW_XOR; ZEND_BW_NOT is unary and ignores b), where a and b are BUFFERS_DT_* or
  * BUFFERS_SCALAR_*; -1 if the operator does not apply (Bool arithmetic, floats in bitwise operators, storage-only and
  * complex dtypes, UInt64 with a signed type, Float16 with BFloat16, two scalars). The rules are those of the Python
- * Array API standard with its gaps filled (docs/proposal-arithmetic.md); tests/promotion.tsv lists every case. Metadata
+ * Array API standard with its gaps filled (docs/arithmetic.md); tests/promotion.tsv lists every case. Metadata
  * only: whether a scalar's value fits an integer dtype is checked when the operation runs. */
 BUFFERS_API int buffers_dtype_promote(int a, int b, uint8_t op);
 
@@ -99,24 +99,15 @@ BUFFERS_API void buffers_convert(int src_dtype, const uint8_t *src, int64_t src_
 /* ---- classes --------------------------------------------------------------------------- */
 
 enum {
-	BUFFERS_CE_DTYPE, BUFFERS_CE_BUFFER, BUFFERS_CE_TENSOR, BUFFERS_CE_TENSOR_INTERFACE, BUFFERS_CE_SHAPE,
+	BUFFERS_CE_DTYPE, BUFFERS_CE_BUFFER, BUFFERS_CE_TENSOR, BUFFERS_CE_TENSOR_AGGREGATE, BUFFERS_CE_SHAPE,
 	BUFFERS_CE_DEVICE, BUFFERS_CE_CPU_DEVICE, BUFFERS_CE_FILE_DEVICE
 };
-/* The class entries, for extensions that implement Device or TensorInterface (usable from MINIT on). NULL if which is invalid. */
+/* The class entries, for extensions that implement Device or TensorAggregate (usable from MINIT on). NULL if which is invalid.
+ * A class implements TensorAggregate like any interface: zend_class_implements() and its three methods (getTensor(),
+ * getDType(), getShape()). */
 BUFFERS_API zend_class_entry *buffers_get_class(int which);
 
-/* Makes an internal class implement Buffers\TensorInterface. The interface's properties are virtual and read-only
- * (`$dtype` ?DType, `$shape` Shape, `$ndim` int); the class declares them with these three get hooks, which
- * are internal functions called with the object as $this (ZEND_THIS) and returning the value, so the
- * object stores nothing for them. Call it from MINIT, once per class, before the class is used. Userland
- * classes cannot implement TensorInterface. */
-BUFFERS_API void buffers_implement_tensor_interface(zend_class_entry *ce,
-	zif_handler get_dtype,
-	zif_handler get_shape,
-	zif_handler get_ndim);
-
-/* Declares read-only virtual properties on an internal class (a class that implements Buffers\TensorInterface declares its
- * three with buffers_implement_tensor_interface() instead). Like those, they are served by internal get hooks, functions called
+/* Declares read-only virtual properties on an internal class. They are served by internal get hooks, functions called
  * with the object as $this that return the value, so the object stores nothing for them; writes fail in the engine
  * ("is read-only"). `arginfo` describes the hook: a zend_internal_arg_info array whose first entry carries the return type
  * (ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX), `type` is the declared type of the property. Call from MINIT, before the class is used.
@@ -230,7 +221,8 @@ BUFFERS_API zend_object *buffers_tensor_create(zend_object *buffer, int dtype, i
 
 /* ---- shapes ---------------------------------------------------------------------------- */
 
-/* A Shape from `n` zvals, each an int >= 0 or a 0-d TensorInterface object. Returns a new reference. */
+/* A Shape from `n` zvals, each an int >= 0 or a 0-d TensorAggregate object (its getShape() has no dimensions). Returns a new
+ * reference. */
 BUFFERS_API zend_object *buffers_shape_create(uint32_t n, const zval *dims);
 /* The dimensions of a Shape (borrowed) */
 BUFFERS_API const zval *buffers_shape_dims(zend_object *shape, uint32_t *n);
@@ -258,7 +250,7 @@ BUFFERS_API zend_result buffers_dlpack_export(zend_object *view, DLManagedTensor
  * exception is thrown, NULL is returned and the caller still owns the tensor. */
 BUFFERS_API zend_object *buffers_dlpack_import(DLManagedTensorVersioned *tensor);
 
-/* Operators on Tensors are ext-buffers' own (eager, docs/proposal-arithmetic.md). C API 3 removed the operator hook of
+/* Operators on Tensors are ext-buffers' own (eager, docs/arithmetic.md). C API 3 removed the operator hook of
  * C API 2: an extension with lazy or accelerated arithmetic gives its own classes a do_operation handler; Tensor's
  * returns FAILURE without an exception for such operands, so PHP asks them. */
 

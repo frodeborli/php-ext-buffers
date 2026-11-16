@@ -4,11 +4,11 @@ Tensor properties: read-only, computed when read, no storage per view
 <?php if (!extension_loaded('buffers')) die('skip buffers extension not loaded'); if (PHP_VERSION_ID < 80400) die('skip PHP 8.4+: property hooks (PHP 8.3 is covered by props_php83.phpt)'); ?>
 --FILE--
 <?php
-use Buffers\{Buffer, DType, Tensor, TensorInterface, Shape};
+use Buffers\{Buffer, DType, Tensor, TensorAggregate, Shape};
 $b = new Buffer(96);
 $v = $b->view(DType::Int16, [3, 4], [8, 2], 6);
 var_dump($v->dtype, $v->shape instanceof Shape, $v->shape->toArray(), $v->ndim, $v->strides, $v->offset, $v->buffer === $b);
-var_dump($v instanceof TensorInterface, $v instanceof Tensor);
+var_dump($v instanceof TensorAggregate, $v instanceof Tensor);
 
 echo "sub-views\n";
 $r = $v[1];
@@ -40,10 +40,11 @@ foreach (['dtype', 'shape', 'ndim', 'strides', 'offset', 'buffer', 'value'] as $
     $rp = new ReflectionProperty(Tensor::class, $prop);
     printf("%-8s %s virtual=%d public=%d hooks=%s\n", $prop, $rp->getType(), $rp->isVirtual(), $rp->isPublic(), json_encode(array_keys(array_filter(['get' => $rp->getHook(PropertyHookType::Get), 'set' => $rp->getHook(PropertyHookType::Set)]))));
 }
-foreach ((new ReflectionClass(TensorInterface::class))->getProperties() as $rp) {
-    printf("TensorInterface::$%s %s abstract=%d\n", $rp->getName(), $rp->getType(), $rp->isAbstract());
+foreach ((new ReflectionClass(TensorAggregate::class))->getMethods() as $rm) {
+    printf("TensorAggregate::%s(): %s abstract=%d\n", $rm->getName(), $rm->getReturnType(), $rm->isAbstract());
 }
-var_dump((new ReflectionClass(TensorInterface::class))->isInterface(), (new ReflectionClass(Tensor::class))->isAbstract());
+var_dump((new ReflectionClass(TensorAggregate::class))->isInterface(), (new ReflectionClass(Tensor::class))->isAbstract());
+var_dump($v->getTensor() === $v, $v->getDType() === $v->dtype, $v->getShape() == $v->shape);
 
 echo "creating sub-views allocates nothing\n";
 for ($i = 0; $i < 100; $i++) { $s = $v[$i % 3]; $t = $v[1][2]; }   // warm up the pool
@@ -135,11 +136,14 @@ strides  array virtual=1 public=1 hooks=["get"]
 offset   int virtual=1 public=1 hooks=["get"]
 buffer   Buffers\Buffer virtual=1 public=1 hooks=["get"]
 value    mixed virtual=1 public=1 hooks=["get","set"]
-TensorInterface::$dtype ?Buffers\DType abstract=1
-TensorInterface::$shape Buffers\Shape abstract=1
-TensorInterface::$ndim int abstract=1
+TensorAggregate::getTensor(): Buffers\Tensor abstract=1
+TensorAggregate::getDType(): ?Buffers\DType abstract=1
+TensorAggregate::getShape(): Buffers\Shape abstract=1
 bool(true)
 bool(false)
+bool(true)
+bool(true)
+bool(true)
 creating sub-views allocates nothing
 int(0)
 end

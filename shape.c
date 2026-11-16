@@ -1,4 +1,4 @@
-/* Shape: the dimensions of a tensor, each an int or a 0-d TensorInterface (a symbolic dimension, for
+/* Shape: the dimensions of a tensor, each an int or a 0-d TensorAggregate (a symbolic dimension, for
  * extensions that build deferred computations). Immutable. */
 #include "php_buffers.h"
 #include "zend_exceptions.h"
@@ -34,7 +34,8 @@ static void shape_free(zend_object *o)
 /* validates one dimension; `pos` is for the message. false after throwing */
 static bool dim_ok(zval *z, uint32_t pos)
 {
-	zval rv, *nd;
+	zval rv;
+	bool zero_d;
 
 	ZVAL_DEREF(z);
 	if (Z_TYPE_P(z) == IS_LONG) {
@@ -44,14 +45,21 @@ static bool dim_ok(zval *z, uint32_t pos)
 		}
 		return true;
 	}
-	if (Z_TYPE_P(z) != IS_OBJECT || !instanceof_function(Z_OBJCE_P(z), buf_ce_tensor_if)) {
-		zend_type_error("Shape dimension %u must be of type int|Buffers\\TensorInterface, %s given", pos, zend_zval_type_name(z));
+	if (Z_TYPE_P(z) != IS_OBJECT || !instanceof_function(Z_OBJCE_P(z), buf_ce_tensor_agg)) {
+		zend_type_error("Shape dimension %u must be of type int|Buffers\\TensorAggregate, %s given", pos, zend_zval_type_name(z));
 		return false;
 	}
-	nd = zend_read_property(Z_OBJCE_P(z), Z_OBJ_P(z), "ndim", sizeof("ndim") - 1, 0, &rv);
-	if (EG(exception)) return false;
-	if (Z_TYPE_P(nd) != IS_LONG || Z_LVAL_P(nd) != 0) {
-		zend_value_error("Shape dimension %u must be a 0-d TensorInterface", pos);
+	/* 0-d: its getShape() has no dimensions */
+	ZVAL_UNDEF(&rv);
+	zend_call_method_with_0_params(Z_OBJ_P(z), Z_OBJCE_P(z), NULL, "getshape", &rv);
+	if (EG(exception)) {
+		zval_ptr_dtor(&rv);
+		return false;
+	}
+	zero_d = Z_TYPE(rv) == IS_OBJECT && Z_OBJCE(rv) == buf_ce_shape && buf_shape_from(Z_OBJ(rv))->n == 0;
+	zval_ptr_dtor(&rv);
+	if (!zero_d) {
+		zend_value_error("Shape dimension %u must be a 0-d TensorAggregate", pos);
 		return false;
 	}
 	return true;
@@ -150,7 +158,7 @@ PHP_METHOD(Buffers_Shape, count) { ZEND_PARSE_PARAMETERS_NONE(); RETURN_LONG(SEL
 /* $concrete and $size: read-only virtual properties (internal get hooks, see props.c) */
 ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(ai_shape_concrete, 0, 0, _IS_BOOL, 0)
 ZEND_END_ARG_INFO()
-ZEND_BEGIN_ARG_WITH_RETURN_OBJ_TYPE_MASK_EX(ai_shape_size, 0, 0, Buffers\\TensorInterface, MAY_BE_LONG)
+ZEND_BEGIN_ARG_WITH_RETURN_OBJ_TYPE_MASK_EX(ai_shape_size, 0, 0, Buffers\\TensorAggregate, MAY_BE_LONG)
 ZEND_END_ARG_INFO()
 
 static ZEND_NAMED_FUNCTION(hook_concrete) { ZEND_PARSE_PARAMETERS_NONE(); RETURN_BOOL(shape_concrete(SELF)); }
@@ -162,7 +170,7 @@ static ZEND_NAMED_FUNCTION(hook_size)
 
 	ZEND_PARSE_PARAMETERS_NONE();
 	if (!shape_concrete(s)) {
-		zend_throw_error(NULL, "Cannot compute the size of a shape with symbolic dimensions: no extension that builds deferred computations is loaded");
+		zend_throw_error(NULL, "A shape with symbolic dimensions has no integer size");
 		RETURN_THROWS();
 	}
 	for (uint32_t i = 0; i < s->n; i++) {
@@ -352,7 +360,7 @@ PHP_METHOD(Buffers_Shape, jsonSerialize)
 
 	ZEND_PARSE_PARAMETERS_NONE();
 	if (!shape_concrete(s)) {
-		zend_throw_error(NULL, "Cannot JSON-encode a Shape with symbolic dimensions: no extension that builds deferred computations is loaded");
+		zend_throw_error(NULL, "Cannot JSON-encode a Shape with symbolic dimensions");
 		RETURN_THROWS();
 	}
 	array_init_size(return_value, s->n);
@@ -399,7 +407,7 @@ void buf_shape_minit(void)
 	{
 		const buf_prop_def props[] = {
 			{ "concrete", (zend_type) ZEND_TYPE_INIT_MASK(MAY_BE_BOOL), hook_concrete, ai_shape_concrete, 0 },
-			{ "size", (zend_type) ZEND_TYPE_INIT_CLASS_MASK(zend_string_init("Buffers\\TensorInterface", sizeof("Buffers\\TensorInterface") - 1, 1), MAY_BE_LONG), hook_size, ai_shape_size, 0 },
+			{ "size", (zend_type) ZEND_TYPE_INIT_CLASS_MASK(zend_string_init("Buffers\\TensorAggregate", sizeof("Buffers\\TensorAggregate") - 1, 1), MAY_BE_LONG), hook_size, ai_shape_size, 0 },
 		};
 		buf_declare_hooked_props(buf_ce_shape, props, 2);
 	}

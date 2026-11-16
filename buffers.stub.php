@@ -98,24 +98,23 @@ final class ForeignDevice implements Device
 }
 
 /**
- * The shape of a tensor: a list of dimensions, each an int >= 0 or a 0-d TensorInterface (a symbolic
- * dimension, for extensions that build deferred computations). Immutable. Negative indices count from
+ * The shape of a tensor: a list of dimensions, each an int >= 0 or a 0-d TensorAggregate (a symbolic
+ * dimension, for extensions that build deferred computations; 0-d: its getShape() has no dimensions). Immutable. Negative indices count from
  * the end. The shape of a Tensor is always concrete.
  *
  * @property-read bool $concrete True if every dimension is an int.
- * @property-read int|TensorInterface $size The number of elements: the product of the dimensions (1 for the empty
- *     shape). Reading it throws a ValueError if the product exceeds PHP_INT_MAX and an Error for a shape that is not
- *     concrete: computing a symbolic product needs an extension that builds deferred computations, and none is loaded
- *     in this version.
+ * @property-read int|TensorAggregate $size The number of elements: the product of the dimensions (1 for the empty
+ *     shape). Reading it throws a ValueError if the product exceeds PHP_INT_MAX and an Error for a shape with symbolic
+ *     dimensions, which has no integer size.
  *
- * @implements \ArrayAccess<int, int|TensorInterface>
- * @implements \IteratorAggregate<int, int|TensorInterface>
+ * @implements \ArrayAccess<int, int|TensorAggregate>
+ * @implements \IteratorAggregate<int, int|TensorAggregate>
  */
 final class Shape implements \ArrayAccess, \Countable, \IteratorAggregate, \JsonSerializable
 {
-    /** $dims is a list of non-negative ints and 0-d Tensors. */
+    /** $dims is a list of non-negative ints and 0-d TensorAggregates. */
     public function __construct(array $dims) {}
-    /** @return list<int|TensorInterface> */
+    /** @return list<int|TensorAggregate> */
     public function toArray(): array {}
     /** The number of dimensions. */
     public function count(): int {}
@@ -129,19 +128,23 @@ final class Shape implements \ArrayAccess, \Countable, \IteratorAggregate, \Json
     public function offsetUnset(mixed $offset): void {}
     /** Iterates the dimensions. */
     public function getIterator(): \Iterator {}
-    /** The dimensions as a list, for json_encode(). Throws Error if a dimension is symbolic (not in this version). */
+    /** The dimensions as a list, for json_encode(). Throws Error if a dimension is symbolic. */
     public function jsonSerialize(): array {}
 }
 
 /**
- * Anything with a dtype and a shape. Implemented by Tensor, and by classes of other extensions
- * (for example a deferred tensor). Only internal classes can implement it: the interface cannot be
- * implemented in PHP code. The properties are read-only and computed when they are read.
- *
- * (The properties are declared by the extension at startup: stubs cannot express them.)
+ * Anything that is a tensor or can produce one: a Tensor (which returns itself), a lazy expression of another extension,
+ * or a PHP class (a sensor, a column of a database result, a file format). Arithmetic accepts an operand of a class that
+ * implements it and has no arithmetic of its own by calling getTensor().
  */
-interface TensorInterface
+interface TensorAggregate
 {
+    /** The tensor; an implementation may compute or load it. */
+    public function getTensor(): Tensor;
+    /** The dtype of getTensor()'s result without producing it; null if it is not known yet. */
+    public function getDType(): ?DType;
+    /** The shape of getTensor()'s result without producing it. */
+    public function getShape(): Shape;
 }
 
 /**
@@ -330,8 +333,14 @@ final class DataViewAccessor implements \ArrayAccess
  * @implements \ArrayAccess<int, mixed>
  * @implements \IteratorAggregate<int, mixed>
  */
-final class Tensor implements TensorInterface, \Countable, \ArrayAccess, \IteratorAggregate, \JsonSerializable
+final class Tensor implements TensorAggregate, \Countable, \ArrayAccess, \IteratorAggregate, \JsonSerializable
 {
+    /** Itself. */
+    public function getTensor(): Tensor {}
+    /** The same as $dtype. */
+    public function getDType(): DType {}
+    /** The same as $shape. */
+    public function getShape(): Shape {}
     /** The length of the first axis. A 0-d view has no axes: Error. */
     public function count(): int {}
     /** Whether $offset is a valid index of the first axis. */

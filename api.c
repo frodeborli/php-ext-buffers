@@ -10,7 +10,7 @@ zend_class_entry *buffers_get_class(int which)
 	case BUFFERS_CE_DTYPE: return buf_ce_dtype;
 	case BUFFERS_CE_BUFFER: return buf_ce_buffer;
 	case BUFFERS_CE_TENSOR: return buf_ce_tensor;
-	case BUFFERS_CE_TENSOR_INTERFACE: return buf_ce_tensor_if;
+	case BUFFERS_CE_TENSOR_AGGREGATE: return buf_ce_tensor_agg;
 	case BUFFERS_CE_SHAPE: return buf_ce_shape;
 	case BUFFERS_CE_DEVICE: return buf_ce_device_if;
 	case BUFFERS_CE_CPU_DEVICE: return buf_ce_cpudevice;

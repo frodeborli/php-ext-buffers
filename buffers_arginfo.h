@@ -1,5 +1,5 @@
 /* This is a generated file, edit the .stub.php file instead.
- * Stub hash: e6ac0d3b4620838b486da460c3937dcb3f72ef81 */
+ * Stub hash: 6056723e9cdce1b5b25665e94f03214a466a8080 */
 
 ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_class_Buffers_DType_bits, 0, 0, IS_LONG, 0)
 ZEND_END_ARG_INFO()
@@ -57,6 +57,15 @@ ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(arginfo_class_Buffers_Shape_getIterator, 
 ZEND_END_ARG_INFO()
 
 #define arginfo_class_Buffers_Shape_jsonSerialize arginfo_class_Buffers_Shape_toArray
+
+ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(arginfo_class_Buffers_TensorAggregate_getTensor, 0, 0, Buffers\\Tensor, 0)
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(arginfo_class_Buffers_TensorAggregate_getDType, 0, 0, Buffers\\DType, 1)
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(arginfo_class_Buffers_TensorAggregate_getShape, 0, 0, Buffers\\Shape, 0)
+ZEND_END_ARG_INFO()
 
 ZEND_BEGIN_ARG_INFO_EX(arginfo_class_Buffers_Buffer___construct, 0, 0, 1)
 	ZEND_ARG_TYPE_INFO(0, byteLength, IS_LONG, 0)
@@ -250,6 +259,13 @@ ZEND_END_ARG_INFO()
 
 #define arginfo_class_Buffers_DataViewAccessor_offsetUnset arginfo_class_Buffers_Shape_offsetUnset
 
+#define arginfo_class_Buffers_Tensor_getTensor arginfo_class_Buffers_TensorAggregate_getTensor
+
+ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(arginfo_class_Buffers_Tensor_getDType, 0, 0, Buffers\\DType, 0)
+ZEND_END_ARG_INFO()
+
+#define arginfo_class_Buffers_Tensor_getShape arginfo_class_Buffers_TensorAggregate_getShape
+
 #define arginfo_class_Buffers_Tensor_count arginfo_class_Buffers_DType_bits
 
 #define arginfo_class_Buffers_Tensor_offsetExists arginfo_class_Buffers_Shape_offsetExists
@@ -372,6 +388,9 @@ ZEND_METHOD(Buffers_DataViewAccessor, offsetExists);
 ZEND_METHOD(Buffers_DataViewAccessor, offsetGet);
 ZEND_METHOD(Buffers_DataViewAccessor, offsetSet);
 ZEND_METHOD(Buffers_DataViewAccessor, offsetUnset);
+ZEND_METHOD(Buffers_Tensor, getTensor);
+ZEND_METHOD(Buffers_Tensor, getDType);
+ZEND_METHOD(Buffers_Tensor, getShape);
 ZEND_METHOD(Buffers_Tensor, count);
 ZEND_METHOD(Buffers_Tensor, offsetExists);
 ZEND_METHOD(Buffers_Tensor, offsetGet);
@@ -420,6 +439,13 @@ static const zend_function_entry class_Buffers_Shape_methods[] = {
 	ZEND_ME(Buffers_Shape, offsetUnset, arginfo_class_Buffers_Shape_offsetUnset, ZEND_ACC_PUBLIC)
 	ZEND_ME(Buffers_Shape, getIterator, arginfo_class_Buffers_Shape_getIterator, ZEND_ACC_PUBLIC)
 	ZEND_ME(Buffers_Shape, jsonSerialize, arginfo_class_Buffers_Shape_jsonSerialize, ZEND_ACC_PUBLIC)
+	ZEND_FE_END
+};
+
+static const zend_function_entry class_Buffers_TensorAggregate_methods[] = {
+	ZEND_RAW_FENTRY("getTensor", NULL, arginfo_class_Buffers_TensorAggregate_getTensor, ZEND_ACC_PUBLIC|ZEND_ACC_ABSTRACT, NULL, NULL)
+	ZEND_RAW_FENTRY("getDType", NULL, arginfo_class_Buffers_TensorAggregate_getDType, ZEND_ACC_PUBLIC|ZEND_ACC_ABSTRACT, NULL, NULL)
+	ZEND_RAW_FENTRY("getShape", NULL, arginfo_class_Buffers_TensorAggregate_getShape, ZEND_ACC_PUBLIC|ZEND_ACC_ABSTRACT, NULL, NULL)
 	ZEND_FE_END
 };
 
@@ -497,6 +523,9 @@ static const zend_function_entry class_Buffers_DataViewAccessor_methods[] = {
 };
 
 static const zend_function_entry class_Buffers_Tensor_methods[] = {
+	ZEND_ME(Buffers_Tensor, getTensor, arginfo_class_Buffers_Tensor_getTensor, ZEND_ACC_PUBLIC)
+	ZEND_ME(Buffers_Tensor, getDType, arginfo_class_Buffers_Tensor_getDType, ZEND_ACC_PUBLIC)
+	ZEND_ME(Buffers_Tensor, getShape, arginfo_class_Buffers_Tensor_getShape, ZEND_ACC_PUBLIC)
 	ZEND_ME(Buffers_Tensor, count, arginfo_class_Buffers_Tensor_count, ZEND_ACC_PUBLIC)
 	ZEND_ME(Buffers_Tensor, offsetExists, arginfo_class_Buffers_Tensor_offsetExists, ZEND_ACC_PUBLIC)
 	ZEND_ME(Buffers_Tensor, offsetGet, arginfo_class_Buffers_Tensor_offsetGet, ZEND_ACC_PUBLIC)

@@ -210,7 +210,7 @@ zend_object *buf_view_import(DLManagedTensorVersioned *t)
 		}
 		extent += last;
 		if (!d->data) {
-			IMPORT_FAIL("TensorInterface data pointer is NULL");
+			IMPORT_FAIL("the data pointer is NULL");
 		}
 	}
 	host = dtype_dev == kDLCPU || dtype_dev == kDLCUDAHost || dtype_dev == kDLROCMHost || dtype_dev == kDLCUDAManaged;

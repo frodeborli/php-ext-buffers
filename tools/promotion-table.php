@@ -1,7 +1,7 @@
 <?php
 /*
  * Writes tests/promotion.tsv: the result dtype of every operator for every pair of operands, by the rules of
- * docs/proposal-arithmetic.md. A second implementation of those rules, independent of arith.c (which is tested against
+ * docs/arithmetic.md. A second implementation of those rules, independent of arith.c (which is tested against
  * this table), and the shared conformance table for other implementations (Skein).
  *
  * Columns: a, b, op, result. a and b are DType values ("int8", "bfloat16") or the PHP scalars "php-int", "php-float",

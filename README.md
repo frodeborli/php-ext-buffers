@@ -5,8 +5,8 @@ a memory-mapped file, memory of other extensions), `Buffers\Tensor` windows onto
 dtype including bfloat16, float8, packed float6, float4 and int2/int4/uint2/uint4, and complex), `Buffers\Shape`, the
 the `Buffers\TensorAggregate` and `Buffers\Device` interfaces, exact element-wise arithmetic on tensors (`+ - * / % ** << >> & | ^ ~`,
 with broadcasting and defined type promotion), and a versioned C API (`php_buffers_api.h`) with readiness and transfer hooks and [DLPack](https://github.com/dmlc/dlpack) import and export for other extensions. Written in C,
-no dependencies, PHP 8.3 - 8.5 (NTS and ZTS; 8.3 with the [differences](#php-83) below) on Linux; macOS and Windows build files are included but untested (see
-[Verification](#verification)).
+no dependencies, PHP 8.3 - 8.5 (NTS and ZTS; 8.3 with the [differences](#php-83) below), with build files for Linux, macOS and Windows
+(see [Verification](#verification) for what each has been tested on).
 
 ```php
 use Buffers\{Buffer, DType};
@@ -32,7 +32,12 @@ echo $weights[0][0];                                     // 1.5
 ## Install
 
 ```sh
-pie install frodeborli/ext-buffers          # needs the package to be published; or:
+pie install frodeborli/ext-buffers
+```
+
+or from source:
+
+```sh
 phpize && ./configure --enable-buffers && make && make install     # then extension=buffers
 ```
 
@@ -273,7 +278,7 @@ instead")`. Read-only buffers, memory that is not host accessible and pending bu
 
 `+ - * / % ** << >> & | ^ ~` (and `+=` etc., unary `-`) work element-wise on tensors and PHP `int`/`float`/`bool` scalars,
 computed at once into a new C-contiguous tensor on the operands' device (host memory: ext-buffers' own C loops). The rules (full text in
-[docs/proposal-arithmetic.md](docs/proposal-arithmetic.md)) are the [Python Array API standard's](https://data-apis.org/array-api/)
+[docs/arithmetic.md](docs/arithmetic.md)) are the [Python Array API standard's](https://data-apis.org/array-api/)
 with PHP's integer semantics:
 
 ```php
@@ -379,8 +384,8 @@ load and store is a typed value at an arbitrary byte address.
 `new Shape([2, 3])`; `$shape[-1]` counts from the end; an out-of-range index throws `ValueError`; `offsetSet`/`offsetUnset`
 throw `Error` (a Shape is immutable); `==` compares by value. A dimension is an int or a **0-d `TensorAggregate`** (a symbolic
 dimension, for extensions that build deferred computations; 0-d means its `getShape()` has no dimensions). `$shape->size` is the product when the shape is
-concrete (`ValueError` above `PHP_INT_MAX`); for a non-concrete shape it throws `Error` in this version, since no
-extension that could compute a symbolic product exists yet. The shape of a `Tensor` is always concrete.
+concrete (`ValueError` above `PHP_INT_MAX`); a shape with symbolic dimensions has no integer size, and reading it throws
+`Error`. The shape of a `Tensor` is always concrete.
 
 ### TensorAggregate
 
@@ -395,12 +400,14 @@ final class Thermometer implements TensorAggregate {
     public function getDType(): DType { return DType::Float32; }
     public function getShape(): Shape { return new Shape([$this->count]); }
 }
-$celsius = $thermometer - 273.15;     // arithmetic calls getTensor()
+$celsius = $thermometer - Tensor::fromArray(273.15, DType::Float32);   // arithmetic calls getTensor()
 ```
 
 `getDType()` and `getShape()` describe the tensor without producing it (`getDType()` may return `null` when the dtype is not
 known yet); `getTensor()` produces it, and may compute or load it. Arithmetic accepts a `TensorAggregate` operand of a
-class without arithmetic of its own by calling `getTensor()` (see Arithmetic).
+class without arithmetic of its own by calling `getTensor()` when the other operand is a `Tensor` (see Arithmetic). PHP
+runs no operator code for a plain object with a number or with another plain object, so `$thermometer - 273.15` is
+PHP's `TypeError`; `$thermometer->getTensor() - 273.15` works.
 
 ### Devices and files
 
@@ -542,7 +549,7 @@ this is built on demand by handlers that no element access goes through.
 
 `Tensor` and `Shape` implement `JsonSerializable` (when the json extension is loaded, which it is in every normal PHP build).
 `json_encode($view)` is the **full** data as nested arrays (a 0-d view: the scalar; complex elements: `[re, im]`; `UInt64` as the signed
-pattern); `json_encode($shape)` is the list of dimensions, and throws `Error` for a symbolic dimension in this version. json_encode's own rules
+pattern); `json_encode($shape)` is the list of dimensions, and throws `Error` for a symbolic dimension. json_encode's own rules
 apply: **NaN and INF make it fail** ("Inf and NaN cannot be JSON encoded", or the partial output / `JsonException` flags you asked for).
 A view whose memory is not host accessible throws `Error`; a pending buffer is made ready first. `DType` encodes as its string value.
 
@@ -650,21 +657,13 @@ What has been run, on Linux x86-64 (Ubuntu host, Debian 12 and Alpine containers
   model: 100000 calls (seed 102), 12875 accepted, 87125 rejected, no mismatch.
 * Two processes sharing a `/dev/shm` mapping (`proc_open`), `createFile` + `flush` + reopen, and `writeTo`/`readFrom` over `php://memory`, a file and a
   socket pair (including short writes on a non-blocking socket) are phpt tests.
-* Not run: macOS, Windows (`config.w32`, the `CreateFileMapping`/`MapViewOfFile`/`ReadFile`/`FlushViewOfFile` code and the workflows are written but
-  never executed), the GitHub workflows themselves, real multi-threaded ZTS, big-endian machines (s390x needs QEMU binfmt, which is not installed
-  here; no code assumes little-endian and the tests that print element bytes skip on big-endian, but that is untested).
+* Not tested: macOS, Windows (`config.w32` and the `CreateFileMapping`/`MapViewOfFile`/`ReadFile`/`FlushViewOfFile` code), multi-threaded ZTS
+  under load, big-endian machines.
 
 Commands: `tools/test.sh [8.x]` builds out of tree and runs the suite (twice: with the extension alone, then with the API
 consumer loaded); `tools/valgrind.sh [8.x]`; `tools/docker-test.sh [image ...]` (`DOCKER_PLATFORM=linux/386` for 32-bit);
 `benchmarks/run.sh` runs the benchmarks; `tools/gen-arginfo.sh` regenerates `buffers_arginfo.h` from `buffers.stub.php`.
 `PHP_BIN=/path/to/bin` selects another PHP installation for the local scripts (debug and ZTS builds).
-
-## Not in this version
-
-DLPack in PHP (it is C API only), `get()`/`set()` methods on `Tensor`, array/tuple offsets, reshape and slice views, in-place
-`fill`/`copy`/`cast` of tensors (`Tensor::convert()` makes a converted, optionally transposed copy; `DataView::fill()` and `copyBytes()` work
-on bytes), clamped writes, padded sub-byte layouts, negative or zero strides, complex dtypes in `Tensor::fromArray()`, element-wise
-comparisons, reductions and matrix products, complex arithmetic, a byte-order option for `Tensor` (`DataView` takes `$bigEndian`).
 
 ## Licence
 

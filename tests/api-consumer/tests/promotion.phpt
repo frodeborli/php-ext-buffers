@@ -18,7 +18,7 @@ foreach ($rows as $row) {
 echo "checked $checked, wrong $wrong\n";
 var_dump(count(array_filter($rows, fn($r) => !str_ends_with($r, "\terror"))));
 
-// written by hand from the Array API standard's promotion table and the gaps docs/proposal-arithmetic.md fills
+// written by hand from the Array API standard's promotion table and the gaps docs/arithmetic.md fills
 $spot = [
     ['uint8', 'int8', '+', 'int16'], ['uint16', 'int8', '*', 'int32'], ['uint32', 'int16', '-', 'int64'],
     ['uint8', 'int16', '+', 'int16'], ['uint64', 'int8', '+', 'error'], ['uint64', 'uint8', '+', 'uint64'],

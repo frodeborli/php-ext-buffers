@@ -1,7 +1,7 @@
 /* Virtual, read-only properties for internal classes, backed by internal get hooks.
  *
- * TensorInterface declares `public ?DType $dtype { get; }` and friends. For an internal class to satisfy such
- * an interface property without storing anything per object, it declares the property as virtual
+ * Tensor's `$dtype`, `$shape` and friends, Buffer's `$byteLength`, and other extensions' properties through
+ * buffers_declare_virtual_props(). To provide such a property without storing anything per object, a class declares it as virtual
  * (no slot in the object) with an internal `get` hook, exactly as a PHP 8.4 class would with
  * `public int $ndim { get => ...; }`. The hook is an ordinary internal function that reads the
  * value out of the object when the property is read, so reading allocates only the value returned and

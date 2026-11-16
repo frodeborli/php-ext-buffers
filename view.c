@@ -11,7 +11,7 @@
 #include "zend_interfaces.h"
 #include "buffers_arginfo.h"
 
-zend_class_entry *buf_ce_tensor, *buf_ce_tensor_if;
+zend_class_entry *buf_ce_tensor, *buf_ce_tensor_agg;
 extern double buf_tab[][256];
 
 typedef zval *(*read_fn)(zend_object *, zval *, int, zval *);
@@ -1355,8 +1355,6 @@ static ZEND_COLD void value_needs_0d(void)
 
 ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(ai_get_dtype, 0, 0, Buffers\\DType, 0)
 ZEND_END_ARG_INFO()
-ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(ai_get_dtype_n, 0, 0, Buffers\\DType, 1)
-ZEND_END_ARG_INFO()
 ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(ai_get_shape, 0, 0, Buffers\\Shape, 0)
 ZEND_END_ARG_INFO()
 ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(ai_get_buffer, 0, 0, Buffers\\Buffer, 0)
@@ -1450,27 +1448,10 @@ static zend_type class_type(const char *name, bool nullable)
 	return (zend_type) ZEND_TYPE_INIT_CLASS(zend_string_init(name, strlen(name), 1), nullable, 0);
 }
 
-static zend_result tensor_implemented(zend_class_entry *iface, zend_class_entry *ce)
-{
-	if (ce->type == ZEND_USER_CLASS) {
-		zend_error_noreturn(E_ERROR, "%s %s cannot implement interface %s: only internal classes can implement it",
-			zend_get_object_type_uc(ce), ZSTR_VAL(ce->name), ZSTR_VAL(iface->name));
-	}
-	return SUCCESS;
-}
-
-void buffers_implement_tensor_interface(zend_class_entry *ce, zif_handler get_dtype,
-	zif_handler get_shape, zif_handler get_ndim)
-{
-	const buf_prop_def defs[] = {
-		{ "dtype", class_type("Buffers\\DType", true), get_dtype, ai_get_dtype_n, 0 },
-		{ "shape", class_type("Buffers\\Shape", false), get_shape, ai_get_shape, 0 },
-		{ "ndim", (zend_type) ZEND_TYPE_INIT_MASK(MAY_BE_LONG), get_ndim, ai_get_int, 0 },
-	};
-
-	buf_declare_hooked_props(ce, defs, 3);
-	zend_class_implements(ce, 1, buf_ce_tensor_if);
-}
+/* TensorAggregate: a Tensor is its own tensor */
+PHP_METHOD(Buffers_Tensor, getTensor) { ZEND_PARSE_PARAMETERS_NONE(); RETURN_OBJ_COPY(Z_OBJ_P(ZEND_THIS)); }
+PHP_METHOD(Buffers_Tensor, getDType) { hook_dtype(INTERNAL_FUNCTION_PARAM_PASSTHRU); }
+PHP_METHOD(Buffers_Tensor, getShape) { hook_shape(INTERNAL_FUNCTION_PARAM_PASSTHRU); }
 
 /* ---- registration --------------------------------------------------------------------------- */
 
@@ -1491,11 +1472,6 @@ static void init_view_handlers(zend_object_handlers *h)
 void buf_view_minit(void)
 {
 	zend_class_entry ce;
-	const buf_prop_def tensor_props[] = {
-		{ "dtype", class_type("Buffers\\DType", true), NULL, ai_get_dtype_n, 0 },
-		{ "shape", class_type("Buffers\\Shape", false), NULL, ai_get_shape, 0 },
-		{ "ndim", (zend_type) ZEND_TYPE_INIT_MASK(MAY_BE_LONG), NULL, ai_get_int, 0 },
-	};
 	const buf_prop_def view_props[] = {
 		{ "dtype", class_type("Buffers\\DType", false), hook_dtype, ai_get_dtype, 0 },
 		{ "shape", class_type("Buffers\\Shape", false), hook_shape, ai_get_shape, 0 },
@@ -1506,17 +1482,15 @@ void buf_view_minit(void)
 		{ "value", (zend_type) ZEND_TYPE_INIT_MASK(MAY_BE_ANY), hook_value_get, ai_get_mixed, 0, hook_value_set, ai_set_value },
 	};
 
-	INIT_CLASS_ENTRY(ce, "Buffers\\TensorInterface", NULL);
-	buf_ce_tensor_if = zend_register_internal_interface(&ce);
-	buf_declare_hooked_props(buf_ce_tensor_if, tensor_props, 3);
-	buf_ce_tensor_if->interface_gets_implemented = tensor_implemented;
+	INIT_CLASS_ENTRY(ce, "Buffers\\TensorAggregate", class_Buffers_TensorAggregate_methods);
+	buf_ce_tensor_agg = zend_register_internal_interface(&ce);
 
 	INIT_CLASS_ENTRY(ce, "Buffers\\Tensor", class_Buffers_Tensor_methods);
 	buf_ce_tensor = zend_register_internal_class_ex(&ce, NULL);
 	buf_ce_tensor->ce_flags |= ZEND_ACC_FINAL | ZEND_ACC_NO_DYNAMIC_PROPERTIES | ZEND_ACC_NOT_SERIALIZABLE;
 	buf_ce_tensor->create_object = view_create_blank; /* real instances come from buf_view_new() */
 	buf_declare_hooked_props(buf_ce_tensor, view_props, 7); /* before the interface that requires them */
-	zend_class_implements(buf_ce_tensor, 4, buf_ce_tensor_if, zend_ce_countable, zend_ce_arrayaccess, zend_ce_aggregate);
+	zend_class_implements(buf_ce_tensor, 4, buf_ce_tensor_agg, zend_ce_countable, zend_ce_arrayaccess, zend_ce_aggregate);
 	if (buf_json_serializable()) {
 		zend_class_implements(buf_ce_tensor, 1, buf_json_serializable());
 	}

@@ -491,9 +491,9 @@ PHP_FUNCTION(bat_device_buffer)
 	RETURN_OBJ(b);
 }
 
-/* ---- a TensorInterface implemented by another extension ----------------------------------------------------------
+/* ---- a TensorAggregate implemented by another extension ----------------------------------------------------------
  * BatTensor(int $ndim = 0, int $dtype = BUFFERS_DT_INT64): a stand-in for a deferred tensor. It implements
- * Buffers\TensorInterface from C with get hooks, so it can be used as a symbolic dimension of a Shape (when 0-d). */
+ * Buffers\TensorAggregate from C, so it can be a symbolic dimension of a Shape (when 0-d); its getTensor() throws (no numbers). */
 
 static zend_class_entry *ce_tensor;
 static zend_object_handlers tensor_handlers;
@@ -526,19 +526,19 @@ PHP_METHOD(BatTensor, __construct)
 	t->dtype = (int)dtype;
 }
 
-static ZEND_NAMED_FUNCTION(tensor_get_dtype)
+PHP_METHOD(BatTensor, getDType)
 {
 	ZEND_PARSE_PARAMETERS_NONE();
 	buffers_dtype_to_zval(tensor_from(Z_OBJ_P(ZEND_THIS))->dtype, return_value);
 }
 
-static ZEND_NAMED_FUNCTION(tensor_get_ndim)
+PHP_METHOD(BatTensor, getTensor)
 {
 	ZEND_PARSE_PARAMETERS_NONE();
-	RETURN_LONG(tensor_from(Z_OBJ_P(ZEND_THIS))->ndim);
+	zend_throw_error(NULL, "BatTensor has no numbers");
 }
 
-static ZEND_NAMED_FUNCTION(tensor_get_shape)
+PHP_METHOD(BatTensor, getShape)
 {
 	zend_long n = tensor_from(Z_OBJ_P(ZEND_THIS))->ndim;
 	zval *dims = safe_emalloc(n ? n : 1, sizeof(zval), 0);
@@ -556,8 +556,17 @@ ZEND_BEGIN_ARG_INFO_EX(ai_tensor_ctor, 0, 0, 0)
 	ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, ndim, IS_LONG, 0, "0")
 	ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, dtype, IS_LONG, 0, "0")
 ZEND_END_ARG_INFO()
+ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(ai_tensor_get_tensor, 0, 0, Buffers\\Tensor, 0)
+ZEND_END_ARG_INFO()
+ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(ai_tensor_get_dtype, 0, 0, Buffers\\DType, 1)
+ZEND_END_ARG_INFO()
+ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(ai_tensor_get_shape, 0, 0, Buffers\\Shape, 0)
+ZEND_END_ARG_INFO()
 static const zend_function_entry tensor_methods[] = {
 	PHP_ME(BatTensor, __construct, ai_tensor_ctor, ZEND_ACC_PUBLIC)
+	PHP_ME(BatTensor, getTensor, ai_tensor_get_tensor, ZEND_ACC_PUBLIC)
+	PHP_ME(BatTensor, getDType, ai_tensor_get_dtype, ZEND_ACC_PUBLIC)
+	PHP_ME(BatTensor, getShape, ai_tensor_get_shape, ZEND_ACC_PUBLIC)
 	PHP_FE_END
 };
 
@@ -831,7 +840,7 @@ PHP_FUNCTION(bat_shape_dims)
 	}
 }
 
-/* ---- BatOperand: a class with arithmetic of its own (decision 5 of docs/proposal-arithmetic.md) -------------
+/* ---- BatOperand: a class with arithmetic of its own (docs/arithmetic.md, Operands) -------------
  * Its do_operation describes the operation as a string. A Tensor operator with a BatOperand on either side must reach it:
  * Tensor's handler returns FAILURE without an exception for objects with arithmetic of their own. */
 
@@ -1109,7 +1118,7 @@ static PHP_MINIT_FUNCTION(buffers_api_test)
 	memcpy(&tensor_handlers, &std_object_handlers, sizeof tensor_handlers);
 	tensor_handlers.offset = XtOffsetOf(bat_tensor, std);
 	tensor_handlers.clone_obj = NULL;
-	buffers_implement_tensor_interface(ce_tensor, tensor_get_dtype, tensor_get_shape, tensor_get_ndim);
+	zend_class_implements(ce_tensor, 1, buffers_get_class(BUFFERS_CE_TENSOR_AGGREGATE));
 
 	{
 		const buffers_virtual_prop props[] = {

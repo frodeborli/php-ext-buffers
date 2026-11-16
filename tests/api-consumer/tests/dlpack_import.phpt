@@ -4,7 +4,7 @@ DLPack import of foreign tensors; the deleter runs exactly once
 <?php if (!extension_loaded('buffers_api_test')) die('skip needs the buffers_api_test extension'); if (PHP_INT_SIZE !== 8) die('skip 64-bit PHP only: imports Int64, UInt64 and UInt32 tensors (tests/bits32.phpt covers 32-bit)'); ?>
 --FILE--
 <?php
-use Buffers\{DType, Tensor, Buffer, TensorInterface};
+use Buffers\{DType, Tensor, Buffer};
 function counts() { $c = bat_counts(); return "{$c['tensors_made']}/{$c['tensors_deleted']}"; }
 const INT = 0, UINT = 1, FLOAT = 2, BFLOAT = 4, COMPLEX = 5, BOOL = 6, BCOMPLEX = 18;
 const READ_ONLY = 1, PADDED = 4;
