@@ -125,29 +125,22 @@ BUF_SMALL_PACKED(CODEC_PK)
 		zend_long l; if (!buf_lval(v, &l)) return false; pk_put(row, i, BITS, (unsigned)l & ((1u << BITS) - 1)); return true; }
 CODEC_PKI(INT2, 2, 1) CODEC_PKI(INT4, 4, 1) CODEC_PKI(UINT2, 2, 0) CODEC_PKI(UINT4, 4, 0)
 
-/* ---- operators: delegated to the handler another extension registered, if any ------------------- */
+/* ---- operators: eager element-wise arithmetic (arith.c) ------------------------------------------------- */
 
 static zend_result buf_view_do_operation(uint8_t opcode, zval *result, zval *op1, zval *op2)
 {
-	switch (opcode) {
-	case ZEND_ADD: case ZEND_SUB: case ZEND_MUL: case ZEND_DIV: case ZEND_MOD: case ZEND_POW:
-	case ZEND_SL: case ZEND_SR: case ZEND_BW_OR: case ZEND_BW_AND: case ZEND_BW_XOR: case ZEND_BW_NOT:
-		if (buf_operator_handler) {
-			zval op1_copy;
-			zend_result r;
+	zval op1_copy;
+	zend_result r;
 
-			if (result == op1) { /* `$a += 1`: the handler may write the result while it still reads the operands */
-				ZVAL_COPY_VALUE(&op1_copy, op1);
-				op1 = &op1_copy;
-			}
-			r = buf_operator_handler(opcode, result, op1, op2);
-			if (r == SUCCESS && op1 == &op1_copy) {
-				zval_ptr_dtor(op1);
-			}
-			return r;
-		}
+	if (result == op1) { /* `$a += 1`: the result is written while the operands are still read */
+		ZVAL_COPY_VALUE(&op1_copy, op1);
+		op1 = &op1_copy;
 	}
-	return FAILURE; /* the engine's "Unsupported operand types" TypeError */
+	r = buf_arith_do_operation(opcode, result, op1, op2);
+	if (r == SUCCESS && op1 == &op1_copy) {
+		zval_ptr_dtor(op1);
+	}
+	return r;
 }
 
 

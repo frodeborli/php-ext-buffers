@@ -30,6 +30,12 @@ if test "$PHP_BUFFERS" != "no"; then
     fi
   fi
 
-  PHP_NEW_EXTENSION(buffers, $buffers_sources, $ext_shared)
+  dnl Tensor arithmetic is exact (docs/proposal-arithmetic.md): no contraction of a * b + c into an FMA, which rounds once
+  dnl instead of twice and would make results depend on the CPU. GCC's default in GNU C mode is -ffp-contract=fast.
+  buffers_cflags=
+  if test "$GCC" = "yes"; then
+    buffers_cflags="-ffp-contract=off"
+  fi
+  PHP_NEW_EXTENSION(buffers, $buffers_sources, $ext_shared,, $buffers_cflags)
   PHP_INSTALL_HEADERS([ext/buffers], [php_buffers_api.h dlpack.h])
 fi

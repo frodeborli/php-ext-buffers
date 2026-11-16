@@ -17,7 +17,7 @@
 #include "php.h"
 #include "dlpack.h"
 
-#define BUFFERS_API_VERSION 2
+#define BUFFERS_API_VERSION 3
 
 #if defined(BUFFERS_BUILDING) && defined(__GNUC__)
 # define BUFFERS_API __attribute__((visibility("default")))
@@ -258,17 +258,9 @@ BUFFERS_API zend_result buffers_dlpack_export(zend_object *view, DLManagedTensor
  * exception is thrown, NULL is returned and the caller still owns the tensor. */
 BUFFERS_API zend_object *buffers_dlpack_import(DLManagedTensorVersioned *tensor);
 
-/* ---- operators ------------------------------------------------------------------------- */
-
-/* Called for an arithmetic or bitwise operator when either operand is a Tensor: opcode is one of
- * ZEND_ADD, ZEND_SUB, ZEND_MUL, ZEND_DIV, ZEND_MOD, ZEND_POW, ZEND_SL, ZEND_SR, ZEND_BW_OR, ZEND_BW_AND,
- * ZEND_BW_XOR, ZEND_BW_NOT (op2 is then unused). Like zend_object_handlers.do_operation: write the
- * result to `result` and return SUCCESS, or return FAILURE (without an exception) to leave the
- * default "Unsupported operand types" TypeError. `result` never aliases op1 or op2. There is one handler per
- * process: register it from MINIT; FAILURE if another one is already registered. Comparisons are
- * unaffected (a view is only equal to itself). */
-typedef zend_result (*buffers_operator_fn)(uint8_t opcode, zval *result, zval *op1, zval *op2);
-BUFFERS_API zend_result buffers_set_operator_handler(buffers_operator_fn fn);
+/* Operators on Tensors are ext-buffers' own (eager, docs/proposal-arithmetic.md). C API 3 removed the operator hook of
+ * C API 2: an extension with lazy or accelerated arithmetic gives its own classes a do_operation handler; Tensor's
+ * returns FAILURE without an exception for such operands, so PHP asks them. */
 
 BUFFERS_API int buffers_api_version(void);
 

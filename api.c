@@ -2,18 +2,7 @@
 #include "php_buffers.h"
 #include "zend_exceptions.h"
 
-buffers_operator_fn buf_operator_handler;
-
 int buffers_api_version(void) { return BUFFERS_API_VERSION; }
-
-zend_result buffers_set_operator_handler(buffers_operator_fn fn)
-{
-	if (buf_operator_handler && buf_operator_handler != fn) {
-		return FAILURE;
-	}
-	buf_operator_handler = fn;
-	return SUCCESS;
-}
 
 zend_class_entry *buffers_get_class(int which)
 {

@@ -831,7 +831,12 @@ PHP_FUNCTION(bat_shape_dims)
 	}
 }
 
-/* ---- the operator hook ------------------------------------------------------------------------------ */
+/* ---- BatOperand: a class with arithmetic of its own (decision 5 of docs/proposal-arithmetic.md) -------------
+ * Its do_operation describes the operation as a string. A Tensor operator with a BatOperand on either side must reach it:
+ * Tensor's handler returns FAILURE without an exception for objects with arithmetic of their own. */
+
+static zend_class_entry *ce_operand;
+static zend_object_handlers operand_handlers;
 
 static void describe(smart_str *s, zval *z)
 {
@@ -850,6 +855,8 @@ static void describe(smart_str *s, zval *z)
 		smart_str_appends(s, "int(");
 		smart_str_append_long(s, Z_LVAL_P(z));
 		smart_str_appendc(s, ')');
+	} else if (z && Z_TYPE_P(z) == IS_OBJECT) {
+		smart_str_append(s, Z_OBJCE_P(z)->name);
 	} else if (z) {
 		smart_str_appends(s, zend_zval_type_name(z));
 	} else {
@@ -874,7 +881,8 @@ static zend_result describing_handler(uint8_t opcode, zval *result, zval *op1, z
 	case ZEND_BW_AND: name = "and"; break;
 	case ZEND_BW_XOR: name = "xor"; break;
 	case ZEND_BW_NOT: name = "not"; break;
-	default: return FAILURE; /* ZEND_POW: left to the engine's TypeError */
+	case ZEND_POW: name = "pow"; break;
+	default: return FAILURE;
 	}
 	smart_str_appends(&s, name);
 	smart_str_appendc(&s, '(');
@@ -1078,9 +1086,12 @@ static PHP_MINIT_FUNCTION(buffers_api_test)
 		zend_error(E_CORE_ERROR, "buffers_api_test was built for ext-buffers API %d, found %d", BUFFERS_API_VERSION, buffers_api_version());
 		return FAILURE;
 	}
-	if (buffers_set_operator_handler(describing_handler) == FAILURE) {
-		return FAILURE;
-	}
+	INIT_CLASS_ENTRY(ce, "BatOperand", NULL);
+	ce_operand = zend_register_internal_class_ex(&ce, NULL);
+	ce_operand->ce_flags |= ZEND_ACC_FINAL | ZEND_ACC_NOT_SERIALIZABLE;
+	memcpy(&operand_handlers, &std_object_handlers, sizeof operand_handlers);
+	operand_handlers.do_operation = describing_handler;
+	ce_operand->default_object_handlers = &operand_handlers;
 
 	INIT_CLASS_ENTRY(ce, "BatMatrix", matrix_methods);
 	ce_matrix = zend_register_internal_class_ex(&ce, NULL);

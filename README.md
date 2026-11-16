@@ -3,8 +3,8 @@
 The shared representation of n-dimensional typed data for PHP: `Buffers\Buffer` (bytes on some device: allocated memory,
 a memory-mapped file, memory of other extensions), `Buffers\Tensor` windows onto it (n-D, strided, every machine-learning
 dtype including bfloat16, float8, packed float6, float4 and int2/int4/uint2/uint4, and complex), `Buffers\Shape`, the
-`Buffers\TensorInterface` and `Buffers\Device` interfaces, and a versioned C API (`php_buffers_api.h`) with operator,
-readiness and transfer hooks and [DLPack](https://github.com/dmlc/dlpack) import and export for other extensions. Written in C,
+`Buffers\TensorInterface` and `Buffers\Device` interfaces, exact element-wise arithmetic on tensors (`+ - * / % ** << >> & | ^ ~`,
+with broadcasting and defined type promotion), and a versioned C API (`php_buffers_api.h`) with readiness and transfer hooks and [DLPack](https://github.com/dmlc/dlpack) import and export for other extensions. Written in C,
 no dependencies, PHP 8.3 - 8.5 (NTS and ZTS; 8.3 with the [differences](#php-83) below) on Linux; macOS and Windows build files are included but untested (see
 [Verification](#verification)).
 
@@ -265,6 +265,40 @@ conversion rules of the dtype (like `$v[$i] = 3` on a 1-D view). It is a virtual
 is stored per view. On a view with axes (`ndim > 0`) both throw `Error("value is only available on 0-d views; index the view
 instead")`. Read-only buffers, memory that is not host accessible and pending buffers behave as they do for element access.
 
+### Arithmetic
+
+`+ - * / % ** << >> & | ^ ~` (and `+=` etc., unary `-`) work element-wise on tensors and PHP `int`/`float`/`bool` scalars,
+computed at once in C into a new C-contiguous tensor in host memory. The rules (full text in
+[docs/proposal-arithmetic.md](docs/proposal-arithmetic.md)) are the [Python Array API standard's](https://data-apis.org/array-api/)
+with PHP's integer semantics:
+
+```php
+$img = Tensor::fromArray([[0, 128], [255, 64]], DType::UInt8);
+$x = $img / 255 - 0.5;               // Float64: `/` always gives a float; [[-0.5, 0.00196...], [0.5, -0.249...]]
+$y = Tensor::fromArray([1.5, 2.5], DType::Float16) * $x;   // broadcast [2] x [2, 2]: Float64
+$bias = Tensor::fromArray([1, 2], DType::Int8);
+$m = Tensor::fromArray([[1, 2], [3, 4]], DType::Int16) + $bias;   // Int16, the bias added to each row
+```
+
+* **Shapes** broadcast: aligned from the right, a dimension of 1 stretches; anything else is a `ValueError` naming both shapes.
+* **Result dtype**: the narrowest that holds both operands' types (`UInt8 + Int8` is `Int16`); integer with float gives
+  the float; PHP scalars take the tensor's dtype (`$uint8 + 1` stays `UInt8`, `$float16 * 0.5` stays `Float16`; a PHP float
+  with an integer tensor gives `Float64`); `/` always gives a float. `Float16` with `BFloat16` and `UInt64` with a signed
+  type have no common dtype (`TypeError`: `convert()` one of them). `tests/promotion.tsv` lists every case.
+* **Integers** wrap on overflow; `%` takes the sign of the dividend and `%` by zero throws `DivisionByZeroError`, as in PHP;
+  shifts by a negative count throw `ArithmeticError`, by the width or more give 0 (or -1 for `>>` of a negative value);
+  `**` with a negative integer exponent is a `ValueError`. A PHP int that does not fit the tensor's integer dtype is a
+  `ValueError` (so `-$uint8` throws).
+* **Floats** are IEEE 754: `+ - * /` and `%` (`fmod`) are exact (correctly rounded, the same bits on every machine;
+  `Float16` and `BFloat16` computed in `Float32` and rounded once); `**` is within 4 ULP (`Float32`) or 2 ULP (`Float64`).
+  Division by zero gives `INF`/`NAN`.
+* `Bool` takes only `& | ^ ~` with `Bool`; storage-only formats (8/6/4-bit floats, packed integers) and complex dtypes have no
+  arithmetic (`TypeError`: `convert()` first).
+* `$a += $b` is `$a = $a + $b`: other variables and views of the old tensor keep their values. A failed operation leaves
+  `$a` unchanged.
+* An operand of a class with arithmetic of its own (an extension class such as `Skein\Expression`) gets the operation, on
+  either side. Comparisons (`==`, `<`) are not element-wise: a tensor equals only itself.
+
 ### DataView
 
 `new DataView(Buffer $buffer, int $offset = 0, ?int $length = null)` reads and writes single values at any byte offset of a buffer, like
@@ -523,7 +557,8 @@ and has phpt tests; read it as the example.
 | elements | `buffers_convert()` (n elements between any two dtypes, strided, every format: integers wrap, floats round like `ml_dtypes`; for extensions that compute on elements) |
 | properties | `buffers_declare_virtual_props()` (read-only virtual properties with get hooks, for any internal class) |
 | DLPack | `buffers_dlpack_export()`, `buffers_dlpack_import()` (see above) |
-| hooks | `buffers_set_operator_handler()`, `buffers_buffer_set_ready_callback()`, `buffers_buffer_set_pending()`, `buffers_buffer_ensure_ready()` |
+| arithmetic | `buffers_dtype_promote()` (the result dtype of an operator, for implementations that must agree with ext-buffers, such as lazy graphs) |
+| hooks | `buffers_buffer_set_ready_callback()`, `buffers_buffer_set_pending()`, `buffers_buffer_ensure_ready()` |
 
 **Memory owned by a PHP object** (for example RubixML's Tensor-Ext keeps contiguous row-major float64 data in C): create
 a buffer with `buffers_buffer_create_owned(data, length, writable, NULL, owner_object)` and a view with
@@ -531,13 +566,14 @@ a buffer with `buffers_buffer_create_owned(data, length, writable, NULL, owner_o
 buffer does and is released afterwards (`tests/api-consumer/tests/owner.phpt`). Strides are fully supported by views
 (pass them to `buffers_tensor_create()`); only the `TensorInterface` interface omits them.
 
-### Operator hook
+### Operators and other extensions
 
-`buffers_set_operator_handler(fn)` registers one handler (from `MINIT`; one per process). `Tensor` has a
-`do_operation` handler that passes `+ - * / % ** << >> | & ^ ~` (also as `+=` etc., unary minus is `* -1`) to it when either operand
-is a view; the handler returns `SUCCESS` with the result, or `FAILURE` to leave PHP's default `TypeError`
-("Unsupported operand types"). With no handler registered behaviour is exactly that `TypeError`. Comparisons never
-go to the handler: a view is only equal to itself.
+Tensor arithmetic is ext-buffers' own (C API 3 removed C API 2's process-wide operator hook). An extension with lazy or
+accelerated arithmetic gives its own classes a `do_operation` handler. PHP asks only the left operand's handler when it
+has one, so a `Tensor` on the left hands the operation to the right operand's handler when that operand's class has one:
+`$tensor + $expression` reaches the extension exactly like `$expression + $tensor`
+(`tests/api-consumer/tests/operators_foreign.phpt`). `buffers_dtype_promote()` gives the result dtype of every operator,
+and `tests/promotion.tsv` is the conformance table, so a lazy implementation can produce the same dtypes.
 
 ### Readiness
 
@@ -590,8 +626,8 @@ consumer loaded); `tools/valgrind.sh [8.x]`; `tools/docker-test.sh [image ...]` 
 
 DLPack in PHP (it is C API only), `get()`/`set()` methods on `Tensor`, array/tuple offsets, reshape and slice views, in-place
 `fill`/`copy`/`cast` of tensors (`Tensor::convert()` makes a converted, optionally transposed copy; `DataView::fill()` and `copyBytes()` work
-on bytes), clamped writes, padded sub-byte layouts, negative or zero strides, complex dtypes in `Tensor::fromArray()`, arithmetic by the
-extension itself (the operator hook is for other extensions), a byte-order option for `Tensor` (`DataView` takes `$bigEndian`).
+on bytes), clamped writes, padded sub-byte layouts, negative or zero strides, complex dtypes in `Tensor::fromArray()`, element-wise
+comparisons, reductions and matrix products, complex arithmetic, a byte-order option for `Tensor` (`DataView` takes `$bigEndian`).
 
 ## Licence
 

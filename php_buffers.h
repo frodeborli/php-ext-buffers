@@ -292,8 +292,8 @@ void buf_props_mshutdown(void);
 
 /* arith.c */
 int buf_dtype_promote(int a, int b, uint8_t op);
+/* the do_operation of Tensor: FAILURE without an exception when an operand is not ours */
+zend_result buf_arith_do_operation(uint8_t op, zval *result, zval *op1, zval *op2);
 
-/* api.c */
-extern buffers_operator_fn buf_operator_handler;
 
 #endif
