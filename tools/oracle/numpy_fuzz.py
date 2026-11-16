@@ -172,7 +172,10 @@ def expected_after(case):
         if case["dtype"] in PACKED_INT:   # integers wrap by truncation to the width
             codes = np.array([w & ((1 << nbits) - 1) for w in case["writes"]], dtype=np.uint8)
         else:
-            codes = np.array([val(w) for w in case["writes"]], dtype=np.float64).astype(comp).view(np.uint8)
+            vals = np.array([val(w) for w in case["writes"]], dtype=np.float64)
+            codes = vals.astype(comp).view(np.uint8).copy()
+            nan = np.isnan(vals)   # these formats have no NaN: ext-buffers stores zero of the same sign (ml_dtypes flips it)
+            codes[nan] = np.where(np.signbit(vals[nan]), 1 << (nbits - 1), 0).astype(np.uint8)
         for p, c in zip(pos.tolist(), codes.tolist()):    # read-modify-write, in the order PHP writes
             b, sh = p >> 3, p & 7
             wide = sh + nbits > 8

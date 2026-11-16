@@ -44,7 +44,7 @@ def model(c):
     packed = c["dtype"] in PACKED
     size = INT[c["dtype"]][1] if not packed else 0; ln = c["len"]; off = c["offset"]
     nbits = PACKED[c["dtype"]][1] if packed else size * 8
-    if off < 0 or off > ln or (not packed and off % size): return "reject"
+    if off < 0 or off > ln: return "reject"   # any byte offset (views need not be aligned)
     sh = c["shape"]
     if sh is None:
         if packed:
@@ -61,7 +61,7 @@ def model(c):
     nd = len(shape)
     st = c["strides"]
     if st is not None:
-        if any(x < 1 for x in st): return "reject"
+        if any(x < 0 for x in st): return "reject"
         if len(st) != nd: return "reject"
         elems = list(st)
     else:
