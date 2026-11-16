@@ -45,13 +45,13 @@ echo "DLPack import of unaligned host data\n";
 foreach ([1, 3, 5] as $off) {
     $f = bat_import(2, 32, 1, [3], [1], 0, 1, $off);   // kDLFloat 32
     $bytes = ''; for ($i = $off; $i < $off + 12; $i++) $bytes .= chr($i & 0xff);
-    $ok = $f->toArray() === array_values(unpack('f3', $bytes));
+    $ok = $f->toArray() === array_values(unpack('g3', $bytes));
     $f[2] = -1.25;
     printf("float32 @%d: values=%d write=%d offset=%d aligned=%d\n", $off, $ok, $f[2] === -1.25, $f->offset, bat_tensor_bytes($f)['data_aligned']);
 }
 $q = bat_import(0, 64, 1, [2, 2], [4, 1], 0, 1, 1);       // kDLInt 64, strided, byte offset 1
 $bytes = ''; for ($i = 1; $i < 1 + 64; $i++) $bytes .= chr($i & 0xff);
-var_dump($q[1][1] === unpack('q', $bytes, 5 * 8)[1], $q[0][1] === unpack('q', $bytes, 8)[1]);
+var_dump($q[1][1] === unpack('P', $bytes, 5 * 8)[1], $q[0][1] === unpack('P', $bytes, 8)[1]);
 
 echo "DataView: device memory and readiness\n";
 try { (new Buffers\DataView(bat_device_buffer(8)))->getUInt8(0); } catch (Error $e) { echo $e->getMessage(), "\n"; }

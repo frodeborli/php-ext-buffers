@@ -272,7 +272,7 @@ static float dbl_to_rt(double d, int rt)
 
 /* ---- gathering n elements of an operand, from p with byte stride s ---- */
 
-#define LOADS(T) do { for (int64_t k = 0; k < n; k++) { T x; memcpy(&x, p + k * s, sizeof x); out[k] = CONV(x); } } while (0)
+#define LOADS(T) do { for (int64_t k = 0; k < n; k++) { T x; buf_ld_le(&x, p + k * s, sizeof x); out[k] = CONV(x); } } while (0)
 
 /* integers: two's complement, sign- or zero-extended by the operand's own kind */
 static void gather_int(const operand *o, const uint8_t *p, int64_t s, int64_t n, uint64_t *out)
@@ -435,18 +435,18 @@ static void store_int(int rt, const uint64_t *r, uint8_t *q, int64_t n)
 {
 	switch (buf_dtypes[rt].size) {
 	case 1: for (int64_t k = 0; k < n; k++) q[k] = (uint8_t)r[k]; break;
-	case 2: for (int64_t k = 0; k < n; k++) { uint16_t x = (uint16_t)r[k]; memcpy(q + k * 2, &x, 2); } break;
-	case 4: for (int64_t k = 0; k < n; k++) { uint32_t x = (uint32_t)r[k]; memcpy(q + k * 4, &x, 4); } break;
-	case 8: memcpy(q, r, (size_t)n * 8); break;
+	case 2: for (int64_t k = 0; k < n; k++) { uint16_t x = (uint16_t)r[k]; buf_st_le(q + k * 2, &x, 2); } break;
+	case 4: for (int64_t k = 0; k < n; k++) { uint32_t x = (uint32_t)r[k]; buf_st_le(q + k * 4, &x, 4); } break;
+	case 8: if (BUF_SWAP) { for (int64_t k = 0; k < n; k++) buf_st_le(q + k * 8, &r[k], 8); } else memcpy(q, r, (size_t)n * 8); break;
 	}
 }
 
 static void store_float(int rt, const float *r, uint8_t *q, int64_t n)
 {
 	switch (rt) {
-	case BUF_T_FLOAT32: memcpy(q, r, (size_t)n * 4); break;
-	case BUF_T_FLOAT16: for (int64_t k = 0; k < n; k++) { uint16_t x = buf_enc_FLOAT16(r[k]); memcpy(q + k * 2, &x, 2); } break;
-	default: for (int64_t k = 0; k < n; k++) { uint16_t x = buf_enc_BFLOAT16(r[k]); memcpy(q + k * 2, &x, 2); } break;
+	case BUF_T_FLOAT32: if (BUF_SWAP) { for (int64_t k = 0; k < n; k++) buf_st_le(q + k * 4, &r[k], 4); } else memcpy(q, r, (size_t)n * 4); break;
+	case BUF_T_FLOAT16: for (int64_t k = 0; k < n; k++) { uint16_t x = buf_enc_FLOAT16(r[k]); buf_st_le(q + k * 2, &x, 2); } break;
+	default: for (int64_t k = 0; k < n; k++) { uint16_t x = buf_enc_BFLOAT16(r[k]); buf_st_le(q + k * 2, &x, 2); } break;
 	}
 }
 
@@ -870,7 +870,7 @@ static zend_result arith_operation(uint8_t op, zval *result, zval *op1, zval *op
 		union { uint64_t i[CHUNK]; float f[CHUNK]; double d[CHUNK]; } A, B, R;
 		bool sgn = buf_dtypes[rt].kind == BUFFERS_KIND_INT;
 		/* the direct path: both operands in the result dtype (or a scalar of it), last axis contiguous or broadcast */
-		direct_fn direct = nops == 2 ? direct_kernel(op, rt) : NULL;
+		direct_fn direct = nops == 2 && !BUF_SWAP ? direct_kernel(op, rt) : NULL;   /* the direct kernels work on native values */
 		uint8_t scal[2][8];
 
 		for (int i = 0; direct && i < 2; i++) {
@@ -909,7 +909,7 @@ static zend_result arith_operation(uint8_t op, zval *result, zval *op1, zval *op
 					gather_double(&ops[0], p[0] + at * s[0], s[0], n, A.d);
 					gather_double(&ops[1], p[1] + at * s[1], s[1], n, B.d);
 					kernel_double(op, A.d, B.d, R.d, n);
-					memcpy(q, R.d, (size_t)n * 8);
+					if (BUF_SWAP) { for (int64_t k = 0; k < n; k++) buf_st_le(q + k * 8, &R.d[k], 8); } else memcpy(q, R.d, (size_t)n * 8);
 				} else {
 					gather_int(&ops[0], p[0] + at * s[0], s[0], n, A.i);
 					if (nops == 2) gather_int(&ops[1], p[1] + at * s[1], s[1], n, B.i);

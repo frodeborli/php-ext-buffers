@@ -92,7 +92,7 @@ foreach ([[DType::Float32, 4], [DType::Float64, 2]] as [$dt, $ulps]) {
     $worst = 0;
     foreach ($r as $i => $got) {
         $want = $ta[$i] ** $tb[$i];
-        $ulp = $dt === DType::Float32 ? abs(f32bits($got) - f32bits($want)) : abs(unpack('q', pack('e', $got))[1] - unpack('q', pack('e', $want))[1]);
+        $ulp = $dt === DType::Float32 ? abs(f32bits($got) - f32bits($want)) : abs(unpack('P', pack('e', $got))[1] - unpack('P', pack('e', $want))[1]);
         $worst = max($worst, $ulp);
     }
     echo "{$dt->name} **: worst ", $worst <= $ulps ? "within $ulps ULP" : "$worst ULP", "\n";

@@ -5,13 +5,13 @@ Buffer::fromString() with $writable = false is read-only
 --FILE--
 <?php
 use Buffers\{Buffer, DType};
-$b = Buffer::fromString(pack('f*', 1, 2), false);
+$b = Buffer::fromString(pack('g*', 1, 2), false);
 var_dump($b->isWritable());
 $t = $b->view(DType::Float32, [2]);
 echo json_encode($t->jsonSerialize()), "\n";
 try { $t[0] = 5.0; } catch (Throwable $e) { echo get_class($e), "\n"; }
 var_dump(Buffer::fromString("ab")->isWritable());
-$w = Buffer::fromString(pack('f*', 1, 2));
+$w = Buffer::fromString(pack('g*', 1, 2));
 $r = $w->readOnly();
 var_dump($r->isWritable(), $w->isWritable(), $r->readOnly() === $r);
 $w->view(DType::Float32, [2])[0] = 9.0;   // seen through the alias

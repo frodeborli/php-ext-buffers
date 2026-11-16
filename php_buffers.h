@@ -181,6 +181,33 @@ static inline buf_device *buf_device_from(zend_object *o) { return (buf_device *
 #define buf_dval_to_lval zend_dval_to_lval
 #endif
 
+/* Tensor elements are little-endian on every host. BUF_SWAP is 1 on a big-endian host, where every multi-byte element is
+ * byte-swapped as it is loaded or stored, and in test builds with -DBUF_FORCE_SWAP, which store elements byte-swapped on a
+ * little-endian host so that the test suite exercises every load and store path (byte-level tests then fail by design). */
+#if defined(WORDS_BIGENDIAN) || defined(BUF_FORCE_SWAP)
+# define BUF_SWAP 1
+#else
+# define BUF_SWAP 0
+#endif
+
+/* n bytes of a little-endian element at p into a native value at dst, and back */
+static zend_always_inline void buf_ld_le(void *dst, const uint8_t *p, size_t n)
+{
+	if (BUF_SWAP) {
+		for (size_t i = 0; i < n; i++) ((uint8_t *)dst)[i] = p[n - 1 - i];
+	} else {
+		memcpy(dst, p, n);
+	}
+}
+static zend_always_inline void buf_st_le(uint8_t *p, const void *src, size_t n)
+{
+	if (BUF_SWAP) {
+		for (size_t i = 0; i < n; i++) p[i] = ((const uint8_t *)src)[n - 1 - i];
+	} else {
+		memcpy(p, src, n);
+	}
+}
+
 /* Packed sub-byte rows: element i of a row is the bits [i*bits, (i+1)*bits) of the row's bytes, little-bit-endian. fp6 elements can
  * straddle a byte boundary: the 16-bit window is assembled byte by byte on every host (the bit order is defined by the format, not
  * by the byte order of the machine), and only read when needed (the second byte may lie past the end of the buffer otherwise). */

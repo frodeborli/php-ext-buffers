@@ -40,7 +40,7 @@ $t = Tensor::fromArray([[1, 2, 3], [4, 5, 6]]);
 echo json_encode($t->strides), ' ', $t->offset, ' ', $t->buffer->byteLength, ' ', var_export($t->buffer->isWritable(), true), "\n";
 $t[1][2] = 60;
 echo json_encode($t->toArray()), "\n";
-echo bin2hex(Tensor::fromArray([1, 258], DType::UInt16)->buffer->toString()) === (PHP_INT_SIZE ? bin2hex(pack('S*', 1, 258)) : '') ? "bytes ok\n" : "bytes differ\n";
+echo bin2hex(Tensor::fromArray([1, 258], DType::UInt16)->buffer->toString()) === (PHP_INT_SIZE ? bin2hex(pack('v*', 1, 258)) : '') ? "bytes ok\n" : "bytes differ\n";
 
 // 0-d: a scalar
 $s = Tensor::fromArray(5);

@@ -29,8 +29,8 @@ static zend_object_handlers view0_handlers; /* 0-d views: no axes, every access 
 /* ---- element codecs ---------------------------------------------------------------- */
 
 #define DEF_MEM(n, T) \
-	static zend_always_inline T ld_##n(const uint8_t *p) { T v; memcpy(&v, p, sizeof v); return v; } \
-	static zend_always_inline void st_##n(uint8_t *p, T v) { memcpy(p, &v, sizeof v); }
+	static zend_always_inline T ld_##n(const uint8_t *p) { T v; buf_ld_le(&v, p, sizeof v); return v; } \
+	static zend_always_inline void st_##n(uint8_t *p, T v) { buf_st_le(p, &v, sizeof v); }
 DEF_MEM(i8, int8_t) DEF_MEM(u8, uint8_t) DEF_MEM(i16, int16_t) DEF_MEM(u16, uint16_t)
 DEF_MEM(i32, int32_t) DEF_MEM(u32, uint32_t) DEF_MEM(i64, int64_t) DEF_MEM(u64, uint64_t)
 DEF_MEM(f32, float) DEF_MEM(f64, double)
@@ -106,8 +106,8 @@ CODEC_CPLX(COMPLEX128, 8, ld_f64(q), st_f64(q, x))
  * (DLPack's default). A row starts on a byte boundary. fp6 elements can straddle a byte boundary: they read
  * a 16-bit window only when they do (the second byte may lie past the end of the buffer otherwise). The window
  * is assembled byte by byte, (b0 | b1 << 8) >> shift, on every host: the bit order inside packed data is defined
- * by the format, not by the byte order of the machine. Whole elements (int16, float32, ...) use the host's
- * native byte order, like NumPy, PyTorch, DLPack and JS typed arrays; they are loaded with memcpy. */
+ * by the format, not by the byte order of the machine. Whole elements (int16, float32, ...) are little-endian on every
+ * host (buf_ld_le, buf_st_le). */
 #define CODEC_PK(ID, E, M, B, K) \
 	static zend_always_inline void rdp_##ID(const uint8_t *row, zend_ulong i, zval *z) { \
 		ZVAL_DOUBLE(z, buf_tab[BUF_T_##ID - BUF_T_F8E3M4][pk_get(row, i, E + M + 1)]); } \

@@ -55,7 +55,7 @@ echo "a 0-d view shares memory\n";
 $s = $b->view(DType::Int32, [], null, 4);
 $w = $b->view(DType::Int32, 4);
 $w[1] = 0x01020304;
-var_dump(substr($b->toString(), 4, 4) === pack('l', 0x01020304));   // native byte order
+var_dump(substr($b->toString(), 4, 4) === pack('V', 0x01020304));   // little-endian
 $t = $s->buffer->view(DType::Int32, [], null, 8);
 var_dump($t->offset);
 

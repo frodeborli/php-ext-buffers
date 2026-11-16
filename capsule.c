@@ -29,6 +29,11 @@ zend_result buf_view_export(zend_object *vo, DLManagedTensorVersioned **out)
 	export_ctx *c;
 	DLTensor *d;
 
+	if (BUF_SWAP && info->size > 1) {
+		/* DLPack data is in the host's byte order; tensor elements are little-endian */
+		zend_throw_error(NULL, "Cannot export a tensor of dtype %s through DLPack on a big-endian host: DLPack uses the host's byte order", info->name);
+		return FAILURE;
+	}
 	if (UNEXPECTED(b->pending) && buf_buffer_make_ready(b) == FAILURE) {
 		return FAILURE;
 	}
@@ -117,6 +122,9 @@ zend_object *buf_view_import(DLManagedTensorVersioned *t)
 	}
 	if (dt < 0) {
 		IMPORT_FAIL("Unsupported DLPack dtype (code %u, %u bits)", (unsigned)d->dtype.code, (unsigned)d->dtype.bits);
+	}
+	if (BUF_SWAP && buf_dtypes[dt].size > 1) {
+		IMPORT_FAIL("Cannot import a DLPack tensor of dtype %s on a big-endian host: DLPack uses the host's byte order", buf_dtypes[dt].name);
 	}
 	if (!buf_dtype_fits_php_int(dt)) {
 		IMPORT_FAIL("The dtype %s is not supported on 32-bit PHP: its values do not fit a PHP int", buf_dtypes[dt].name);

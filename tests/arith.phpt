@@ -29,7 +29,7 @@ echo show(Tensor::fromArray(3, DType::Int16) * 2), "\n";
 echo show(Tensor::fromArray([[]], DType::Float32) + 1), "\n";
 
 echo "layouts: strided, offset, transposed, read-only operands\n";
-$buf = Buffer::fromString(pack('l*', 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11), false);
+$buf = Buffer::fromString(pack('V*', 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11), false);
 $every2 = $buf->view(DType::Int32, 6, [2]);
 $offset = $buf->view(DType::Int32, 4, null, 8);
 $t = $buf->view(DType::Int32, [4, 3], [1, 4]);   // the transpose of a [3, 4] matrix

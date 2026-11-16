@@ -9,8 +9,8 @@ extern double buf_tab[][256];
 
 typedef struct { int cls; int64_t i; double re, im; } wide;   /* cls: BUFFERS_KIND_INT (also bool), _UINT, _FLOAT, _COMPLEX; uint64 kept in i */
 
-#define LD(n, T) static T ld_##n(const uint8_t *p) { T v; memcpy(&v, p, sizeof v); return v; }
-#define ST(n, T) static void st_##n(uint8_t *p, T v) { memcpy(p, &v, sizeof v); }
+#define LD(n, T) static T ld_##n(const uint8_t *p) { T v; buf_ld_le(&v, p, sizeof v); return v; }
+#define ST(n, T) static void st_##n(uint8_t *p, T v) { buf_st_le(p, &v, sizeof v); }
 LD(i8, int8_t) LD(u8, uint8_t) LD(i16, int16_t) LD(u16, uint16_t) LD(i32, int32_t) LD(u32, uint32_t)
 LD(i64, int64_t) LD(u64, uint64_t) LD(f32, float) LD(f64, double)
 ST(u16, uint16_t) ST(u32, uint32_t) ST(u64, uint64_t) ST(f32, float) ST(f64, double)

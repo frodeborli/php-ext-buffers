@@ -51,7 +51,7 @@ echo "a read-only mapping of the same file in the child sees the parent's later 
 $t[2] = 0;
 echo run([PHP_BINARY, '-n', ...$ext, $child, $path, 'ro'], function () use ($t) { $t[2] = 333; });
 $buf->flush();
-var_dump(unpack('l', file_get_contents($path, false, null, 4, 4))[1] === 222);
+var_dump(unpack('V', file_get_contents($path, false, null, 4, 4))[1] === 222);
 unlink($path); unlink($child);
 echo "end\n";
 --EXPECT--

@@ -197,7 +197,8 @@ BUFFERS_API zend_result buffers_buffer_ensure_ready(zend_object *buffer);
 /* ---- views ----------------------------------------------------------------------------- */
 
 typedef struct {
-	uint8_t *data;                       /* address of element 0 (buffer base + byte_offset); any address, see below */
+	uint8_t *data;                       /* address of element 0 (buffer base + byte_offset); any address, see below. Multi-byte
+	                                      * elements are little-endian on every host */
 	int dtype;                           /* BUFFERS_DT_* */
 	int ndim;                            /* 0 to BUFFERS_MAX_NDIM */
 	int64_t shape[BUFFERS_MAX_NDIM];

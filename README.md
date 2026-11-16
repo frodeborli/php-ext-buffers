@@ -705,6 +705,8 @@ What has been run, on Linux x86-64 (Ubuntu host, Debian 12 and Alpine containers
   model: 100000 calls (seed 102), 12875 accepted, 87125 rejected, no mismatch.
 * Two processes sharing a `/dev/shm` mapping (`proc_open`), `createFile` + `flush` + reopen, and `writeTo`/`readFrom` over `php://memory`, a file and a
   socket pair (including short writes on a non-blocking socket) are phpt tests.
+* Byte order: a build with `-DBUF_FORCE_SWAP` stores elements byte-swapped on a little-endian host, which is what a big-endian
+  host does; every test that works with values passes in it (the tests that compare raw bytes with `pack()` fail by design).
 * Not tested: macOS, Windows (`config.w32` and the `CreateFileMapping`/`MapViewOfFile`/`ReadFile`/`FlushViewOfFile` code), multi-threaded ZTS
   under load, big-endian machines.
 
