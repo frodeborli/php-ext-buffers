@@ -10,6 +10,12 @@ PHP_ARG_WITH([buffers-gd],
     [Build the GD integration when gd.h is found (DIR: where to look first; default: the PHP include dir, /usr, /usr/local). ext/gd itself is only needed at run time])],
   [yes], [no])
 
+PHP_ARG_ENABLE([buffers-extras],
+  [whether to build the ext-buffers extras],
+  [AS_HELP_STRING([--disable-buffers-extras],
+    [Build without the optional extras (Tensor::each() and Tensor::assign(); docs/extras.md)])],
+  [yes], [no])
+
 if test "$PHP_BUFFERS" != "no"; then
   AC_DEFINE(HAVE_BUFFERS, 1, [ Have buffers support ])
   buffers_sources="buffers.c arith.c dtype.c device.c shape.c buffer.c props.c view.c capsule.c transfer.c convert.c api.c dataview.c"
@@ -30,13 +36,22 @@ if test "$PHP_BUFFERS" != "no"; then
     fi
   fi
 
+  if test "$PHP_BUFFERS_EXTRAS" != "no"; then
+    AC_DEFINE(HAVE_BUFFERS_EXTRAS, 1, [ Build the ext-buffers extras ])
+    buffers_sources="$buffers_sources extras/each.c"
+  fi
+
   dnl Tensor arithmetic is exact (docs/proposal-arithmetic.md): no contraction of a * b + c into an FMA, which rounds once
   dnl instead of twice and would make results depend on the CPU. GCC's default in GNU C mode is -ffp-contract=fast.
   dnl The element-wise kernels are plain loops: GCC at -O2 only vectorizes loops whose trip count it knows, so ask for its
   dnl normal cost model (clang vectorizes them at -O2 already).
   buffers_cflags=
   AX_CHECK_COMPILE_FLAG([-ffp-contract=off], [buffers_cflags="$buffers_cflags -ffp-contract=off"], , [-Werror])
+  dnl Nothing reads errno after a math function; without this GCC calls sqrtf() for errno instead of vectorizing it (the
+  dnl results are the same, IEEE square root is correctly rounded either way).
+  AX_CHECK_COMPILE_FLAG([-fno-math-errno], [buffers_cflags="$buffers_cflags -fno-math-errno"], , [-Werror])
   AX_CHECK_COMPILE_FLAG([-fvect-cost-model=dynamic], [buffers_cflags="$buffers_cflags -fvect-cost-model=dynamic"], , [-Werror])
   PHP_NEW_EXTENSION(buffers, $buffers_sources, $ext_shared,, $buffers_cflags)
+  PHP_ADD_BUILD_DIR([$ext_builddir/extras])
   PHP_INSTALL_HEADERS([ext/buffers], [php_buffers_api.h dlpack.h])
 fi

@@ -45,6 +45,9 @@ The GD integration (`Tensor::fromGdImage()`, `toGdImage()`) is built when `confi
 `ext/gd/libgd/` for a PHP built with bundled GD, or `--with-buffers-gd=DIR`); `--without-buffers-gd` turns it off. The header must match the libgd
 that ext/gd runs with. ext/gd itself is not linked: it is only needed when one of the two methods is called (without it they throw `Error`).
 
+`Tensor::each()` and `Tensor::assign()` ([below](#each-and-assign-extras)) are an optional part, built unless `configure` gets
+`--disable-buffers-extras`; nothing else depends on them.
+
 `make install` also installs `php_buffers_api.h` and `dlpack.h` under `ext/buffers/` for extensions that build on
 this one (see [C API](#c-api)).
 
@@ -412,6 +415,43 @@ $m = Tensor::fromArray([[1, 2], [3, 4]], DType::Int16) + $bias;   // Int16, the 
   x86-64-v3 (AVX2) and x86-64-v4 (AVX-512), and the dynamic loader picks the one for the CPU; every variant gives the same
   bits. See Performance for measurements.
 
+### `each()` and `assign()` (extras)
+
+An arrow function describes one element of the result; ext-buffers reads its compiled code and evaluates it over the
+whole tensor with the arithmetic rules above, fused: one pass, intermediate values in chunks of a few kilobytes, no
+temporary tensors. The closure is never called. Full rules: [docs/extras.md](docs/extras.md).
+
+```php
+$out  = $dst->each(fn($d, $s, $k) => $d + ($s - $d) * $k, $src, $coverage);    // one parameter per input, broadcast
+$grey = $rgba->each(fn(array $p) => 0.299 * $p[0] + 0.587 * $p[1] + 0.114 * $p[2]);   // `array`: the last axis
+$rgba->assign(fn(array $p) => [$p[2], $p[1], $p[0], $p[3]]);                      // in place; an array literal is the last axis
+$edge = $img->each(fn($v, $y, $x) => $x > 0 ? $v - $img[$y][$x - 1] : 0);        // coordinates; reading a captured tensor
+```
+
+* Parameters: one per input (the tensor itself, then the extra arguments: tensors, `TensorAggregate`s, `int`/`float`/`bool`),
+  then the element's coordinates as `Int64` (`Int32` on 32-bit PHP), one per axis.
+* The body may use the operators, element-wise comparisons, `?:`, `&&`, `||`, `!`, `(int)`/`(float)`/`(bool)`, `if` with
+  `return`, captured `int`/`float`/`bool` values and tensors, and `abs`, `floor`, `ceil`, `round`, `sqrt`, `min`, `max`,
+  `intdiv`, `fmod`, `is_nan`, `is_finite`, `is_infinite`. Anything else throws (`ValueError`, or `TypeError` for dtypes) before
+  any element is computed.
+* Every operation gives the same bits as the operator does on whole tensors. Integer `%` by zero, negative shifts and
+  out-of-range reads are raised for the first element, in row-major order, that needs them; a branch the element does
+  not select raises nothing (`$x > 0 ? $img[$y][$x - 1] : 0`).
+* `assign()` writes into the tensor (converted to its dtype as `convert()` does); captured tensors and inputs that share
+  its memory are read as they were before the call, and after an error the tensor is unchanged.
+
+Nanoseconds per element on an AMD Ryzen 9 9950X3D (PHP 8.3 NTS, no JIT, one core, best of 5), 8,294,400 elements (1920 x 1080 x 4):
+
+| expression | `each()` | operators | PHP loop over arrays, tracing JIT (PHP 8.5) |
+|---|--:|--:|--:|
+| `$d + ($s - $d) * $k * 0.5`, `Float32` | 0.42 | 0.57 | 7.2 |
+| `($d * (255 - $k) + $s * $k) >> 8`, `Int32` | 0.44 | 1.61 | 7.1 |
+| `$k > 0 ? sqrt($s * $d) * $k + $d * (1 - $k) : $d`, `Float32` | 0.62 | — | — |
+
+`assign()` into an existing tensor does not allocate the result: 0.24 ns for the `Int32` row. Each call reads and compiles
+the closure: the first row on a one-element tensor takes 0.48 µs with `each()` and 0.23 µs with the operators, so for small
+tensors the operators are faster.
+
 ### DataView
 
 `new DataView(Buffer $buffer, int $offset = 0, ?int $length = null)` reads and writes single values at any byte offset of a buffer, like
@@ -735,18 +775,23 @@ without the feature (see Performance).
 
 What has been run, on Linux x86-64 (Ubuntu host, Debian 12 and Alpine containers):
 
-* `tests/` phpt suite (71 files), run twice: with the extension alone, and with the API consumer test extension loaded. On PHP 8.4
-  and 8.5, Debian/glibc and Alpine/musl, NTS and ZTS (`tools/docker-test.sh`, 8 images): 45 + 64 pass, the rest skip (tests that
-  need the consumer, 32-bit-only tests, the PHP 8.3 variants). On PHP 8.3 (Debian and Alpine NTS): 42 + 61 pass; the tests of
+* `tests/` phpt suite (76 files), run twice: with the extension alone, and with the API consumer test extension loaded. On PHP 8.4
+  and 8.5, Debian/glibc and Alpine/musl, NTS and ZTS (`tools/docker-test.sh`, 8 images): 50 + 69 pass, the rest skip (tests that
+  need the consumer, 32-bit-only tests, the PHP 8.3 variants). On PHP 8.3 (Debian and Alpine NTS): 47 + 66 pass; the tests of
   property hooks skip and their 8.3 variants run. No compiler warnings with `-Wall -Wextra`.
-* 32-bit PHP (`DOCKER_PLATFORM=linux/386`, Debian, 8.5 and 8.3): 36 + 53 and 33 + 50 pass; the tests that need 64-bit dtypes skip.
-* The whole suite, both passes, under valgrind with `USE_ZEND_ALLOC=0` (`tools/valgrind.sh`, PHP 8.5 NTS): 44 + 63 pass, zero errors,
+* 32-bit PHP (`DOCKER_PLATFORM=linux/386`, Debian, 8.5 and 8.3): 39 + 56 and 36 + 53 pass; the tests that need 64-bit dtypes skip.
+* The whole suite, both passes, under valgrind with `USE_ZEND_ALLOC=0` (`tools/valgrind.sh`, PHP 8.5 NTS): 49 + 68 pass, zero errors,
   zero leaks.
 * Arithmetic: `arith_exact.phpt` compares every operator bit for bit with an independent oracle (PHP double and integer arithmetic,
   rounded once to the format) for `Float16`, `BFloat16`, `Float32`, `Float64` and 8/16/32-bit integers, on an AMD Ryzen 9 9950X3D
   (the AVX-512 build of the loops), an Intel Xeon E5-2697 v3 (AVX2) and Alpine/musl (the baseline build); `tests/promotion.tsv` lists
   the result dtype of every operand pair and operator, generated by a second implementation of the rules
   (`tools/promotion-table.php`) and checked against `buffers_dtype_promote()`.
+* `each()` and `assign()` (`tests/extras`): every operator on every pair of arithmetic dtypes and PHP scalars gives the same dtype,
+  shape and bits (or the same exception) as the eager operator; 150 random nested expressions over three broadcast inputs equal the
+  same expression evaluated with the operators. The same results with opcache off and on and under both JIT modes (PHP 8.3), under
+  the tracing JIT (8.4, 8.5), and in a `-DBUF_FORCE_SWAP` build. Built with `--disable-buffers-extras`, the core passes the same tests
+  and the extras tests skip.
 * `tools/oracle/run.sh decode|encode|doubles|ints`, against ml_dtypes 0.5.4: every code of every format of at most 16 bits decodes identically;
   **every one of the 2^32 float32 inputs encodes identically for each of the 11 floating point formats of at most 8 bits** (float8_e3m4, e4m3,
   e4m3b11fnuz, e4m3fn, e4m3fnuz, e5m2, e5m2fnuz, e8m0fnu, float6_e2m3fn, float6_e3m2fn, float4_e2m1fn; for the float6/float4 formats NaN is

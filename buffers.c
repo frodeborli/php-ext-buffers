@@ -4,6 +4,9 @@
 
 #include "php_buffers.h"
 #include "ext/standard/info.h"
+#ifdef HAVE_BUFFERS_EXTRAS
+#include "extras/extras.h"
+#endif
 
 ZEND_DECLARE_MODULE_GLOBALS(buffers)
 
@@ -37,6 +40,9 @@ PHP_MINIT_FUNCTION(buffers)
 	buf_buffer_minit();
 	buf_view_minit();
 	buf_dataview_minit();
+#ifdef HAVE_BUFFERS_EXTRAS
+	buf_extras_minit();
+#endif
 	return SUCCESS;
 }
 
