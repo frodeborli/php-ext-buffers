@@ -51,14 +51,10 @@ static void load(int dt, const uint8_t *p, int64_t i, wide *w)
 	}
 }
 
-/* double -> int64 and uint64: out-of-range values and NaN are implementation-defined (documented in the header) */
-static int64_t d2i(double d) { return d >= -9223372036854775808.0 && d < 9223372036854775808.0 ? (int64_t)d : INT64_MIN; }
-static uint64_t d2u(double d)
-{
-	if (d >= 0 && d < 9223372036854775808.0) return (uint64_t)(int64_t)d;
-	if (d >= 9223372036854775808.0 && d < 18446744073709551616.0) return (uint64_t)(int64_t)(d - 9223372036854775808.0) + (1ull << 63);
-	return (uint64_t)d2i(d);
-}
+/* double -> integer bits as PHP's (int) does, without its warning: truncated toward zero, NaN and infinities give 0, values
+ * outside the 64-bit range wrap modulo 2^64; the same as an element write (view.c, buf_lval) */
+static int64_t d2i(double d) { return (int64_t)buf_dval_to_lval(d); }
+static uint64_t d2u(double d) { return (uint64_t)d2i(d); }
 
 /* the wide value as an integer bit pattern (two's complement) */
 static uint64_t as_bits(const wide *w)
@@ -90,6 +86,10 @@ static void store(int dt, uint8_t *p, int64_t i, const wide *w)
 		return;
 	}
 	if (kind == BUF_INT || kind == BUF_UINT) u = as_bits(w);
+	else if ((w->cls == BUF_INT || w->cls == BUF_UINT) && dt != BUF_T_FLOAT64 && dt != BUF_T_COMPLEX128)
+		/* an integer to a format no wider than Float32: rounded to Float32 once (as numpy and ml_dtypes do), not through a
+		 * double, which would round a 64-bit integer twice */
+		d = w->cls == BUF_UINT ? (double)(float)(uint64_t)w->i : (double)(float)w->i;
 	else d = as_double(w);
 	switch (dt) {
 	case BUF_T_INT2: case BUF_T_INT4: case BUF_T_UINT2: case BUF_T_UINT4:

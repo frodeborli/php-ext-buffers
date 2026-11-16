@@ -360,7 +360,7 @@ final class Tensor implements TensorAggregate, \Countable, \ArrayAccess, \Iterat
      */
     public function to(Device $device): Tensor {}
     /**
-     * The elements in another dtype (rounded as cast() does, see the README) and, with $axes, in another order of the axes (a permutation: axis i of the result is axis $axes[i] of this view), as a new
+     * The elements in another dtype (by the conversion rules of the README, "Conversion") and, with $axes, in another order of the axes (a permutation: axis i of the result is axis $axes[i] of this view), as a new
      * C-contiguous host tensor. One streamed pass: nothing but the result is allocated, so a mapped checkpoint can be converted (and transposed) without a copy of it in between. Packed dtypes: Error.
      */
     public function convert(DType $dtype, ?array $axes = null): Tensor {}

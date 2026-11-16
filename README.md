@@ -203,7 +203,12 @@ final class Tensor implements TensorAggregate, Countable, ArrayAccess, IteratorA
     public function getTensor(): Tensor;            // itself
     public function getDType(): DType;
     public function getShape(): Shape;
-    public function to(Device $device): Tensor;
+    public function convert(DType $dtype, ?array $axes = null): Tensor;   // another dtype (see "Conversion") and/or axis order; a new host tensor
+    public function to(Device $device): Tensor;     // the same tensor on another device (see "Devices and files")
+    public static function fromArray(array|int|float|bool $data, ?DType $dtype = null, ?Device $device = null): Tensor;
+    public function toArray(): mixed;               // nested arrays; a 0-d tensor gives the scalar (see "PHP arrays and GD images")
+    public static function fromGdImage(\GdImage $image, ?Tensor $into = null): Tensor;   // with ext/gd at build time
+    public function toGdImage(): \GdImage;
     // count() = length of the first axis; foreach iterates the first axis; $v[i], isset($v[i]), $v[i] = x
 }
 
@@ -277,6 +282,25 @@ is a scalar.
 | float dtypes         | `float`                                   | `int` or `float`, rounded to nearest even               |
 | `Complex*`           | `[re, im]`                                | a number, or `[re, im]`                                 |
 
+### Conversion
+
+`$t->convert(DType $dtype, ?array $axes = null)` returns the elements in another dtype as a new C-contiguous tensor in
+host memory, in one pass that allocates nothing but the result (a memory-mapped checkpoint converts without an
+intermediate copy). With `$axes` (a permutation of `0 .. ndim - 1`) axis `i` of the result is axis `$axes[i]` of `$t`, so
+`$m->convert($m->dtype, [1, 0])` is the transpose. Element writes and `buffers_convert()` (C API) follow the same rules:
+
+* **To an integer dtype**: an integer wraps to the width (two's complement); a float is converted as PHP's `(int)` does
+  (truncated toward zero; NaN and infinities give 0; values outside the 64-bit range wrap modulo 2^64), then wraps to
+  the width; a complex number gives its real part.
+* **To `Bool`**: non-zero is `true` (a complex number: either part non-zero).
+* **To a float dtype**: rounded to nearest even, once. Overflow gives infinity in the formats that have it; the 8/6/4-bit
+  formats without infinity give NaN or saturate to their largest value, each as ml_dtypes does (see [Dtypes](#dtypes)).
+  An integer is rounded once to
+  `Float32` for every format of at most 32 bits, as NumPy and ml_dtypes do.
+* **To a complex dtype**: real values get an imaginary part of 0; both parts round to the component format.
+
+The packed sub-byte dtypes are not supported by `convert()` (`Error`); `view()` and element access read and write them.
+
 ### Error policy
 
 Any non-int offset throws `TypeError`; an out-of-range or negative index throws `ValueError` (`isset()` and `??` just
@@ -333,8 +357,10 @@ $m = Tensor::fromArray([[1, 2], [3, 4]], DType::Int16) + $bias;   // Int16, the 
   for `$pos`.
 * Other operands: an object of a class with arithmetic of its own (an extension class such as `Skein\Expression`) gets the
   operation, on either side; any other `TensorAggregate` (a PHP class) is computed through its `getTensor()`; anything
-  else (strings, arrays, `null`, other objects) is PHP's `TypeError`. Comparisons (`==`, `<`) are not element-wise: a
-  tensor equals only itself.
+  else (strings, arrays, `null`, other objects) is PHP's `TypeError`.
+* Comparisons are not element-wise: a tensor compares like an enum case. `==` is true only for the same object and false
+  against anything else (no notice, so `in_array(1, [$t])` is false); `<`, `<=`, `>`, `>=` are false in both orders and
+  `<=>` gives 1. A tensor is truthy like every object. `Buffer`, `DataView` and devices compare the same way.
 * Tensors on another device (a GPU) are computed by a backend that the extension owning the device registered; without
   one, or for operands on different devices, it is an `Error` naming the devices (no implicit copies).
 * Speed: plain C loops the compiler vectorizes, with a variant per CPU class (SSE2, AVX2, AVX-512 on x86-64) chosen when

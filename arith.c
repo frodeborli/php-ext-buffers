@@ -574,6 +574,120 @@ static void scalar_element(const operand *o, int rt, uint8_t *out)
 	}
 }
 
+/* ---- backends ---- */
+
+#define MAX_BACKENDS 16
+static const buffers_backend *backends[MAX_BACKENDS];
+static int nbackends;
+
+zend_result buffers_register_backend(const buffers_backend *backend)
+{
+	if (!backend || !backend->can || !backend->run || nbackends == MAX_BACKENDS) return FAILURE;
+	backends[nbackends++] = backend;
+	return SUCCESS;
+}
+
+static void backend_operand(const operand *o, buffers_operand *out)
+{
+	memset(out, 0, sizeof *out);
+	out->is_scalar = o->scalar;
+	out->dtype = o->dt;
+	if (o->scalar) {
+		out->lval = o->l;
+		out->dval = o->d;
+		return;
+	}
+	out->tensor = &o->v->std;
+	buffers_tensor_get_info(&o->v->std, &out->info);
+	out->device = buf_buffer_from(o->v->buf)->device;
+}
+
+static bool same_device(const buf_buffer *a, const buf_buffer *b)
+{
+	return a->host == b->host && a->dev_type == b->dev_type && a->dev_id == b->dev_id;
+}
+
+/* 1 a backend computed it (result set), 0 no backend can, -1 after throwing */
+static int try_backends(uint8_t op, const operand *ops, int nops, int rt, int ndim, const int64_t *shape, zval *result)
+{
+	buffers_operand bo[2];
+	zend_object *res;
+	buffers_tensor_info info;
+
+	if (!nbackends) return 0;
+	for (int i = 0; i < nops; i++) backend_operand(&ops[i], &bo[i]);
+	for (int k = nbackends - 1; k >= 0; k--) {
+		const buffers_backend *be = backends[k];
+
+		if (!be->can(op, &bo[0], nops == 2 ? &bo[1] : NULL, rt, ndim, shape)) continue;
+		res = be->run(op, &bo[0], nops == 2 ? &bo[1] : NULL, rt, ndim, shape);
+		if (!res) return -1;
+		if (!buffers_is_tensor(res) || buffers_tensor_get_info(res, &info) == FAILURE || info.dtype != rt || info.ndim != ndim
+			|| memcmp(info.shape, shape, sizeof(int64_t) * (size_t)ndim) != 0) {
+			OBJ_RELEASE(res);
+			zend_throw_error(NULL, "The arithmetic backend %s returned a result of the wrong dtype or shape", be->name);
+			return -1;
+		}
+		ZVAL_OBJ(result, res);
+		return 1;
+	}
+	return 0;
+}
+
+/* the name of a buffer's device, as its $name property says ("cpu", "cuda:0", an extension's own name) */
+static zend_string *device_label(const buf_buffer *b)
+{
+	if (b->device) {
+		zval rv, *n = zend_read_property(b->device->ce, b->device, "name", sizeof("name") - 1, 1, &rv);
+
+		if (!EG(exception) && n && Z_TYPE_P(n) == IS_STRING) {
+			zend_string *s = zend_string_copy(Z_STR_P(n));
+
+			zval_ptr_dtor(&rv);
+			return s;
+		}
+		zend_clear_exception();
+	}
+	return buf_device_name(b->dev_type, b->dev_id);
+}
+
+/* the operands are not all in host memory and no backend can compute the operation: an Error naming the devices */
+static void no_backend_error(uint8_t op, const operand *ops, int nops)
+{
+	const buf_buffer *first = NULL;
+
+	for (int i = 0; i < nops; i++) {
+		const buf_buffer *b;
+
+		if (ops[i].scalar) continue;
+		b = buf_buffer_from(ops[i].v->buf);
+		if (first && !same_device(first, b)) {
+			zend_string *n1 = device_label(first), *n2 = device_label(b);
+
+			zend_throw_error(NULL, "Cannot compute %s on operands on different devices (%s and %s); move one with to()",
+				op_symbol(op), ZSTR_VAL(n1), ZSTR_VAL(n2));
+			zend_string_release(n1);
+			zend_string_release(n2);
+			return;
+		}
+		if (!first) first = b;
+	}
+	{
+		const buf_buffer *b = NULL;
+
+		for (int i = 0; i < nops && !b; i++) {
+			if (!ops[i].scalar && !buf_buffer_from(ops[i].v->buf)->host) b = buf_buffer_from(ops[i].v->buf);
+		}
+		if (b) {
+			zend_string *n = device_label(b);
+
+			zend_throw_error(NULL, "Cannot compute %s on device %s: no arithmetic backend for it is registered; move the operands to the host with to()",
+				op_symbol(op), ZSTR_VAL(n));
+			zend_string_release(n);
+		}
+	}
+}
+
 /* ---- the operation ---- */
 
 /* the result shape of broadcasting a and b (Array API rules); false after throwing */
@@ -690,14 +804,26 @@ static zend_result arith_operation(uint8_t op, zval *result, zval *op1, zval *op
 	for (int i = 0; i < nops; i++) {
 		if (ops[i].scalar && ops[i].dt == BUFFERS_SCALAR_INT && operand_class(rt, &(bool){0}) != CLS_FLOAT && !int_fits(ops[i].l, rt)) {
 			zend_value_error("Operand " ZEND_LONG_FMT " does not fit the dtype %s of the other operand", ops[i].l, buf_dtypes[rt].name);
-			return FAILURE;
-		}
-		if (!ops[i].scalar && !buf_view_check_access(ops[i].v)) {
 			THROWN();
 		}
 	}
 	if (!broadcast(ops, nops, &ndim, shape)) {
-		return FAILURE;
+		THROWN();
+	}
+	switch (try_backends(op, ops, nops, rt, ndim, shape, result)) {
+	case 1: return SUCCESS;
+	case -1: THROWN();
+	}
+	for (int i = 0; i < nops; i++) {
+		if (!ops[i].scalar && !buf_buffer_from(ops[i].v->buf)->host) {
+			no_backend_error(op, ops, nops);
+			THROWN();
+		}
+	}
+	for (int i = 0; i < nops; i++) {
+		if (!ops[i].scalar && !buf_view_check_access(ops[i].v)) {
+			THROWN();
+		}
 	}
 	for (int j = 0; j < ndim; j++) {
 		if (buf_mul_ovf(total, shape[j], &total)) {

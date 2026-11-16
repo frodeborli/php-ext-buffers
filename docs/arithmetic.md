@@ -82,7 +82,11 @@ shape.
 
 ## Comparisons
 
-`==`, `!=`, `<`, `>`, `<=>` are not element-wise: a tensor is equal only to itself.
+Comparison operators are not element-wise; `Tensor` compares like an enum case. `$a == $b` is true only when both are
+the same object; `==` with any other object or with a number, string or `null` is false, without converting the tensor
+(no notice). `<`, `<=`, `>` and `>=` are false in both orders and `<=>` gives 1, so `sort()` and `usort()` over tensors
+give no meaningful order. As for every PHP object, a tensor is truthy: `$t == true` is true and `(bool)$t` is true.
+`Buffer`, `DataView` and the devices compare the same way. Element-wise comparison is a separate operation.
 
 ## Backends
 

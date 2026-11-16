@@ -14,7 +14,7 @@
 
 /* ---- counters ----------------------------------------------------------------------------- */
 
-static zend_long tensors_made, tensors_deleted, made, deleted, ctx_freed, ready_calls, owners_made, owners_freed, pending_made, transfers;
+static zend_long tensors_made, tensors_deleted, made, deleted, ctx_freed, ready_calls, owners_made, owners_freed, pending_made, transfers, backend_asks, backend_runs;
 
 /* ---- a buffer over malloc'd memory with a counting deleter ------------------------------------ */
 
@@ -212,6 +212,8 @@ PHP_FUNCTION(bat_counts)
 	add_assoc_long(return_value, "ready_calls", ready_calls);
 	add_assoc_long(return_value, "owners_made", owners_made);
 	add_assoc_long(return_value, "owners_freed", owners_freed);
+	add_assoc_long(return_value, "backend_asks", backend_asks);
+	add_assoc_long(return_value, "backend_runs", backend_runs);
 }
 
 static void list_i64(zval *arr, const char *key, const int64_t *v, int n)
@@ -906,6 +908,55 @@ static zend_result describing_handler(uint8_t opcode, zval *result, zval *op1, z
 	return SUCCESS;
 }
 
+/* ---- an arithmetic backend for BatDevice ------------------------------------------------------------------
+ * Adds and subtracts Float32 tensors of the same shape on BatDevice (whose memory is really malloc'd, so it can compute
+ * there) into a new buffer on BatDevice. Declines everything else, so host operations fall back to ext-buffers. */
+
+static bool bat_backend_can(uint8_t op, const buffers_operand *a, const buffers_operand *b, int rt, int ndim, const int64_t *shape)
+{
+	backend_asks++;
+	if ((op != ZEND_ADD && op != ZEND_SUB) || !b || a->is_scalar || b->is_scalar || rt != BUFFERS_DT_FLOAT32) return false;
+	if (!a->device || !b->device || a->device->ce != ce_device || b->device->ce != ce_device) return false;
+	for (int i = 0; i < 2; i++) {
+		const buffers_tensor_info *t = i ? &b->info : &a->info;
+		int64_t expect = 1;
+
+		if (t->dtype != BUFFERS_DT_FLOAT32 || t->ndim != ndim) return false;
+		for (int j = ndim - 1; j >= 0; j--) {
+			if (t->shape[j] != shape[j] || (shape[j] > 1 && t->strides[j] != expect)) return false;
+			expect *= shape[j];
+		}
+	}
+	return true;
+}
+
+static zend_object *bat_backend_run(uint8_t op, const buffers_operand *a, const buffers_operand *b, int rt, int ndim, const int64_t *shape)
+{
+	int64_t n = 1;
+	float *mem, x, y;
+	zval dev;
+	zend_object *buf, *t;
+
+	for (int j = 0; j < ndim; j++) n *= shape[j];
+	mem = calloc((size_t)(n ? n : 1), sizeof(float));
+	for (int64_t k = 0; k < n; k++) {
+		memcpy(&x, a->info.data + k * 4, 4);
+		memcpy(&y, b->info.data + k * 4, 4);
+		mem[k] = op == ZEND_ADD ? x + y : x - y;
+	}
+	object_init_ex(&dev, ce_device);
+	buf = buffers_buffer_create_foreign(mem, (size_t)n * 4, true, Z_OBJ(dev), counting_deleter, mem);
+	zval_ptr_dtor(&dev);
+	if (!buf) { free(mem); return NULL; }
+	made++;
+	t = buffers_tensor_create(buf, rt, ndim, shape, NULL, 0);
+	OBJ_RELEASE(buf);
+	backend_runs++;
+	return t;
+}
+
+static const buffers_backend bat_backend = { "bat", bat_backend_can, bat_backend_run };
+
 /* ---- element conversion ------------------------------------------------------------------------- */
 
 /* bat_convert(DType $from, string $bytes, DType $to, int $n, int $srcStride = 1, int $dstStride = 1): string - the destination
@@ -1135,7 +1186,8 @@ static PHP_MINIT_FUNCTION(buffers_api_test)
 	ce_device = zend_register_internal_class_ex(&ce, NULL);
 	ce_device->ce_flags |= ZEND_ACC_FINAL | ZEND_ACC_NO_DYNAMIC_PROPERTIES | ZEND_ACC_NOT_SERIALIZABLE;
 	buffers_implement_device(ce_device, device_get_name, device_get_id, device_get_host);
-	if (buffers_register_device_type(ce_device, kDLCUDA) == FAILURE || buffers_register_transfer(ce_device, bat_transfer) == FAILURE) {
+	if (buffers_register_device_type(ce_device, kDLCUDA) == FAILURE || buffers_register_transfer(ce_device, bat_transfer) == FAILURE
+		|| buffers_register_backend(&bat_backend) == FAILURE) {
 		return FAILURE;
 	}
 	return SUCCESS;

@@ -81,6 +81,7 @@ enum { BUFFERS_SCALAR_BOOL = -2, BUFFERS_SCALAR_INT = -3, BUFFERS_SCALAR_FLOAT =
  * only: whether a scalar's value fits an integer dtype is checked when the operation runs. */
 BUFFERS_API int buffers_dtype_promote(int a, int b, uint8_t op);
 
+
 /* ---- element conversion ---------------------------------------------------------------- */
 
 /* Converts n elements of one dtype to another: element k is read at src + k * src_stride and written at dst + k * dst_stride
@@ -88,8 +89,9 @@ BUFFERS_API int buffers_dtype_promote(int a, int b, uint8_t op);
  * must be the start of a row, i.e. byte aligned). Does not throw, and does not check the memory: the caller guarantees that every
  * element lies inside readable and writable memory. Every pair of dtypes is supported. Rules: a decoded value is an int64
  * (Bool, Int*), a uint64 (UInt*), a double (floats) or a pair of doubles (complex), converted to the class of the destination:
- *  - to an integer dtype: integers wrap to the width (two's complement); a float is truncated toward zero first, a complex number
- *    loses its imaginary part; out-of-range floats and NaN give an unspecified integer;
+ *  - to an integer dtype: integers wrap to the width (two's complement); a float is converted as PHP's (int) does first (truncated
+ *    toward zero, NaN and infinities give 0, values outside the 64-bit range wrap modulo 2^64); a complex number loses its
+ *    imaginary part;
  *  - to Bool: non-zero (a complex number: either part non-zero);
  *  - to a float dtype: the value rounded to that format (ml_dtypes' rules, see the README); a complex number loses its imaginary part;
  *  - to a complex dtype: real values get an imaginary part of 0; both parts are rounded to the component format. */
@@ -226,6 +228,33 @@ BUFFERS_API zend_object *buffers_tensor_create(zend_object *buffer, int dtype, i
 BUFFERS_API zend_object *buffers_shape_create(uint32_t n, const zval *dims);
 /* The dimensions of a Shape (borrowed) */
 BUFFERS_API const zval *buffers_shape_dims(zend_object *shape, uint32_t *n);
+
+/* ---- arithmetic backends ---------------------------------------------------------------- */
+
+/* An operand of an operator, as a backend sees it. */
+typedef struct {
+	bool is_scalar;
+	int dtype;                     /* BUFFERS_DT_* of a tensor, BUFFERS_SCALAR_* of a PHP scalar */
+	zend_object *tensor;           /* the Tensor (borrowed); NULL for a scalar */
+	buffers_tensor_info info;      /* the tensor's layout (filled when !is_scalar; see buffers_tensor_get_info()) */
+	zend_object *device;           /* the device of the tensor's buffer (borrowed); NULL for the CPU and for scalars */
+	zend_long lval;                /* an int scalar's value (its fit in the result dtype is checked); a bool scalar's 0 or 1 */
+	double dval;                   /* a float scalar's value */
+} buffers_operand;
+
+/* An arithmetic backend: computes operators on another device, or faster on the host. For every operation ext-buffers
+ * checks the operands, works out the result dtype and the broadcast shape (ndim, shape), then asks the registered backends,
+ * newest first, with can(): no side effects, no exceptions. The first that says yes runs it with run(), which returns a new
+ * reference to the result Tensor (on the operands' device, with exactly result_dtype and shape), or NULL after throwing.
+ * b is NULL for the unary ~. Without a capable backend ext-buffers computes host memory itself; operands on another
+ * device are an Error. A backend must give exactly the results of docs/arithmetic.md. Register from MINIT; the struct must
+ * stay valid until MSHUTDOWN; FAILURE when the table (16 backends) is full. */
+typedef struct {
+	const char *name;
+	bool (*can)(uint8_t opcode, const buffers_operand *a, const buffers_operand *b, int result_dtype, int ndim, const int64_t *shape);
+	zend_object *(*run)(uint8_t opcode, const buffers_operand *a, const buffers_operand *b, int result_dtype, int ndim, const int64_t *shape);
+} buffers_backend;
+BUFFERS_API zend_result buffers_register_backend(const buffers_backend *backend);
 
 /* ---- transfers ------------------------------------------------------------------------- */
 

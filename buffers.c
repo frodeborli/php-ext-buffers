@@ -12,10 +12,13 @@ zend_class_entry *buf_json_serializable(void)
 	return zend_hash_str_find_ptr(CG(class_table), "jsonserializable", sizeof("jsonserializable") - 1);
 }
 
+/* Tensors, buffers, devices and data views compare like enum cases: an object is equal only to itself (the engine checks
+ * that before calling this), and anything else is uncomparable: == and != with another object or a scalar are "not
+ * equal" without converting the object (no "could not be converted to int" notice, so `$tensor == 1` is false), and <, >,
+ * <= and >= are false both ways. (== true and == false compare truthiness, decided by the engine before this.) */
 int buf_compare_identity(zval *a, zval *b)
 {
-	ZEND_COMPARE_OBJECTS_FALLBACK(a, b);
-	return Z_OBJ_P(a) == Z_OBJ_P(b) ? 0 : ZEND_UNCOMPARABLE;
+	return zend_objects_not_comparable(a, b);
 }
 
 static PHP_GINIT_FUNCTION(buffers)
