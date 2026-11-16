@@ -264,6 +264,7 @@ static zend_always_inline zend_object *view_alloc(zend_object *buf, int dt, int 
 	v->ndim = ndim;
 	v->writable = writable;
 	v->slow = slow;
+	v->st_ok = 0;
 	for (int i = 0; i < ndim; i++) { /* ndim is 1-3 in practice: a short loop beats a call or a 128-byte copy */
 		v->shape[i] = shape[i];
 		v->sbytes[i] = sbytes[i];

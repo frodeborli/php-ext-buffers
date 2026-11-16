@@ -687,9 +687,9 @@ and has phpt tests; read it as the example.
 
 | Area | Functions |
 |------|-----------|
-| classes, dtypes | `buffers_get_class()`, `buffers_dtype_describe()`, `buffers_dtype_count()` (the dtypes of the loaded extension: check values against it, not against the compiled `BUFFERS_DT_COUNT`), `buffers_dtype_to_zval()`, `buffers_dtype_from_object()`, `buffers_dtype_from_dlpack()` |
+| classes, dtypes | `buffers_get_class()`, `buffers_dtype_describe()`, `buffers_dtype_count()` (the dtypes of the loaded extension: check values against it, not against the compiled `BUFFERS_DT_COUNT`), `buffers_dtype_to_zval()`, `buffers_dtype_from_object()`, `buffers_dtype_from_dlpack()`, `buffers_max_ndim()` (no structure of the API has an array of `BUFFERS_MAX_NDIM`: an extension with fixed arrays of its own checks `ndim` against its own limit) |
 | devices | `buffers_cpu_device()`, `buffers_file_device()`, `buffers_implement_device()` (declare `$name`, `$id`, `$hostAccessible` with three get hooks), `buffers_register_device_type()`, `buffers_device_dlpack()`, `buffers_register_transfer()`, `buffers_tensor_to()` |
-| tensors | `buffers_is_tensor()`, `buffers_tensor_get_info()` (data pointer, dtype, ndim, shape, strides in elements, byte offset, buffer object, writable; views may start at any byte offset and the pointer is handed over as it is: strides are in elements, so the tensor is aligned exactly when `data % size == 0`, which a consumer that needs alignment checks itself), `buffers_tensor_create()` (validated exactly like `view()`) |
+| tensors | `buffers_is_tensor()`, `buffers_tensor_get_info()` (data pointer, dtype, ndim, pointers to the shape and the strides in elements, which belong to the tensor and stay valid while the caller holds it, byte offset, buffer object, writable; views may start at any byte offset and the pointer is handed over as it is: strides are in elements, so the tensor is aligned exactly when `data % size == 0`, which a consumer that needs alignment checks itself), `buffers_tensor_create()` (validated exactly like `view()`) |
 | buffers | `buffers_is_buffer()`, `buffers_buffer_get_info()` (base, length, writable, host accessible, device), `buffers_buffer_create_foreign()` (memory + deleter + device), `buffers_buffer_create_owned()` (memory kept alive by a PHP object: holds a reference to the owner and releases it on free, no deleter), `buffers_buffer_file_origin()` (the path and offset of a mapped `Buffer::fromFile()` buffer: refer to the bytes instead of copying them), `buffers_hold()`, `buffers_release()` |
 | shapes, tensors | `buffers_shape_create()`, `buffers_shape_dims()`; `buffers_get_class(BUFFERS_CE_TENSOR_AGGREGATE)` for classes that implement `TensorAggregate` (its three methods, like any interface) |
 | elements | `buffers_convert()` (n elements between any two dtypes, strided, every format: integers wrap, floats round like `ml_dtypes`; for extensions that compute on elements) |
@@ -735,12 +735,12 @@ without the feature (see Performance).
 
 What has been run, on Linux x86-64 (Ubuntu host, Debian 12 and Alpine containers):
 
-* `tests/` phpt suite (70 files), run twice: with the extension alone, and with the API consumer test extension loaded. On PHP 8.4
-  and 8.5, Debian/glibc and Alpine/musl, NTS and ZTS (`tools/docker-test.sh`, 8 images): 45 + 63 pass, the rest skip (tests that
-  need the consumer, 32-bit-only tests, the PHP 8.3 variants). On PHP 8.3 (Debian and Alpine NTS): 42 + 60 pass; the tests of
+* `tests/` phpt suite (71 files), run twice: with the extension alone, and with the API consumer test extension loaded. On PHP 8.4
+  and 8.5, Debian/glibc and Alpine/musl, NTS and ZTS (`tools/docker-test.sh`, 8 images): 45 + 64 pass, the rest skip (tests that
+  need the consumer, 32-bit-only tests, the PHP 8.3 variants). On PHP 8.3 (Debian and Alpine NTS): 42 + 61 pass; the tests of
   property hooks skip and their 8.3 variants run. No compiler warnings with `-Wall -Wextra`.
-* 32-bit PHP (`DOCKER_PLATFORM=linux/386`, Debian, 8.5 and 8.3): 36 + 52 and 33 + 49 pass; the tests that need 64-bit dtypes skip.
-* The whole suite, both passes, under valgrind with `USE_ZEND_ALLOC=0` (`tools/valgrind.sh`, PHP 8.5 NTS): 44 + 62 pass, zero errors,
+* 32-bit PHP (`DOCKER_PLATFORM=linux/386`, Debian, 8.5 and 8.3): 36 + 53 and 33 + 50 pass; the tests that need 64-bit dtypes skip.
+* The whole suite, both passes, under valgrind with `USE_ZEND_ALLOC=0` (`tools/valgrind.sh`, PHP 8.5 NTS): 44 + 63 pass, zero errors,
   zero leaks.
 * Arithmetic: `arith_exact.phpt` compares every operator bit for bit with an independent oracle (PHP double and integer arithmetic,
   rounded once to the format) for `Float16`, `BFloat16`, `Float32`, `Float64` and 8/16/32-bit integers, on an AMD Ryzen 9 9950X3D

@@ -9,7 +9,9 @@
  * fails, unless stated otherwise. Objects are ordinary refcounted zend_objects; hold them with
  * GC_ADDREF / buffers_hold() and release them with OBJ_RELEASE / buffers_release().
  *
- * Version history: 1 = first version; 2 = buffers_convert(), buffers_declare_virtual_props().
+ * Version history: 1 = first version; 2 = buffers_convert(), buffers_declare_virtual_props(); 3 = arithmetic (buffers_dtype_promote(),
+ * backends) instead of the operator hook, TensorAggregate, buffers_dtype_count(), buffers_max_ndim(), and buffers_tensor_info with
+ * pointers to the shape and strides instead of arrays of BUFFERS_MAX_NDIM.
  */
 #ifndef PHP_BUFFERS_API_H
 #define PHP_BUFFERS_API_H
@@ -31,7 +33,11 @@
 # define BUFFERS_API
 #endif
 
+/* The most axes a tensor of the ext-buffers this header comes with can have. A later version may allow more, without an ABI change
+ * (no struct of this API has an array of this size): an extension that keeps axes in fixed arrays of its own checks a tensor's ndim
+ * against its own limit (and may compare with buffers_max_ndim(), the limit of the loaded extension). */
 #define BUFFERS_MAX_NDIM 8
+BUFFERS_API int buffers_max_ndim(void);
 
 /* ---- dtypes ---------------------------------------------------------------------------- */
 
@@ -204,9 +210,9 @@ typedef struct {
 	uint8_t *data;                       /* address of element 0 (buffer base + byte_offset); any address, see below. Multi-byte
 	                                      * elements are little-endian on every host */
 	int dtype;                           /* BUFFERS_DT_* */
-	int ndim;                            /* 0 to BUFFERS_MAX_NDIM */
-	int64_t shape[BUFFERS_MAX_NDIM];
-	int64_t strides[BUFFERS_MAX_NDIM];   /* in elements; 1 for the last axis of a packed dtype */
+	int ndim;                            /* 0 to buffers_max_ndim() */
+	const int64_t *shape;                /* ndim entries, owned by the tensor: valid while the caller holds the tensor */
+	const int64_t *strides;              /* ndim entries, in elements; 1 for the last axis of a packed dtype; owned likewise */
 	int64_t byte_offset;
 	zend_object *buffer;                 /* borrowed */
 	bool writable;
@@ -284,9 +290,9 @@ BUFFERS_API zend_result buffers_dlpack_export(zend_object *view, DLManagedTensor
  * exception is thrown, NULL is returned and the caller still owns the tensor. */
 BUFFERS_API zend_object *buffers_dlpack_import(DLManagedTensorVersioned *tensor);
 
-/* Operators on Tensors are ext-buffers' own (eager, docs/arithmetic.md). C API 3 removed the operator hook of
- * C API 2: an extension with lazy or accelerated arithmetic gives its own classes a do_operation handler; Tensor's
- * returns FAILURE without an exception for such operands, so PHP asks them. */
+/* Operators on Tensors are ext-buffers' own (eager, docs/arithmetic.md). An extension with lazy or accelerated arithmetic gives
+ * its own classes a do_operation handler: with a Tensor on the left, Tensor's handler calls the right operand's handler with
+ * (opcode, result, op1, op2) unchanged, and its answer is final. */
 
 BUFFERS_API int buffers_api_version(void);
 

@@ -40,6 +40,7 @@ int buffers_dtype_from_object(zend_object *dtype_case) { return buf_dtype_from_o
 
 int buffers_dtype_promote(int a, int b, uint8_t op) { return buf_dtype_promote(a, b, op); }
 int buffers_dtype_count(void) { return BUF_NTYPES; }
+int buffers_max_ndim(void) { return BUF_MAX_NDIM; }
 
 int buffers_dtype_from_dlpack(int code, int bits)
 {
@@ -163,8 +164,12 @@ zend_result buffers_tensor_get_info(zend_object *view, buffers_tensor_info *out)
 	out->data = v->data;
 	out->dtype = v->dt;
 	out->ndim = v->ndim;
-	memcpy(out->shape, v->shape, sizeof(int64_t) * v->ndim);
-	buf_view_strides_elements(v, out->strides);
+	if (!v->st_ok) {
+		buf_view_strides_elements(v, v->st);
+		v->st_ok = 1;
+	}
+	out->shape = v->shape;
+	out->strides = v->st;
 	out->byte_offset = v->data - buf_buffer_from(v->buf)->base;
 	out->buffer = v->buf;
 	out->writable = v->writable;

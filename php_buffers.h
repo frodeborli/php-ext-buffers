@@ -134,7 +134,10 @@ typedef struct {
 	/* strides in bytes; API strides are sbytes / size. A packed dtype has no byte stride on its last
 	 * axis (elements are bits apart): that entry is 0. */
 	int64_t sbytes[BUF_MAX_NDIM];
-	uint8_t dt, ndim, writable, slow;
+	/* strides in elements, for buffers_tensor_get_info(), which hands out a pointer to them: filled on its first call
+	 * (st_ok), so making a sub-view does not compute them */
+	int64_t st[BUF_MAX_NDIM];
+	uint8_t dt, ndim, writable, slow, st_ok;
 	zend_object std;
 } buf_view;
 

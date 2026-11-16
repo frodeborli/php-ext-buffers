@@ -255,6 +255,28 @@ PHP_FUNCTION(bat_info)
 	add_assoc_bool(return_value, "is_view", buffers_is_tensor(v));
 }
 
+/* bat_max_ndim(): buffers_max_ndim() */
+PHP_FUNCTION(bat_max_ndim)
+{
+	ZEND_PARSE_PARAMETERS_NONE();
+	RETURN_LONG(buffers_max_ndim());
+}
+
+/* bat_info_twice(Tensor $v): whether two buffers_tensor_get_info() calls hand out the same shape and strides pointers */
+PHP_FUNCTION(bat_info_twice)
+{
+	zend_object *v;
+	buffers_tensor_info a, b;
+
+	ZEND_PARSE_PARAMETERS_START(1, 1)
+		Z_PARAM_OBJ(v)
+	ZEND_PARSE_PARAMETERS_END();
+	if (buffers_tensor_get_info(v, &a) == FAILURE || buffers_tensor_get_info(v, &b) == FAILURE) {
+		RETURN_THROWS();
+	}
+	RETURN_BOOL(a.shape == b.shape && a.strides == b.strides);
+}
+
 /* bat_is(mixed $x): [is_view, is_buffer] */
 PHP_FUNCTION(bat_is)
 {
@@ -1056,6 +1078,8 @@ ZEND_END_ARG_INFO()
 ZEND_BEGIN_ARG_INFO_EX(ai_bat_info, 0, 0, 1)
 	ZEND_ARG_INFO(0, a0)
 ZEND_END_ARG_INFO()
+ZEND_BEGIN_ARG_INFO_EX(ai_bat_max_ndim, 0, 0, 0)
+ZEND_END_ARG_INFO()
 ZEND_BEGIN_ARG_INFO_EX(ai_bat_is, 0, 0, 1)
 	ZEND_ARG_INFO(0, a0)
 ZEND_END_ARG_INFO()
@@ -1109,6 +1133,8 @@ static const zend_function_entry functions[] = {
 	PHP_FE(bat_peek, ai_bat_peek)
 	PHP_FE(bat_counts, ai_bat_counts)
 	PHP_FE(bat_info, ai_bat_info)
+	PHP_FE(bat_max_ndim, ai_bat_max_ndim)
+	PHP_FE(bat_info_twice, ai_bat_info)
 	PHP_FE(bat_is, ai_bat_is)
 	PHP_FE(bat_view, ai_bat_view)
 	PHP_FE(bat_dtype_info, ai_bat_dtype_info)
