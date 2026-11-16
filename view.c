@@ -1712,25 +1712,22 @@ copy:
 
 PHP_METHOD(Buffers_Tensor, squeeze)
 {
-	zend_long axis = 0;
-	bool axis_null = true;
+	zend_long axis;
 	buf_view *v = VIEW;
 	int64_t shape[BUF_MAX_NDIM], sb[BUF_MAX_NDIM];
-	int n = 0, only = -1;
+	int n = 0, only;
 
-	ZEND_PARSE_PARAMETERS_START(0, 1)
-		Z_PARAM_OPTIONAL
-		Z_PARAM_LONG_OR_NULL(axis, axis_null)
+	/* the axis is required: removing every axis of length 1 would also remove a batch axis that happens to have length 1 */
+	ZEND_PARSE_PARAMETERS_START(1, 1)
+		Z_PARAM_LONG(axis)
 	ZEND_PARSE_PARAMETERS_END();
-	if (!axis_null) {
-		if (!view_axis(v, axis, 1, 0, &only)) RETURN_THROWS();
-		if (v->shape[only] != 1) {
-			zend_argument_value_error(1, "must be an axis of length 1, axis %d has length %lld", only, (long long)v->shape[only]);
-			RETURN_THROWS();
-		}
+	if (!view_axis(v, axis, 1, 0, &only)) RETURN_THROWS();
+	if (v->shape[only] != 1) {
+		zend_argument_value_error(1, "must be an axis of length 1, axis %d has length %lld", only, (long long)v->shape[only]);
+		RETURN_THROWS();
 	}
 	for (int i = 0; i < v->ndim; i++) {
-		bool drop = only >= 0 ? i == only : v->shape[i] == 1;
+		bool drop = i == only;
 
 		if (drop && buf_dtypes[v->dt].size == 0 && i == v->ndim - 1) drop = false;   /* the packed last axis stays */
 		if (drop) continue;
@@ -1738,7 +1735,7 @@ PHP_METHOD(Buffers_Tensor, squeeze)
 		sb[n] = v->sbytes[i];
 		n++;
 	}
-	if (only >= 0 && n == v->ndim) {
+	if (n == v->ndim) {
 		zend_value_error("The last axis of a packed %s tensor cannot be removed: its elements are bits apart", buf_dtypes[v->dt].name);
 		RETURN_THROWS();
 	}

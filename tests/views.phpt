@@ -47,13 +47,14 @@ attempt('empty', fn() => Tensor::fromArray([[]], DType::Float32)->reshape([0, 5,
 
 echo "squeeze and unsqueeze\n";
 $u = $t->slice(1, 1, 1);  // [2, 1, 4]
-attempt('squeeze', fn() => $u->squeeze());
+attempt('squeeze without an axis', fn() => $u->squeeze());
 attempt('squeeze axis 1', fn() => $u->squeeze(1));
 attempt('squeeze axis 0', fn() => $u->squeeze(0));
 attempt('unsqueeze 0', fn() => $m->unsqueeze(0));
 attempt('unsqueeze -1', fn() => $m->unsqueeze(-1));
 attempt('unsqueeze 3', fn() => $m->unsqueeze(3));
-attempt('unsqueeze then squeeze', fn() => json_encode($m->unsqueeze(1)->squeeze()) === json_encode($m));
+attempt('unsqueeze then squeeze', fn() => json_encode($m->unsqueeze(1)->squeeze(1)) === json_encode($m));
+attempt('a batch of one keeps its other axes', fn() => Tensor::fromArray([[[1, 2]]], DType::Int8)->squeeze(0));
 
 echo "broadcastTo\n";
 $row = Tensor::fromArray([1, 2, 3], DType::Int16);
@@ -134,13 +135,14 @@ a slice keeping rows contiguous: [[12,13,14,15],[16,17,18,19],[20,21,22,23]] [3,
 every other row, rows split: [[[[0,1],[2,3]],[[8,9],[10,11]]],[[[12,13],[14,15]],[[20,21],[22,23]]]] [2,2,2,2]
 empty: [] [0,5,2]
 squeeze and unsqueeze
-squeeze: [[4,5,6,7],[16,17,18,19]] [2,4]
+squeeze without an axis: ArgumentCountError: Buffers\Tensor::squeeze() expects exactly 1 argument, 0 given
 squeeze axis 1: [[4,5,6,7],[16,17,18,19]] [2,4]
 squeeze axis 0: ValueError: Buffers\Tensor::squeeze(): Argument #1 ($axis) must be an axis of length 1, axis 0 has length 2
 unsqueeze 0: [[[1,2,3],[4,5,6]]] [1,2,3]
 unsqueeze -1: [[[1],[2],[3]],[[4],[5],[6]]] [2,3,1]
 unsqueeze 3: ValueError: Buffers\Tensor::unsqueeze(): Argument #1 ($axis) must be between -3 and 2, 3 given
 unsqueeze then squeeze: true
+a batch of one keeps its other axes: [[1,2]] [1,2]
 broadcastTo
 [3] to [2, 3]: [[1,2,3],[1,2,3]] [2,3]
 strides: array (

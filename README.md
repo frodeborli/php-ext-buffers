@@ -208,7 +208,7 @@ final class Tensor implements TensorAggregate, Countable, ArrayAccess, IteratorA
     public function transpose(int $axis1 = -2, int $axis2 = -1): Tensor;
     public function permute(array $axes): Tensor;
     public function reshape(array $shape): Tensor;
-    public function squeeze(?int $axis = null): Tensor;
+    public function squeeze(int $axis): Tensor;
     public function unsqueeze(int $axis): Tensor;
     public function broadcastTo(array $shape): Tensor;
     public function copy(?Tensor $into = null): Tensor;   // the elements, byte for byte: a new contiguous tensor, or into $into
@@ -301,10 +301,10 @@ is copied. Negative axes count from the end.
 $m = Tensor::fromArray(range(0, 11), DType::Float32)->reshape([3, 4]);
 $m->slice(1, 1, 2);            // columns 1 and 2: [3, 2]
 $m->slice(0, 0, null, 2);      // every other row: [2, 4]
-$m->transpose();               // [4, 3]; transpose($a, $b) swaps any two axes
+$m->transpose();               // [4, 3]; transpose($a, $b) swaps two axes (PyTorch's meaning, not NumPy's)
 $m->permute([1, 0]);           // the axes in any order
 $m->reshape([2, -1]);          // [2, 6]; -1 is inferred
-$m->unsqueeze(0)->squeeze();   // [1, 3, 4], back to [3, 4]
+$m->unsqueeze(0)->squeeze(0);  // [1, 3, 4], back to [3, 4]
 Tensor::fromArray([1, 2, 3, 4], DType::Float32)->broadcastTo([3, 4]);   // read-only, stride 0 on axis 0
 $m->transpose()->copy();       // a contiguous copy
 ```
@@ -314,8 +314,10 @@ $m->transpose()->copy();       // a contiguous copy
 * `reshape($shape)`: the same elements in another shape, with at most one `-1`. When the strides do not allow a view (a
   transposed tensor into fewer axes, for example) it is a `ValueError`; `$t->copy()->reshape(...)` copies first. It never
   copies by itself, so whether the result shares memory does not depend on the layout.
-* `squeeze()` drops every axis of length 1, `squeeze($axis)` just that one (it must have length 1); `unsqueeze($axis)` adds one
-  at position `$axis` (0 to `ndim`).
+* `transpose($axis1 = -2, $axis2 = -1)` swaps two axes, by default the last two: PyTorch's meaning. NumPy's `transpose()`
+  reverses all axes; here that is `permute()` with the axes in reverse order.
+* `squeeze($axis)` drops that axis, which must have length 1 (the axis is required: dropping every axis of length 1 would also
+  drop a batch axis that happens to be 1); `unsqueeze($axis)` adds one at position `$axis` (0 to `ndim`).
 * `broadcastTo($shape)`: axes are aligned from the right; an axis of length 1, or a missing one, repeats its element with a
   stride of 0. The result is read-only.
 * `copy(?Tensor $into = null)` copies the elements byte for byte (NaN payloads included): into a new C-contiguous tensor in host

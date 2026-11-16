@@ -348,7 +348,10 @@ final class Tensor implements TensorAggregate, \Countable, \ArrayAccess, \Iterat
      * the length of the axis, $step at least 1. A packed dtype's last axis takes only step 1 and a start on a whole byte.
      */
     public function slice(int $axis, int $start, ?int $length = null, int $step = 1): Tensor {}
-    /** A view with $axis1 and $axis2 swapped; by default the last two (a matrix transpose). */
+    /**
+     * A view with $axis1 and $axis2 swapped; by default the last two (a matrix transpose). This is PyTorch's transpose; NumPy's
+     * transpose() reverses all axes, which is permute() with the reversed list here.
+     */
     public function transpose(int $axis1 = -2, int $axis2 = -1): Tensor {}
     /** A view with the axes in another order: axis i of the result is axis $axes[i] of this tensor. */
     public function permute(array $axes): Tensor {}
@@ -357,8 +360,11 @@ final class Tensor implements TensorAggregate, \Countable, \ArrayAccess, \Iterat
      * strides do not allow a view; reshape a copy() then. A packed dtype keeps its last axis.
      */
     public function reshape(array $shape): Tensor {}
-    /** A view without the axes of length 1, or without just $axis (which must have length 1). */
-    public function squeeze(?int $axis = null): Tensor {}
+    /**
+     * A view without $axis, which must have length 1. The axis is required: removing every axis of length 1 would also
+     * remove a batch axis that happens to have length 1.
+     */
+    public function squeeze(int $axis): Tensor {}
     /** A view with a new axis of length 1 at position $axis (0 to ndim; negative counts from the end). */
     public function unsqueeze(int $axis): Tensor {}
     /**

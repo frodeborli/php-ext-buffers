@@ -1,5 +1,5 @@
 /* This is a generated file, edit the .stub.php file instead.
- * Stub hash: dd9b409e25d880aede7a50d15a563b8cb5a7edbe */
+ * Stub hash: 27226120acbb7d72b4754d723e7b68fd8b993e2d */
 
 ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_class_Buffers_DType_bits, 0, 0, IS_LONG, 0)
 ZEND_END_ARG_INFO()
@@ -286,13 +286,11 @@ ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(arginfo_class_Buffers_Tensor_reshape, 0, 
 	ZEND_ARG_TYPE_INFO(0, shape, IS_ARRAY, 0)
 ZEND_END_ARG_INFO()
 
-ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(arginfo_class_Buffers_Tensor_squeeze, 0, 0, Buffers\\Tensor, 0)
-	ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, axis, IS_LONG, 1, "null")
-ZEND_END_ARG_INFO()
-
-ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(arginfo_class_Buffers_Tensor_unsqueeze, 0, 1, Buffers\\Tensor, 0)
+ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(arginfo_class_Buffers_Tensor_squeeze, 0, 1, Buffers\\Tensor, 0)
 	ZEND_ARG_TYPE_INFO(0, axis, IS_LONG, 0)
 ZEND_END_ARG_INFO()
+
+#define arginfo_class_Buffers_Tensor_unsqueeze arginfo_class_Buffers_Tensor_squeeze
 
 #define arginfo_class_Buffers_Tensor_broadcastTo arginfo_class_Buffers_Tensor_reshape
 
