@@ -105,7 +105,12 @@ BUFFERS_API void buffers_implement_tensor_interface(zend_class_entry *ce,
  * three with buffers_implement_tensor_interface() instead). Like those, they are served by internal get hooks, functions called
  * with the object as $this that return the value, so the object stores nothing for them; writes fail in the engine
  * ("is read-only"). `arginfo` describes the hook: a zend_internal_arg_info array whose first entry carries the return type
- * (ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX), `type` is the declared type of the property. Call from MINIT, before the class is used. */
+ * (ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX), `type` is the declared type of the property. Call from MINIT, before the class is used.
+ * On PHP 8.3 (no property hooks) the getters are served through internal __get/__isset/__set/__unset methods set on the class
+ * instead, which subclasses inherit. A subclass that defines its own __get (or __set, __isset, __unset) replaces them, and the
+ * properties then reach that method instead: a class that PHP code may extend should, on 8.3, serve its virtual properties from
+ * its own read_property (and has_property, write_property, unset_property) handlers first and pass other names on to the std
+ * handlers, which then call the user's magic methods as usual. */
 typedef struct {
 	const char *name;
 	zend_type type;

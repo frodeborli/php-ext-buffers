@@ -1,7 +1,7 @@
 --TEST--
 C API: buffers_declare_virtual_props() - read-only virtual properties served by get hooks
 --SKIPIF--
-<?php if (!extension_loaded('buffers_api_test')) die('skip needs the buffers_api_test extension'); ?>
+<?php if (!extension_loaded('buffers_api_test')) die('skip needs the buffers_api_test extension'); if (PHP_VERSION_ID < 80400) die('skip PHP 8.4+: property hooks (PHP 8.3 is covered by virtual_props_php83.phpt)'); ?>
 --FILE--
 <?php
 $r = new ReflectionClass('BatProps');

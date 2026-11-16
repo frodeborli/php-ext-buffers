@@ -5,7 +5,7 @@ a memory-mapped file, memory of other extensions), `Buffers\Tensor` windows onto
 dtype including bfloat16, float8, packed float6, float4 and int2/int4/uint2/uint4, and complex), `Buffers\Shape`, the
 `Buffers\TensorInterface` and `Buffers\Device` interfaces, and a versioned C API (`php_buffers_api.h`) with operator,
 readiness and transfer hooks and [DLPack](https://github.com/dmlc/dlpack) import and export for other extensions. Written in C,
-no dependencies, PHP 8.4 - 8.5 (NTS and ZTS) on Linux; macOS and Windows build files are included but untested (see
+no dependencies, PHP 8.3 - 8.5 (NTS and ZTS; 8.3 with the [differences](#php-83) below) on Linux; macOS and Windows build files are included but untested (see
 [Verification](#verification)).
 
 ```php
@@ -216,6 +216,21 @@ properties with internal get hooks*, exactly what a PHP 8.4 class would declare 
 nothing is stored in the object, so creating a sub-view (`$v[$y]`, served from a pool) allocates no `Shape`, no array
 and nothing else. Reflection, `get_object_vars()`, `(array)` and `var_export()` see them (`value` only on 0-d views of host memory);
 `var_dump()` and `print_r()` show a purpose-built summary (see [Debug output and JSON](#debug-output-and-json)). The same rule gives `Buffer` its `byteLength` and `device` properties, `Shape` its `size` and `concrete`, and every `Device` its `name`, `id` and `hostAccessible`.
+
+#### PHP 8.3
+
+PHP 8.3 has no property hooks, so there the same getters are reached through internal `__get`, `__set`, `__isset` and `__unset` methods
+that ext-buffers gives each class with such properties (also classes of other extensions, through `buffers_declare_virtual_props()`;
+subclasses inherit them). Reading, writing `$value`, `isset()`, `??`, the read-only errors and the allocation-free sub-views behave as on 8.4.
+What differs on 8.3 (support ends when 8.3 does, 2028-01-01):
+
+* The properties are not declared: Reflection, `property_exists()`, `get_object_vars()`, `(array)` and `var_export()` do not see them, and
+  `TensorInterface` declares none (interface properties are 8.4+). `var_dump()` and `print_r()` are unchanged.
+* An extension class that PHP code may extend and that declares properties with `buffers_declare_virtual_props()` must, on 8.3, serve
+  them from its own `read_property` handler, or a subclass's own `__get` would replace ext-buffers' (see `php_buffers_api.h`). The classes
+  of ext-buffers are final.
+* `unset($v->ndim)` says "Cannot unset property" (8.4: "Cannot unset hooked property").
+* `$v->strides[] = 1` and `$r = &$v->value` give PHP's notice "Indirect modification of overloaded property" and act on a copy (8.4: an Error).
 
 ### Element access
 
@@ -543,6 +558,8 @@ What has been run, on Linux x86-64 (Ubuntu host, Debian 12 and Alpine containers
   internal hook functions and the API consumer's arginfo); all pass, no compiler warnings with `-Wall -Wextra`. 32-bit PHP (`linux/386`: 8.4 and
   8.5 Debian, 8.4 Alpine): 28 + 39 pass, the rest skipped as 64-bit-only, and `file32.phpt` (a 5 GB sparse file falls back to an unmapped buffer)
   and `bits32.phpt` run. aarch64 under QEMU (8.4 Debian): 29 + 40 pass.
+* PHP 8.3 (Ubuntu packages NTS, `php:8.3-cli-bookworm` and `php:8.3-zts-alpine`): 35 + 48 pass; the tests of hook semantics, Reflection and property enumeration
+  skip, and `props_php83.phpt`, `tensor_user_php83.phpt` and `virtual_props_php83.phpt` cover the 8.3 behaviour.
 * The whole suite, both passes, under valgrind with `USE_ZEND_ALLOC=0` (`tools/valgrind.sh`, PHP 8.4 NTS): 28 + 39 pass, zero errors, zero leaks,
   including parked pool objects at shutdown, foreign-tensor deleters, owner references, the readiness contexts, mappings and file descriptors,
   and exactly-sized buffers read at their last packed element.

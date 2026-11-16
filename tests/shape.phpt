@@ -15,7 +15,7 @@ var_dump(iterator_to_array($s), $s instanceof ArrayAccess, $s instanceof Countab
 echo "empty shape: a scalar\n";
 $e = new Shape([]);
 var_dump(count($e), $e->toArray(), $e->size, $e->concrete, iterator_to_array($e));
-var_dump(new Shape([0, 5])->size);
+var_dump((new Shape([0, 5]))->size);
 
 echo "errors\n";
 $cases = [

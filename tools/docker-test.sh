@@ -1,10 +1,10 @@
 #!/bin/sh
 # Build the extension and the API consumer and run the phpt suite inside official php images (Debian = glibc, Alpine = musl).
-# usage: tools/docker-test.sh [image ...]   default: the whole 8.4-8.5 x {bookworm, alpine} matrix plus ZTS images
+# usage: tools/docker-test.sh [image ...]   default: the whole 8.3-8.5 x {bookworm, alpine} matrix plus ZTS images
 # DOCKER_PLATFORM=linux/386 runs 32-bit PHP; any other platform that docker can run (arm64, s390x under QEMU) works the same way.
 set -u
 src=$(cd "$(dirname "$0")/.." && pwd)
-images=${*:-"php:8.4-cli-bookworm php:8.5-cli-bookworm php:8.4-cli-alpine php:8.5-cli-alpine
+images=${*:-"php:8.3-cli-bookworm php:8.4-cli-bookworm php:8.5-cli-bookworm php:8.3-cli-alpine php:8.4-cli-alpine php:8.5-cli-alpine
 php:8.4-zts-bookworm php:8.5-zts-bookworm php:8.4-zts-alpine php:8.5-zts-alpine"}
 status=0
 platform=${DOCKER_PLATFORM:-$(docker version -f '{{.Server.Os}}/{{.Server.Arch}}')}

@@ -1,7 +1,7 @@
 --TEST--
 TensorInterface cannot be implemented in PHP code
 --SKIPIF--
-<?php if (!extension_loaded('buffers')) die('skip buffers extension not loaded'); ?>
+<?php if (!extension_loaded('buffers')) die('skip buffers extension not loaded'); if (PHP_VERSION_ID < 80400) die('skip PHP 8.4+: property hooks (PHP 8.3 is covered by props_php83.phpt)'); ?>
 --XLEAK--
 The fatal error aborts class linking; PHP's bailout leaves the compiled script, the error message and the half-linked class to process exit (Zend, not ext/buffers).
 --FILE--

@@ -1,7 +1,7 @@
 --TEST--
 var_dump, print_r and var_export of Tensor, Shape and friends
 --SKIPIF--
-<?php if (!extension_loaded('buffers')) die('skip buffers extension not loaded'); ?>
+<?php if (!extension_loaded('buffers')) die('skip buffers extension not loaded'); if (PHP_VERSION_ID < 80400) die('skip PHP 8.4+: property hooks (PHP 8.3 is covered by props_php83.phpt)'); ?>
 --FILE--
 <?php
 use Buffers\{Buffer, DType, Tensor, Shape};
