@@ -1855,15 +1855,18 @@ PHP_METHOD(Buffers_Tensor, broadcastTo)
 	for (int i = 0; i < nnd; i++) {
 		int j = i - (nnd - v->ndim);   /* the tensor's axis aligned with axis i, from the right */
 
+		/* a packed dtype's last axis has no byte stride (elements are bits apart; sbytes is 0): repeating an element along it
+		 * with a stride of 0 cannot be told apart from it, so the result's last axis may not be a broadcast (also when it is
+		 * a new axis, from a 0-d tensor) */
+		if (buf_dtypes[v->dt].size == 0 && i == nnd - 1 && nshape[i] != 1 && (j < 0 || v->shape[j] != nshape[i])) {
+			zend_value_error("The last axis of a packed %s tensor cannot be broadcast: its elements are bits apart", buf_dtypes[v->dt].name);
+			RETURN_THROWS();
+		}
 		if (j < 0) { sb[i] = 0; continue; }
 		if (v->shape[j] == nshape[i]) { sb[i] = v->sbytes[j]; continue; }
 		if (v->shape[j] != 1) {
 			zend_argument_value_error(1, "is not a broadcast of the tensor's shape: axis %d has length %lld, which is neither %lld nor 1",
 				j, (long long)v->shape[j], (long long)nshape[i]);
-			RETURN_THROWS();
-		}
-		if (buf_dtypes[v->dt].size == 0 && j == v->ndim - 1) {
-			zend_value_error("The last axis of a packed %s tensor cannot be broadcast: its elements are bits apart", buf_dtypes[v->dt].name);
 			RETURN_THROWS();
 		}
 		sb[i] = 0;

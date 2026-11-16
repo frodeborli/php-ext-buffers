@@ -735,12 +735,12 @@ without the feature (see Performance).
 
 What has been run, on Linux x86-64 (Ubuntu host, Debian 12 and Alpine containers):
 
-* `tests/` phpt suite (68 files), run twice: with the extension alone, and with the API consumer test extension loaded. On PHP 8.4
-  and 8.5, Debian/glibc and Alpine/musl, NTS and ZTS (`tools/docker-test.sh`, 8 images): 44 + 61 pass, the rest skip (tests that
-  need the consumer, 32-bit-only tests, the PHP 8.3 variants). On PHP 8.3 (Debian and Alpine NTS): 41 + 58 pass; the tests of
+* `tests/` phpt suite (70 files), run twice: with the extension alone, and with the API consumer test extension loaded. On PHP 8.4
+  and 8.5, Debian/glibc and Alpine/musl, NTS and ZTS (`tools/docker-test.sh`, 8 images): 45 + 63 pass, the rest skip (tests that
+  need the consumer, 32-bit-only tests, the PHP 8.3 variants). On PHP 8.3 (Debian and Alpine NTS): 42 + 60 pass; the tests of
   property hooks skip and their 8.3 variants run. No compiler warnings with `-Wall -Wextra`.
-* 32-bit PHP (`DOCKER_PLATFORM=linux/386`, Debian, 8.5 and 8.3): 35 + 50 and 32 + 47 pass; the tests that need 64-bit dtypes skip.
-* The whole suite, both passes, under valgrind with `USE_ZEND_ALLOC=0` (`tools/valgrind.sh`, PHP 8.5 NTS): 43 + 60 pass, zero errors,
+* 32-bit PHP (`DOCKER_PLATFORM=linux/386`, Debian, 8.5 and 8.3): 36 + 52 and 33 + 49 pass; the tests that need 64-bit dtypes skip.
+* The whole suite, both passes, under valgrind with `USE_ZEND_ALLOC=0` (`tools/valgrind.sh`, PHP 8.5 NTS): 44 + 62 pass, zero errors,
   zero leaks.
 * Arithmetic: `arith_exact.phpt` compares every operator bit for bit with an independent oracle (PHP double and integer arithmetic,
   rounded once to the format) for `Float16`, `BFloat16`, `Float32`, `Float64` and 8/16/32-bit integers, on an AMD Ryzen 9 9950X3D
