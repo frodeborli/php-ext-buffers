@@ -99,7 +99,7 @@ zend_object *buf_view_import(DLManagedTensorVersioned *t)
 {
 	DLTensor *d = &t->dl_tensor;
 	int dt = -1, ndim;
-	int64_t shape[BUF_MAX_NDIM] = {0}, st[BUF_MAX_NDIM] = {0}, sb[BUF_MAX_NDIM] = {0}, size, bits, last = 0, tmp, len, extent;
+	int64_t shape[BUF_MAX_NDIM], st[BUF_MAX_NDIM], sb[BUF_MAX_NDIM], size, bits, last = 0, tmp, len, extent;
 	bool empty = false, packed, host;
 	int32_t dtype_dev = d->device.device_type;
 	zend_object *buf, *dev = NULL, *view;
@@ -139,6 +139,9 @@ zend_object *buf_view_import(DLManagedTensorVersioned *t)
 		IMPORT_FAIL("Unsupported number of dimensions (%d); expected 0 to %d", (int)d->ndim, BUF_MAX_NDIM);
 	}
 	ndim = d->ndim;
+	if (ndim > 0) {
+		sb[ndim - 1] = 0;   /* a packed dtype's last axis has no byte stride; every other entry in use is written below */
+	}
 
 	for (int i = 0; i < ndim; i++) {
 		shape[i] = d->shape[i];

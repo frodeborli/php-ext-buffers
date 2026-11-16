@@ -192,7 +192,7 @@ zend_object *buf_view_copy_host(const buf_view *v, const uint8_t *src)
 {
 	const buf_dtype_info *info = &buf_dtypes[v->dt];
 	bool packed = info->size == 0;
-	int64_t dsb[BUF_MAX_NDIM] = {0}, st[BUF_MAX_NDIM] = {0}, acc = 1, total = 1;
+	int64_t dsb[BUF_MAX_NDIM], st[BUF_MAX_NDIM], acc = 1, total = 1;   /* the first ndim entries are written below */
 	int step = info->bits == 4 ? 2 : 4;
 	zend_object *buf, *res;
 	buf_buffer *nb;
@@ -731,7 +731,7 @@ zend_object *buf_view_make(zend_object *bufobj, int dt, int ndim, const int64_t 
 	const buf_dtype_info *info = &buf_dtypes[dt];
 	bool packed = info->size == 0, empty = false;
 	int64_t size = info->size, bits = info->bits;
-	int64_t shape[BUF_MAX_NDIM] = {0}, st[BUF_MAX_NDIM] = {0}, sb[BUF_MAX_NDIM] = {0}, t, last = 0, extent;
+	int64_t shape[BUF_MAX_NDIM], st[BUF_MAX_NDIM], sb[BUF_MAX_NDIM], t, last = 0, extent;
 
 #if SIZEOF_ZEND_LONG == 4
 	if (!buf_dtype_fits_php_int(dt)) {
@@ -740,6 +740,9 @@ zend_object *buf_view_make(zend_object *bufobj, int dt, int ndim, const int64_t 
 #endif
 	if (ndim < 0 || ndim > BUF_MAX_NDIM) {
 		FAIL(2, "must have between 0 and %d elements", BUF_MAX_NDIM);
+	}
+	if (ndim > 0) {
+		sb[ndim - 1] = 0;   /* a packed dtype's last axis has no byte stride; every other entry in use is written below */
 	}
 	if (offset < 0 || (uint64_t)offset > b->len) {
 		FAIL(4, "must be between 0 and the byte length of the buffer");
@@ -839,7 +842,7 @@ void buf_buffer_view_impl(zend_object *bufobj, INTERNAL_FUNCTION_PARAMETERS)
 	zval *shape_zv = NULL;
 	HashTable *strides_ht = NULL;
 	zend_long offset = 0;
-	int64_t shape[BUF_MAX_NDIM] = {0}, st[BUF_MAX_NDIM] = {0};
+	int64_t shape[BUF_MAX_NDIM], st[BUF_MAX_NDIM];   /* the first ndim entries are written below */
 	int dt, ndim, n, arg;
 	char err[256];
 	bool packed;
@@ -1200,7 +1203,7 @@ PHP_METHOD(Buffers_Tensor, fromArray)
 {
 	zval *data;
 	zend_object *dtobj = NULL, *devobj = NULL, *buf, *view, *res;
-	array_scan sc = {0};
+	array_scan sc;   /* not = {0}: shape[] and idx[] are written as the walk reaches each depth */
 	int dt, ndim;
 	int64_t strides[BUF_MAX_NDIM], acc = 1, total = 1, bytes;
 	bool packed;
@@ -1208,6 +1211,8 @@ PHP_METHOD(Buffers_Tensor, fromArray)
 	int arg;
 	zval *z;
 
+	sc.nd = 0;
+	sc.saw_int = sc.saw_float = sc.saw_bool = false;
 	ZEND_PARSE_PARAMETERS_START(1, 3)
 		Z_PARAM_ZVAL(data)
 		Z_PARAM_OPTIONAL
@@ -1643,7 +1648,7 @@ PHP_METHOD(Buffers_Tensor, reshape)
 {
 	HashTable *ht;
 	buf_view *v = VIEW;
-	int64_t nshape[BUF_MAX_NDIM], nsb[BUF_MAX_NDIM] = {0}, total = 1, known = 1;
+	int64_t nshape[BUF_MAX_NDIM], nsb[BUF_MAX_NDIM], total = 1, known = 1;   /* nsb: every entry of the new shape is written below */
 	int nnd = 0, infer = -1;
 	bool packed = buf_dtypes[v->dt].size == 0;
 	zval *z;
@@ -1696,7 +1701,11 @@ PHP_METHOD(Buffers_Tensor, reshape)
 				buf_dtypes[v->dt].name, (long long)(v->ndim ? v->shape[v->ndim - 1] : 0));
 			RETURN_THROWS();
 		}
-		if (total && !reshape_strides(v->ndim - 1, v->shape, v->sbytes, nnd - 1, nshape, 1, nsb)) goto copy;
+		if (!total) {
+			for (int i = 0; i < nnd - 1; i++) nsb[i] = 0;
+		} else if (!reshape_strides(v->ndim - 1, v->shape, v->sbytes, nnd - 1, nshape, 1, nsb)) {
+			goto copy;
+		}
 		nsb[nnd - 1] = 0;
 	} else if (total == 0) {
 		int64_t acc = buf_dtypes[v->dt].size;

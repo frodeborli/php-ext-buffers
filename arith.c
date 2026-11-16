@@ -166,7 +166,12 @@ static const char *operand_name(int dt)
 /* 1 the operand is ours (filled in), 0 it is not (leave the operation to PHP and the other operand) */
 static int classify(zval *z, operand *o)
 {
-	memset(o, 0, sizeof *o);
+	/* not memset: sb[] is written by broadcast() for the axes in use; clearing all BUF_MAX_NDIM entries here is not needed */
+	o->scalar = false;
+	o->dt = 0;
+	o->l = 0;
+	o->d = 0;
+	o->v = NULL;
 	switch (Z_TYPE_P(z)) {
 	case IS_LONG: o->scalar = true; o->dt = BUFFERS_SCALAR_INT; o->l = Z_LVAL_P(z); return 1;
 	case IS_DOUBLE: o->scalar = true; o->dt = BUFFERS_SCALAR_FLOAT; o->d = Z_DVAL_P(z); return 1;
@@ -847,8 +852,10 @@ static zend_result arith_operation(uint8_t op, zval *result, zval *op1, zval *op
 	cls = operand_class(rt, &(bool){0});
 	if (total > 0) {
 		/* odometer over all axes but the last, chunks along the last */
-		int64_t idx[BUF_MAX_NDIM] = {0}, inner = ndim ? shape[ndim - 1] : 1, rows = inner ? total / inner : 0;
+		int64_t idx[BUF_MAX_NDIM], inner = ndim ? shape[ndim - 1] : 1, rows = inner ? total / inner : 0;
 		uint8_t *q = rbase;
+
+		for (int j = 0; j < ndim; j++) idx[j] = 0;   /* the axes in use only: an initializer clears all BUF_MAX_NDIM */
 		union { uint64_t i[CHUNK]; float f[CHUNK]; double d[CHUNK]; } A, B, R;
 		bool sgn = buf_dtypes[rt].kind == BUFFERS_KIND_INT;
 		/* the direct path: both operands in the result dtype (or a scalar of it), last axis contiguous or broadcast */
