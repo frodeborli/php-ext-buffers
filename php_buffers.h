@@ -290,6 +290,9 @@ typedef struct {
 void buf_declare_hooked_props(zend_class_entry *ce, const buf_prop_def *defs, int n);
 void buf_props_mshutdown(void);
 
+/* arith.c */
+int buf_dtype_promote(int a, int b, uint8_t op);
+
 /* api.c */
 extern buffers_operator_fn buf_operator_handler;
 

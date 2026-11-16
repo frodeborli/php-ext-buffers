@@ -67,6 +67,20 @@ BUFFERS_API int buffers_dtype_from_object(zend_object *dtype_case);
 /* the dtype for a DLPack type code and bit width (one lane), or -1 */
 BUFFERS_API int buffers_dtype_from_dlpack(int code, int bits);
 
+/* ---- arithmetic ------------------------------------------------------------------------- */
+
+/* Operands of buffers_dtype_promote() that are PHP scalars rather than tensors. They are "weak": an int or a float takes
+ * the dtype of the tensor it is combined with (a float with an integer tensor gives Float64). */
+enum { BUFFERS_SCALAR_BOOL = -2, BUFFERS_SCALAR_INT = -3, BUFFERS_SCALAR_FLOAT = -4 };
+
+/* The dtype of the result of `a op b` (op: ZEND_ADD, ZEND_SUB, ZEND_MUL, ZEND_DIV, ZEND_MOD, ZEND_POW, ZEND_SL, ZEND_SR,
+ * ZEND_BW_OR, ZEND_BW_AND, ZEND_BW_XOR; ZEND_BW_NOT is unary and ignores b), where a and b are BUFFERS_DT_* or
+ * BUFFERS_SCALAR_*; -1 if the operator does not apply (Bool arithmetic, floats in bitwise operators, storage-only and
+ * complex dtypes, UInt64 with a signed type, Float16 with BFloat16, two scalars). The rules are those of the Python
+ * Array API standard with its gaps filled (docs/proposal-arithmetic.md); tests/promotion.tsv lists every case. Metadata
+ * only: whether a scalar's value fits an integer dtype is checked when the operation runs. */
+BUFFERS_API int buffers_dtype_promote(int a, int b, uint8_t op);
+
 /* ---- element conversion ---------------------------------------------------------------- */
 
 /* Converts n elements of one dtype to another: element k is read at src + k * src_stride and written at dst + k * dst_stride

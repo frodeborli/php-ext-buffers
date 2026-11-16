@@ -49,6 +49,8 @@ const buffers_dtype_desc *buffers_dtype_describe(int dtype)
 void buffers_dtype_to_zval(int dtype, zval *rv) { buf_dtype_to_zval(dtype, rv); }
 int buffers_dtype_from_object(zend_object *dtype_case) { return buf_dtype_from_object(dtype_case); }
 
+int buffers_dtype_promote(int a, int b, uint8_t op) { return buf_dtype_promote(a, b, op); }
+
 int buffers_dtype_from_dlpack(int code, int bits)
 {
 	for (int i = 0; i < BUF_NTYPES; i++) {

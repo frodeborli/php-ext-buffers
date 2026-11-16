@@ -297,6 +297,48 @@ PHP_FUNCTION(bat_view)
 	RETURN_OBJ(v);
 }
 
+/* bat_dtype_promote(string $a, string $b, string $op): buffers_dtype_promote() with operands and result spelled as in
+ * tests/promotion.tsv (DType values, "php-int", "php-float", "php-bool"; "-" for the missing operand of ~); "error" for -1 */
+static int promote_operand(zend_string *s)
+{
+	if (zend_string_equals_literal(s, "php-int")) return BUFFERS_SCALAR_INT;
+	if (zend_string_equals_literal(s, "php-float")) return BUFFERS_SCALAR_FLOAT;
+	if (zend_string_equals_literal(s, "php-bool")) return BUFFERS_SCALAR_BOOL;
+	if (zend_string_equals_literal(s, "-")) return -1;
+	for (int t = 0; t < BUFFERS_DT_COUNT; t++) {
+		if (zend_string_equals_cstr(s, buffers_dtype_describe(t)->value, strlen(buffers_dtype_describe(t)->value))) return t;
+	}
+	return -100;
+}
+
+PHP_FUNCTION(bat_dtype_promote)
+{
+	zend_string *a, *b, *op;
+	static const struct { const char *sym; uint8_t op; } ops[] = {
+		{ "+", ZEND_ADD }, { "-", ZEND_SUB }, { "*", ZEND_MUL }, { "/", ZEND_DIV }, { "%", ZEND_MOD }, { "**", ZEND_POW },
+		{ "<<", ZEND_SL }, { ">>", ZEND_SR }, { "&", ZEND_BW_AND }, { "|", ZEND_BW_OR }, { "^", ZEND_BW_XOR }, { "~", ZEND_BW_NOT },
+	};
+	int ia, ib, r;
+	int opcode = -1;
+
+	ZEND_PARSE_PARAMETERS_START(3, 3)
+		Z_PARAM_STR(a)
+		Z_PARAM_STR(b)
+		Z_PARAM_STR(op)
+	ZEND_PARSE_PARAMETERS_END();
+	for (size_t i = 0; i < sizeof ops / sizeof ops[0]; i++) {
+		if (zend_string_equals_cstr(op, ops[i].sym, strlen(ops[i].sym))) opcode = ops[i].op;
+	}
+	ia = promote_operand(a);
+	ib = promote_operand(b);
+	if (opcode < 0 || ia == -100 || ib == -100) {
+		zend_value_error("unknown operand or operator");
+		RETURN_THROWS();
+	}
+	r = buffers_dtype_promote(ia, ib, (uint8_t)opcode);
+	RETURN_STRING(r < 0 ? "error" : buffers_dtype_describe(r)->value);
+}
+
 /* bat_dtype_info(int $dtype): buffers_dtype_describe() and the DType case object */
 PHP_FUNCTION(bat_dtype_info)
 {
@@ -956,6 +998,11 @@ ZEND_BEGIN_ARG_INFO_EX(ai_bat_view, 0, 0, 3)
 	ZEND_ARG_INFO(0, a3)
 	ZEND_ARG_INFO(0, a4)
 ZEND_END_ARG_INFO()
+ZEND_BEGIN_ARG_INFO_EX(ai_bat_dtype_promote, 0, 0, 3)
+	ZEND_ARG_INFO(0, a)
+	ZEND_ARG_INFO(0, b)
+	ZEND_ARG_INFO(0, op)
+ZEND_END_ARG_INFO()
 ZEND_BEGIN_ARG_INFO_EX(ai_bat_dtype_info, 0, 0, 1)
 	ZEND_ARG_INFO(0, a0)
 ZEND_END_ARG_INFO()
@@ -985,6 +1032,7 @@ ZEND_END_ARG_INFO()
 
 static const zend_function_entry functions[] = {
 	PHP_FE(bat_import, ai_bat_import)
+	PHP_FE(bat_dtype_promote, ai_bat_dtype_promote)
 	PHP_FE(bat_make_buffer, ai_bat_make_buffer)
 	PHP_FE(bat_make_pending, ai_bat_make_pending)
 	PHP_FE(bat_make_pending_arraybuffer, ai_bat_make_pending_arraybuffer)
