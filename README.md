@@ -112,6 +112,28 @@ setup code, not for inner loops. Making a sub-view stores nothing for them.
 `$view[$x][$y][$z]++` does **not** work: PHP rejects it with "Indirect modification of overloaded element". Use
 `$view[$x][$y][$z] += 1`.
 
+### Arithmetic
+
+Nanoseconds per element for one operator on tensors of 1,000,000 elements (`benchmarks/arith.php`, PHP 8.5.12 NTS without
+the JIT, best of 7), against the same work in a PHP loop over arrays:
+
+| operation                                   | AMD Ryzen 9 9950X3D | Intel Xeon E5-2697 v3 |
+|---------------------------------------------|--------------------:|----------------------:|
+| `Float64` `$a + $b`                         | 0.44 | 3.18 |
+| `Float32` `$a + $b`                         | 0.27 | 1.73 |
+| `Float32` `$a * 2.5`                        | 0.24 | 1.35 |
+| `Float16` `$a + $b`                         | 0.40 | 2.58 |
+| `BFloat16` `$a + $b`                        | 0.067 | 0.53 |
+| `Int32` `$a + $b`                           | 0.27 | 1.54 |
+| `UInt8` `$a + $b`                           | 0.021 | 0.12 |
+| `Float32` `[1000, 1000] + [1000]` (broadcast) | 0.25 | 1.67 |
+| `Float32` `$a += 1.5` (written in place)    | 0.027 | 0.25 |
+| PHP loop over arrays, `$r[] = $x[$k] + $y[$k]` | 11.7 | 63.0 |
+
+A result in new memory costs mostly the operating system providing the pages (results of 2 MiB or more are mapped with
+transparent huge pages where Linux allows it); `$a op= $b` writes into `$a`'s memory when it can (see Arithmetic) and
+avoids that. Results are bit-identical on both CPUs (AVX-512 and AVX2 builds of the same loops).
+
 ## API
 
 Everything lives in the namespace `Buffers\`. `buffers.stub.php` has the full signatures with docblocks.

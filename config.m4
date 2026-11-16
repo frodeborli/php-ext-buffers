@@ -32,10 +32,11 @@ if test "$PHP_BUFFERS" != "no"; then
 
   dnl Tensor arithmetic is exact (docs/proposal-arithmetic.md): no contraction of a * b + c into an FMA, which rounds once
   dnl instead of twice and would make results depend on the CPU. GCC's default in GNU C mode is -ffp-contract=fast.
+  dnl The element-wise kernels are plain loops: GCC at -O2 only vectorizes loops whose trip count it knows, so ask for its
+  dnl normal cost model (clang vectorizes them at -O2 already).
   buffers_cflags=
-  if test "$GCC" = "yes"; then
-    buffers_cflags="-ffp-contract=off"
-  fi
+  AX_CHECK_COMPILE_FLAG([-ffp-contract=off], [buffers_cflags="$buffers_cflags -ffp-contract=off"], , [-Werror])
+  AX_CHECK_COMPILE_FLAG([-fvect-cost-model=dynamic], [buffers_cflags="$buffers_cflags -fvect-cost-model=dynamic"], , [-Werror])
   PHP_NEW_EXTENSION(buffers, $buffers_sources, $ext_shared,, $buffers_cflags)
   PHP_INSTALL_HEADERS([ext/buffers], [php_buffers_api.h dlpack.h])
 fi

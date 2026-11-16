@@ -131,12 +131,13 @@ static zend_result buf_view_do_operation(uint8_t opcode, zval *result, zval *op1
 {
 	zval op1_copy;
 	zend_result r;
+	bool compound = result == op1;
 
-	if (result == op1) { /* `$a += 1`: the result is written while the operands are still read */
+	if (compound) { /* `$a += 1`: the result is written while the operands are still read */
 		ZVAL_COPY_VALUE(&op1_copy, op1);
 		op1 = &op1_copy;
 	}
-	r = buf_arith_do_operation(opcode, result, op1, op2);
+	r = buf_arith_do_operation(opcode, result, op1, op2, compound);
 	if (r == SUCCESS && op1 == &op1_copy) {
 		zval_ptr_dtor(op1);
 	}

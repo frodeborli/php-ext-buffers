@@ -11,9 +11,16 @@ Each operand is one of:
 1. a `Buffers\Tensor`;
 2. a PHP `int`, `float` or `bool` (a *scalar*);
 3. an object whose class has an operator handler of its own (an extension class with arithmetic, such as a lazy
-   expression): that handler receives the operation, with the operands in their written order, on either side. PHP
-   calls only the left operand's handler when it has one, so a `Tensor` on the left calls the right operand's handler;
-4. any other object implementing `Buffers\TensorAggregate`: its `getTensor()` is called, and the result is used as in 1.
+   expression): that handler receives the operation. When the object is the left operand, PHP calls its handler and
+   `Tensor` is not involved. When the object is the right operand and the left is a `Tensor`, `Tensor`'s handler calls
+   the object's handler with `(opcode, result, op1, op2)` unchanged: the operands in their original positions, never
+   swapped, which keeps `-`, `/`, `%`, `**`, `<<` and `>>` correct. That handler's answer is final: a result, or
+   `FAILURE`, which is PHP's `TypeError`; it is not handed back to `Tensor`. (PHP asks only the left operand's handler
+   when that operand has one, so without this the right operand's arithmetic would never run.) Compound assignment
+   (`$tensor op= $object`) works the same way;
+4. any other object implementing `Buffers\TensorAggregate` (a class without an operator handler, such as a PHP class):
+   its `getTensor()` is called and the result is used as in 1. PHP runs no operator code when neither operand is a
+   `Tensor` or an object with an operator handler, so `$aggregate - 273.15` is PHP's `TypeError`.
 
 Anything else (strings, arrays, `null`, other objects) is PHP's `TypeError` ("Unsupported operand types").
 

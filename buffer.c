@@ -183,8 +183,23 @@ zend_result buf_buffer_read_file(buf_buffer *b, uint64_t offset, void *dst, size
 }
 
 /* a host Buffer of `bytes` (>= 0), zero-filled or not, or NULL after throwing */
+/* Blocks of 2 MiB or more come straight from the operating system (Zend's allocator maps them), and touching a new 4 KiB
+ * page costs a fault: on Linux, ask for transparent huge pages for the 2 MiB-aligned part, so a 4 MiB result costs two
+ * faults instead of a thousand. A hint: without huge pages enabled ("never") nothing changes. */
+static void huge_page_hint(void *p, size_t size)
+{
+#if defined(__linux__) && defined(MADV_HUGEPAGE)
+	uintptr_t start = ((uintptr_t)p + (2u << 20) - 1) & ~(uintptr_t)((2u << 20) - 1), end = ((uintptr_t)p + size) & ~(uintptr_t)((2u << 20) - 1);
+
+	if (end > start) madvise((void *)start, end - start, MADV_HUGEPAGE);
+#else
+	(void)p; (void)size;
+#endif
+}
+
 static zend_object *host_new(uint64_t bytes, bool zero)
 {
+	void *p;
 	zend_object *o;
 	buf_buffer *b;
 
@@ -194,7 +209,10 @@ static zend_object *host_new(uint64_t bytes, bool zero)
 	}
 	o = buffer_create(buf_ce_buffer);
 	b = buf_buffer_from(o);
-	b->alloc = zero ? ecalloc(1, (size_t)bytes + BUF_ALIGN) : emalloc((size_t)bytes + BUF_ALIGN);
+	p = emalloc((size_t)bytes + BUF_ALIGN);
+	if (bytes >= (2u << 20)) huge_page_hint(p, (size_t)bytes + BUF_ALIGN);   /* before the pages are touched */
+	if (zero) memset(p, 0, (size_t)bytes + BUF_ALIGN);
+	b->alloc = p;
 	b->base = (uint8_t *)(((uintptr_t)b->alloc + BUF_ALIGN - 1) & ~(uintptr_t)(BUF_ALIGN - 1));
 	b->len = bytes;
 	b->writable = true;

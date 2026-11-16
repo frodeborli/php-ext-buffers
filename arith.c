@@ -450,6 +450,130 @@ static void store_float(int rt, const float *r, uint8_t *q, int64_t n)
 	}
 }
 
+/* ---- direct kernels: operands already in the result dtype ----
+ * When both operands have the result dtype and each is contiguous along the last axis or a single broadcast value
+ * (stride 0), the operation runs straight over memory: no gathering. Integer kernels work on unsigned types of the
+ * result's width (two's complement wrapping gives the same bits for signed results, without C's undefined signed
+ * overflow); floats are one IEEE operation per element, so every vector width gives the same bits. Views may start at any
+ * byte offset, so memory is read and written through types with an alignment of 1. On x86-64 with glibc each kernel is
+ * built for SSE2, AVX2 and AVX-512, and the dynamic loader picks the best for the CPU. */
+
+#if defined(__x86_64__) && defined(__GLIBC__) && defined(__GNUC__) && !defined(__clang__) && __GNUC__ >= 12
+/* x86-64-v3: AVX2 and F16C; x86-64-v4: AVX-512 */
+# define FASTCLONE __attribute__((target_clones("default", "arch=x86-64-v3", "arch=x86-64-v4")))
+#endif
+#ifndef FASTCLONE
+# define FASTCLONE
+#endif
+
+typedef void (*direct_fn)(const uint8_t *a, int64_t sa, const uint8_t *b, int64_t sb, uint8_t *r, int64_t n);
+
+#define DIRECT(NAME, T, EXPR) \
+	static FASTCLONE void NAME(const uint8_t *pa, int64_t sa, const uint8_t *pb, int64_t sb, uint8_t *pr, int64_t n) \
+	{ \
+		typedef T U __attribute__((aligned(1), may_alias)); \
+		const U *a = (const U *)pa, *b = (const U *)pb; \
+		U *r = (U *)pr; \
+		if (sa && sb) { for (int64_t k = 0; k < n; k++) { T x = a[k], y = b[k]; r[k] = (T)(EXPR); } } \
+		else if (sa) { T y = b[0]; for (int64_t k = 0; k < n; k++) { T x = a[k]; r[k] = (T)(EXPR); } } \
+		else if (sb) { T x = a[0]; for (int64_t k = 0; k < n; k++) { T y = b[k]; r[k] = (T)(EXPR); } } \
+		else { T x = a[0], y = b[0], v = (T)(EXPR); for (int64_t k = 0; k < n; k++) r[k] = v; } \
+	}
+
+#define DIRECT_FLOAT(T, S) \
+	DIRECT(d_add_##S, T, x + y) DIRECT(d_sub_##S, T, x - y) DIRECT(d_mul_##S, T, x * y) DIRECT(d_div_##S, T, x / y)
+DIRECT_FLOAT(float, f32)
+DIRECT_FLOAT(double, f64)
+
+/* 8 and 16 bits: C promotes to int, so multiply as unsigned int to stay out of signed overflow */
+#define DIRECT_INT(T, S, W) \
+	DIRECT(d_add_##S, T, x + y) DIRECT(d_sub_##S, T, x - y) DIRECT(d_mul_##S, T, (W)x * (W)y) \
+	DIRECT(d_and_##S, T, x & y) DIRECT(d_or_##S, T, x | y) DIRECT(d_xor_##S, T, x ^ y)
+DIRECT_INT(uint8_t, u8, unsigned)
+DIRECT_INT(uint16_t, u16, unsigned)
+DIRECT_INT(uint32_t, u32, uint32_t)
+DIRECT_INT(uint64_t, u64, uint64_t)
+
+/* Float16 and BFloat16: each element decoded to Float32 (exact), one Float32 operation, rounded once to the format: the
+ * correctly rounded result, as on the general path. */
+#ifdef __FLT16_MAX__
+# define DIRECT_F16(NAME, OP) \
+	static FASTCLONE void NAME(const uint8_t *pa, int64_t sa, const uint8_t *pb, int64_t sb, uint8_t *pr, int64_t n) \
+	{ \
+		typedef _Float16 U __attribute__((aligned(1), may_alias)); \
+		const U *a = (const U *)pa, *b = (const U *)pb; \
+		U *r = (U *)pr; \
+		if (sa && sb) { for (int64_t k = 0; k < n; k++) r[k] = (_Float16)((float)a[k] OP (float)b[k]); } \
+		else if (sa) { float y = (float)b[0]; for (int64_t k = 0; k < n; k++) r[k] = (_Float16)((float)a[k] OP y); } \
+		else if (sb) { float x = (float)a[0]; for (int64_t k = 0; k < n; k++) r[k] = (_Float16)(x OP (float)b[k]); } \
+		else { _Float16 v = (_Float16)((float)a[0] OP (float)b[0]); for (int64_t k = 0; k < n; k++) r[k] = v; } \
+	}
+DIRECT_F16(d_add_f16, +) DIRECT_F16(d_sub_f16, -) DIRECT_F16(d_mul_f16, *) DIRECT_F16(d_div_f16, /)
+#endif
+
+static inline float bf16_to_f32(uint16_t h) { uint32_t u = (uint32_t)h << 16; float f; memcpy(&f, &u, 4); return f; }
+static inline uint16_t f32_to_bf16(float f)
+{
+	uint32_t u;
+
+	memcpy(&u, &f, 4);
+	if ((u & 0x7fffffffu) > 0x7f800000u) return (uint16_t)((u >> 16) | 0x40u);   /* NaN: quiet, sign and payload kept */
+	return (uint16_t)((u + 0x7fffu + ((u >> 16) & 1u)) >> 16);                      /* round to nearest even */
+}
+#define DIRECT_BF16(NAME, OP) \
+	static FASTCLONE void NAME(const uint8_t *pa, int64_t sa, const uint8_t *pb, int64_t sb, uint8_t *pr, int64_t n) \
+	{ \
+		typedef uint16_t U __attribute__((aligned(1), may_alias)); \
+		const U *a = (const U *)pa, *b = (const U *)pb; \
+		U *r = (U *)pr; \
+		if (sa && sb) { for (int64_t k = 0; k < n; k++) r[k] = f32_to_bf16(bf16_to_f32(a[k]) OP bf16_to_f32(b[k])); } \
+		else if (sa) { float y = bf16_to_f32(b[0]); for (int64_t k = 0; k < n; k++) r[k] = f32_to_bf16(bf16_to_f32(a[k]) OP y); } \
+		else if (sb) { float x = bf16_to_f32(a[0]); for (int64_t k = 0; k < n; k++) r[k] = f32_to_bf16(x OP bf16_to_f32(b[k])); } \
+		else { uint16_t v = f32_to_bf16(bf16_to_f32(a[0]) OP bf16_to_f32(b[0])); for (int64_t k = 0; k < n; k++) r[k] = v; } \
+	}
+DIRECT_BF16(d_add_bf16, +) DIRECT_BF16(d_sub_bf16, -) DIRECT_BF16(d_mul_bf16, *) DIRECT_BF16(d_div_bf16, /)
+
+static direct_fn direct_kernel(uint8_t op, int rt)
+{
+#define PICK_F(S) switch (op) { case ZEND_ADD: return d_add_##S; case ZEND_SUB: return d_sub_##S; case ZEND_MUL: return d_mul_##S; \
+	case ZEND_DIV: return d_div_##S; } return NULL;
+#define PICK_I(S) switch (op) { case ZEND_ADD: return d_add_##S; case ZEND_SUB: return d_sub_##S; case ZEND_MUL: return d_mul_##S; \
+	case ZEND_BW_AND: return d_and_##S; case ZEND_BW_OR: return d_or_##S; case ZEND_BW_XOR: return d_xor_##S; } return NULL;
+	switch (rt) {
+	case BUF_T_FLOAT32: PICK_F(f32)
+	case BUF_T_FLOAT64: PICK_F(f64)
+#ifdef __FLT16_MAX__
+	case BUF_T_FLOAT16: PICK_F(f16)
+#endif
+	case BUF_T_BFLOAT16: PICK_F(bf16)
+	case BUF_T_INT8: case BUF_T_UINT8: PICK_I(u8)
+	case BUF_T_INT16: case BUF_T_UINT16: PICK_I(u16)
+	case BUF_T_INT32: case BUF_T_UINT32: PICK_I(u32)
+	case BUF_T_INT64: case BUF_T_UINT64: PICK_I(u64)
+	}
+#undef PICK_F
+#undef PICK_I
+	return NULL;
+}
+
+/* a scalar operand as one element of the result dtype rt (its value fits: checked before) */
+static void scalar_element(const operand *o, int rt, uint8_t *out)
+{
+	switch (rt) {
+	case BUF_T_FLOAT32: { float f = o->dt == BUFFERS_SCALAR_FLOAT ? (float)o->d : int_to_rt((uint64_t)o->l, true, rt); memcpy(out, &f, 4); return; }
+	case BUF_T_FLOAT64: { double d = o->dt == BUFFERS_SCALAR_FLOAT ? o->d : (double)o->l; memcpy(out, &d, 8); return; }
+	case BUF_T_FLOAT16: { uint16_t h = buf_enc_FLOAT16(o->dt == BUFFERS_SCALAR_FLOAT ? dbl_to_rt(o->d, rt) : int_to_rt((uint64_t)o->l, true, rt)); memcpy(out, &h, 2); return; }
+	case BUF_T_BFLOAT16: { uint16_t h = f32_to_bf16(o->dt == BUFFERS_SCALAR_FLOAT ? dbl_to_rt(o->d, rt) : int_to_rt((uint64_t)o->l, true, rt)); memcpy(out, &h, 2); return; }
+	default:
+		switch (buf_dtypes[rt].size) {
+		case 1: { uint8_t v = (uint8_t)o->l; memcpy(out, &v, 1); return; }
+		case 2: { uint16_t v = (uint16_t)o->l; memcpy(out, &v, 2); return; }
+		case 4: { uint32_t v = (uint32_t)o->l; memcpy(out, &v, 4); return; }
+		default: { uint64_t v = (uint64_t)o->l; memcpy(out, &v, 8); return; }
+		}
+	}
+}
+
 /* ---- the operation ---- */
 
 /* the result shape of broadcasting a and b (Array API rules); false after throwing */
@@ -492,12 +616,34 @@ static bool broadcast(const operand *ops, int nops, int *ndim, int64_t *shape)
 	return true;
 }
 
+/* `$a op= $b` may write the result into $a's own memory when no one can observe the difference (docs/arithmetic.md,
+ * Compound assignment): $a holds the only reference to its tensor, the tensor the only reference to its buffer (no other
+ * view, DataView, DLPack export or extension holds it), the buffer is ext-buffers' own writable host memory (not mapped,
+ * not foreign, not pending), and the result has the tensor's dtype and C-contiguous shape. Integer operators that can throw
+ * part way through (% ** << >>) are excluded, so that a failed operation leaves $a unchanged. Each element of the result
+ * depends only on the same element of the operands and every chunk is read before it is written, so `$a += $a` is safe. */
+static bool can_write_in_place(uint8_t op, const operand *a, int rt, int ndim, const int64_t *shape, const int64_t *rsb)
+{
+	const buf_view *v = a->v;
+	const buf_buffer *b;
+
+	if (a->scalar || v->dt != rt || v->ndim != ndim || !v->writable) return false;
+	if (buf_dtypes[rt].kind != BUFFERS_KIND_FLOAT && (op == ZEND_MOD || op == ZEND_POW || op == ZEND_SL || op == ZEND_SR)) return false;
+	if (GC_REFCOUNT(&v->std) != 1 || GC_REFCOUNT(v->buf) != 1) return false;
+	b = buf_buffer_from(v->buf);
+	if (!b->alloc || !b->writable || !b->host || b->pending || b->ready || b->map_base || b->owner || b->deleter) return false;
+	for (int j = 0; j < ndim; j++) {
+		if (v->shape[j] != shape[j] || (shape[j] > 1 && v->sbytes[j] != rsb[j])) return false;
+	}
+	return true;
+}
+
 /* after throwing: binary operators return FAILURE (PHP then skips its own TypeError because an exception is pending,
  * and `$a += ...` leaves $a unchanged); unary ~ must return SUCCESS, or PHP replaces the exception with "Cannot perform
  * bitwise not" */
 #define THROWN() do { if (op == ZEND_BW_NOT) { ZVAL_NULL(result); return SUCCESS; } return FAILURE; } while (0)
 
-static zend_result arith_operation(uint8_t op, zval *result, zval *op1, zval *op2)
+static zend_result arith_operation(uint8_t op, zval *result, zval *op1, zval *op2, bool compound)
 {
 	operand ops[2];
 	int nops = op == ZEND_BW_NOT ? 1 : 2, rt, ndim;
@@ -564,9 +710,6 @@ static zend_result arith_operation(uint8_t op, zval *result, zval *op1, zval *op
 		zend_value_error("The result is too large");
 		return FAILURE;
 	}
-	bufobj = buf_buffer_new_host_uninit((uint64_t)(total * rsize));
-	if (!bufobj) THROWN();
-	rbase = buf_buffer_from(bufobj)->base;
 	{
 		int64_t acc = rsize;
 
@@ -574,6 +717,14 @@ static zend_result arith_operation(uint8_t op, zval *result, zval *op1, zval *op
 			rsb[j] = acc;
 			acc *= shape[j] ? shape[j] : 1;
 		}
+	}
+	if (compound && can_write_in_place(op, &ops[0], rt, ndim, shape, rsb)) {
+		bufobj = NULL;
+		rbase = ops[0].v->data;
+	} else {
+		bufobj = buf_buffer_new_host_uninit((uint64_t)(total * rsize));
+		if (!bufobj) THROWN();
+		rbase = buf_buffer_from(bufobj)->base;
 	}
 	/* operand strides aligned to the result's axes; 0 where an operand is broadcast */
 	for (int i = 0; i < nops; i++) {
@@ -592,6 +743,18 @@ static zend_result arith_operation(uint8_t op, zval *result, zval *op1, zval *op
 		uint8_t *q = rbase;
 		union { uint64_t i[CHUNK]; float f[CHUNK]; double d[CHUNK]; } A, B, R;
 		bool sgn = buf_dtypes[rt].kind == BUFFERS_KIND_INT;
+		/* the direct path: both operands in the result dtype (or a scalar of it), last axis contiguous or broadcast */
+		direct_fn direct = nops == 2 ? direct_kernel(op, rt) : NULL;
+		uint8_t scal[2][8];
+
+		for (int i = 0; direct && i < 2; i++) {
+			if (ops[i].scalar) {
+				if (ops[i].dt == BUFFERS_SCALAR_BOOL) direct = NULL;
+				else scalar_element(&ops[i], rt, scal[i]);
+			} else if (ops[i].dt != rt || (ndim && ops[i].sb[ndim - 1] != 0 && ops[i].sb[ndim - 1] != rsize)) {
+				direct = NULL;
+			}
+		}
 
 		for (int64_t row = 0; row < rows; row++) {
 			const uint8_t *p[2] = {NULL, NULL};
@@ -602,6 +765,11 @@ static zend_result arith_operation(uint8_t op, zval *result, zval *op1, zval *op
 				p[i] = ops[i].v->data;
 				for (int j = 0; j + 1 < ndim; j++) p[i] += idx[j] * ops[i].sb[j];
 				s[i] = ndim ? ops[i].sb[ndim - 1] : 0;
+			}
+			if (direct) {
+				direct(ops[0].scalar ? scal[0] : p[0], s[0], ops[1].scalar ? scal[1] : p[1], s[1], q, inner);
+				q += inner * rsize;
+				goto next_row;
 			}
 			for (int64_t at = 0; at < inner; at += CHUNK) {
 				int64_t n = inner - at < CHUNK ? inner - at : CHUNK;
@@ -620,18 +788,23 @@ static zend_result arith_operation(uint8_t op, zval *result, zval *op1, zval *op
 					gather_int(&ops[0], p[0] + at * s[0], s[0], n, A.i);
 					if (nops == 2) gather_int(&ops[1], p[1] + at * s[1], s[1], n, B.i);
 					if (!kernel_int(op, sgn, buf_dtypes[rt].bits, A.i, B.i, R.i, n, rt == BUF_T_BOOL)) {
-						OBJ_RELEASE(bufobj);
+						if (bufobj) OBJ_RELEASE(bufobj);   /* never in place: those operators are excluded */
 						return FAILURE;
 					}
 					store_int(rt, R.i, q, n);
 				}
 				q += n * rsize;
 			}
+		next_row:
 			for (int j = ndim - 2; j >= 0; j--) {
 				if (++idx[j] < shape[j]) break;
 				idx[j] = 0;
 			}
 		}
+	}
+	if (!bufobj) {   /* written into the left operand's own memory: the result is that tensor */
+		ZVAL_OBJ_COPY(result, &ops[0].v->std);
+		return SUCCESS;
 	}
 	res = buf_view_new(bufobj, rt, ndim, shape, rsb, rbase, true, false);
 	OBJ_RELEASE(bufobj);   /* the view holds it */
@@ -664,7 +837,7 @@ static int resolve_aggregate(zval *z, zval *tmp)
 	return 1;
 }
 
-zend_result buf_arith_do_operation(uint8_t op, zval *result, zval *op1, zval *op2)
+zend_result buf_arith_do_operation(uint8_t op, zval *result, zval *op1, zval *op2, bool compound)
 {
 	zval t1, t2;
 	zend_result r;
@@ -680,7 +853,7 @@ zend_result buf_arith_do_operation(uint8_t op, zval *result, zval *op1, zval *op
 		if (op == ZEND_BW_NOT) { ZVAL_NULL(result); return SUCCESS; }
 		return FAILURE;
 	}
-	r = arith_operation(op, result, a ? &t1 : op1, b ? &t2 : op2);
+	r = arith_operation(op, result, a ? &t1 : op1, b ? &t2 : op2, compound && !a);
 	zval_ptr_dtor(&t1);
 	zval_ptr_dtor(&t2);
 	return r;

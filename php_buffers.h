@@ -300,8 +300,9 @@ void buf_props_mshutdown(void);
 
 /* arith.c */
 int buf_dtype_promote(int a, int b, uint8_t op);
-/* the do_operation of Tensor: FAILURE without an exception when an operand is not ours */
-zend_result buf_arith_do_operation(uint8_t op, zval *result, zval *op1, zval *op2);
+/* the do_operation of Tensor: FAILURE without an exception when an operand is not ours. compound: `$a op= $b` (result
+ * is $a's slot; op1 a copy of it), which may write the result into $a's memory */
+zend_result buf_arith_do_operation(uint8_t op, zval *result, zval *op1, zval *op2, bool compound);
 
 
 #endif
