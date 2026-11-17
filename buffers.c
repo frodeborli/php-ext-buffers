@@ -67,6 +67,9 @@ PHP_RSHUTDOWN_FUNCTION(buffers)
 {
 	buf_view_rshutdown();
 	buf_device_rshutdown();
+#ifdef HAVE_BUFFERS_EXTRAS
+	buf_extras_rshutdown();
+#endif
 	BUFG(request_active) = false;
 	return SUCCESS;
 }

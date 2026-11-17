@@ -15,11 +15,58 @@
 
 typedef struct {
 	zval closure;
-	cc_kernel *spec[MAX_SPECS];
-	uint32_t spec_nargs[MAX_SPECS];
-	int nspec;
 	zend_object std;
 } buf_compiled;
+
+/* Compiled code, shared by every Buffers\Compiled of the same function for the rest of the request (a closure made
+ * again, or a method of another object of the same class, finds it): per function code, class of the bound $this (its
+ * properties' layout) and number of arguments, one kernel per combination of the types of the values it reads. */
+typedef struct {
+	const zend_op *code;
+	const zend_class_entry *ce;
+	uint32_t npass;
+	cc_kernel *spec[MAX_SPECS];
+	int nspec;
+	zval keep;   /* a closure of the same code, without $this: the code stays, so its address is not reused */
+} cc_entry;
+
+ZEND_TLS cc_entry *cc_cache;
+ZEND_TLS int cc_ncache, cc_ccache;
+
+static cc_entry *cache_entry(const zend_function *fn, const zend_class_entry *ce, uint32_t npass)
+{
+	cc_entry *e;
+
+	for (int i = 0; i < cc_ncache; i++) {
+		e = &cc_cache[i];
+		if (e->code == fn->op_array.opcodes && e->ce == ce && e->npass == npass) return e;
+	}
+	if (cc_ncache == cc_ccache) {
+		cc_ccache = cc_ccache ? cc_ccache * 2 : 16;
+		cc_cache = erealloc(cc_cache, sizeof(cc_entry) * (size_t)cc_ccache);
+	}
+	e = &cc_cache[cc_ncache++];
+	memset(e, 0, sizeof *e);
+	e->code = fn->op_array.opcodes;
+	e->ce = ce;
+	e->npass = npass;
+	ZVAL_UNDEF(&e->keep);
+	if (fn->common.fn_flags & ZEND_ACC_CLOSURE) {
+		zend_create_closure(&e->keep, (zend_function *)fn, fn->common.scope, fn->common.scope, NULL);
+	}
+	return e;
+}
+
+void buf_extras_rshutdown(void)
+{
+	for (int i = 0; i < cc_ncache; i++) {
+		for (int k = 0; k < cc_cache[i].nspec; k++) cc_kernel_free(cc_cache[i].spec[k]);
+		zval_ptr_dtor(&cc_cache[i].keep);
+	}
+	if (cc_cache) efree(cc_cache);
+	cc_cache = NULL;
+	cc_ncache = cc_ccache = 0;
+}
 
 static zend_class_entry *buf_ce_compiled;
 static zend_object_handlers compiled_handlers;
@@ -41,7 +88,6 @@ static void compiled_free(zend_object *o)
 {
 	buf_compiled *c = compiled_from(o);
 
-	for (int i = 0; i < c->nspec; i++) cc_kernel_free(c->spec[i]);
 	zval_ptr_dtor(&c->closure);
 	zend_object_std_dtor(o);
 }
@@ -233,42 +279,45 @@ ZEND_METHOD(Buffers_Compiled, __invoke)
 	npass = nargs < fn->common.num_args ? nargs : fn->common.num_args;
 	argv = ecalloc(npass + 1, sizeof(cc_val));
 	/* a specialization for the types of this call's values */
-	for (int i = 0; i < bc->nspec && !k; i++) {
-		cc_kernel *c = bc->spec[i];
+	{
+		zval *thisz = zend_get_closure_this_ptr(&bc->closure);
+		cc_entry *e = cache_entry(fn, thisz && Z_TYPE_P(thisz) == IS_OBJECT ? Z_OBJCE_P(thisz) : NULL, npass);
 
-		if (bc->spec_nargs[i] != npass) continue;
-		env = ecalloc((size_t)c->nenv + 1, sizeof(cc_val));
-		holds = ecalloc((size_t)c->nsrc + 1, sizeof(zval));
-		if (cc_bind(bc, c, args, env, argv, holds, &thrown)) {
-			k = c;
-			break;
+		for (int i = 0; i < e->nspec; i++) {
+			cc_kernel *c = e->spec[i];
+
+			env = ecalloc((size_t)c->nenv + 1, sizeof(cc_val));
+			holds = ecalloc((size_t)c->nsrc + 1, sizeof(zval));
+			if (cc_bind(bc, c, args, env, argv, holds, &thrown)) {
+				k = c;
+				break;
+			}
+			for (int h = 0; h < c->nsrc; h++) zval_ptr_dtor(&holds[h]);
+			efree(holds);
+			efree(env);
+			holds = NULL;
+			env = NULL;
+			if (thrown) goto done;
 		}
-		for (int s = 0; s < c->nsrc; s++) zval_ptr_dtor(&holds[s]);
-		efree(holds);
-		efree(env);
-		holds = NULL;
-		env = NULL;
-		if (thrown) goto done;
-	}
-	if (!k) {
-		k = cc_compile(Z_OBJ(bc->closure), args, npass);
-		if (!k) goto done;
+		if (!k) {
+			k = cc_compile(Z_OBJ(bc->closure), args, npass);
+			if (!k) goto done;
 #ifdef BUF_CC_NATIVE
-		if (!getenv("BUFFERS_CC_INTERP")) cc_native_compile(k);   /* test hook: the interpreter, to compare the two */
+			if (!getenv("BUFFERS_CC_INTERP")) cc_native_compile(k);   /* test hook: the interpreter, to compare the two */
 #endif
-		if (bc->nspec == MAX_SPECS) {
-			cc_kernel_free(bc->spec[0]);
-			memmove(bc->spec, bc->spec + 1, sizeof(cc_kernel *) * (MAX_SPECS - 1));
-			memmove(bc->spec_nargs, bc->spec_nargs + 1, sizeof(uint32_t) * (MAX_SPECS - 1));
-			bc->nspec--;
-		}
-		bc->spec[bc->nspec] = k;
-		bc->spec_nargs[bc->nspec++] = npass;
-		env = ecalloc((size_t)k->nenv + 1, sizeof(cc_val));
-		holds = ecalloc((size_t)k->nsrc + 1, sizeof(zval));
-		if (!cc_bind(bc, k, args, env, argv, holds, &thrown)) {
-			if (!thrown) zend_throw_error(NULL, "Buffers\\Compiled: the values changed while compiling");
-			goto done;
+			e = cache_entry(fn, thisz && Z_TYPE_P(thisz) == IS_OBJECT ? Z_OBJCE_P(thisz) : NULL, npass);   /* (compiling may call PHP code) */
+			if (e->nspec == MAX_SPECS) {   /* the oldest goes */
+				cc_kernel_free(e->spec[0]);
+				memmove(e->spec, e->spec + 1, sizeof(cc_kernel *) * (MAX_SPECS - 1));
+				e->nspec--;
+			}
+			e->spec[e->nspec++] = k;
+			env = ecalloc((size_t)k->nenv + 1, sizeof(cc_val));
+			holds = ecalloc((size_t)k->nsrc + 1, sizeof(zval));
+			if (!cc_bind(bc, k, args, env, argv, holds, &thrown)) {
+				if (!thrown) zend_throw_error(NULL, "Buffers\\Compiled: the values changed while compiling");
+				goto done;
+			}
 		}
 	}
 	memset(&ctx, 0, sizeof ctx);

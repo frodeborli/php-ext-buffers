@@ -104,7 +104,9 @@ whose `getTensor()` is called once per call). Its dtype must have arithmetic, an
 
 A captured variable (`use ($x)`, or what an arrow function captures), a property of `$this` (for a closure bound to an
 object) and an argument are read at every call. Their types are part of the compiled code: the first call with a new
-combination of types compiles the closure for it, and later calls with the same types reuse that code. A captured `float`
+combination of types compiles the closure for it, and later calls with the same types reuse that code, also through
+another `Compiled` of the same function (a closure made again, the same method of another object of the class) for the
+rest of the request. A captured `float`
 that changes from one call to the next does not compile the closure again.
 
 * `int`, `float`, `bool`: weak values (above).
