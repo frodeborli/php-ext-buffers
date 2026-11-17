@@ -1,0 +1,12 @@
+# IR's sparse sets (extras/ir/ir_private.h) read their sparse half before it is written, by design: a membership test
+# checks the dense half, so an uninitialised index is never trusted. IR clears it only in its debug builds.
+{
+   ir-sparse-set-membership
+   Memcheck:Cond
+   fun:ir_sparse_set_in
+}
+{
+   ir-sparse-set-membership-value
+   Memcheck:Value8
+   fun:ir_sparse_set_in
+}

@@ -1,0 +1,5 @@
+IR - Lightweight JIT Compilation Framework (https://github.com/dstogov/ir), the code generator of PHP's own JIT,
+unmodified, at commit 6c5ea912420ff2b61a167ba37b46ae39fbcf2a05. MIT licence: LICENSE.
+
+Only the files the native backend of extras/compiler needs are here. ir_fold_hash.h and ir_emit_<arch>.h are generated
+at build time (Makefile.frag), as PHP's opcache generates them.

@@ -2,7 +2,7 @@
 #ifndef BUFFERS_EXTRAS_H
 #define BUFFERS_EXTRAS_H
 
-/* adds Tensor::each() and Tensor::assign(); called from MINIT after the core classes are registered */
+/* registers Buffers\\Compiled; called from MINIT after the core classes are registered */
 void buf_extras_minit(void);
 
 #endif

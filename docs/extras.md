@@ -1,135 +1,131 @@
-# Extras: element-wise operations as arrow functions
+# Extras: `Buffers\Compiled`
 
-`Tensor::each()` and `Tensor::assign()` are an optional part of ext-buffers, built unless `configure` gets
-`--disable-buffers-extras`. Nothing in the rest of the extension depends on them, and the rest of this repository's
-documentation describes the extension without them.
-
-```php
-public function each(\Closure $fn, TensorAggregate|int|float|bool ...$inputs): Tensor
-public function assign(\Closure $fn, TensorAggregate|int|float|bool ...$inputs): static
-```
-
-`$fn` describes the value of one element of the result. It is never called: its compiled code is read and evaluated
-over whole tensors, with the rules of Tensor arithmetic ([arithmetic.md](arithmetic.md)). Code that cannot be
-evaluated that way is rejected before any element is computed.
+`Buffers\Compiled` is an optional part of ext-buffers, built unless `configure` gets `--disable-buffers-extras`. Nothing in
+the rest of the extension depends on it, and the rest of this repository's documentation describes the extension without it.
 
 ```php
-$out  = $dst->each(fn($d, $s, $k) => $d + ($s - $d) * $k, $src, $coverage);   // three inputs, broadcast
-$grey = $rgba->each(fn(array $p) => 0.299 * $p[0] + 0.587 * $p[1] + 0.114 * $p[2]);
-$rgba->assign(fn(array $p) => [$p[2], $p[1], $p[0], $p[3]]);                     // in place
-$img->each(fn($v, $y, $x) => $x > 0 ? $img[$y][$x - 1] : $v);                    // coordinates, a captured tensor
+final class Compiled
+{
+    public function __construct(\Closure $fn) {}
+    public function __invoke(mixed ...$args): mixed {}
+}
 ```
 
-## Inputs and parameters
+`new Compiled($fn)` keeps a closure written in PHP. Calling the object runs the closure as machine code: its compiled
+opcodes are read and translated, and the closure itself is never called. The language is a subset of PHP over numbers
+and tensors, with the rules of Tensor arithmetic ([arithmetic.md](arithmetic.md)). Code outside the subset is rejected
+before any of it runs.
 
-The inputs are the tensor `each()` is called on, then `...$inputs`: tensors, other `TensorAggregate`s (their
-`getTensor()`), or PHP `int`, `float` and `bool` values. Tensors must be in host memory and have a dtype with arithmetic.
+```php
+$sum = new Compiled(function (Tensor $t): float {
+    $s = 0.0;
+    for ($i = 0; $i < count($t); $i++) $s += $t[$i];
+    return $s;
+});
+echo $sum($tensor);
 
-The closure's parameters are, in order:
+$blur = new Compiled(function (Tensor $src, Tensor $dst) {
+    [$h, $w] = [$src->shape[0], $src->shape[1]];
+    for ($y = 0; $y < $h; $y++) {
+        for ($x = 1; $x < $w - 1; $x++) {
+            $dst[$y][$x] = ($src[$y][$x - 1] + 2 * $src[$y][$x] + $src[$y][$x + 1]) / 4;
+        }
+    }
+});
+$blur($image, $out);
+```
 
-1. **One per input.** A parameter declared `array` takes the input's last axis: it holds one row of that axis, and may
-   only be indexed with integer literals within the row (`$p[0]` … `$p[3]`) or returned whole. Any other parameter takes
-   one element. A parameter declared `int` accepts integer dtypes, `float` float dtypes and `bool` `Bool`; an
-   undeclared one accepts any.
-2. **Then the coordinates** of the element, one per axis in axis order, as PHP's int (`Int64`; `Int32` on 32-bit PHP):
-   the first coordinate parameter is the index along axis 0. There may be fewer than the number of axes.
+## Values
 
-The closure must take a parameter for every input. The names are free.
+The code computes with numbers: values of a dtype with arithmetic (`Bool`, the integer dtypes, `Float16`, `BFloat16`,
+`Float32`, `Float64`) and PHP's `int`, `float` and `bool`. A value has one type, known before the code runs:
 
-## The shape and dtype of the result
+* An element read from a tensor has the tensor's dtype.
+* PHP's `int`, `float` and `bool` are *weak*. A literal, an argument, a captured variable or a property of one of these
+  types meets another operand as a PHP scalar meets a tensor: it takes the other operand's dtype (`$int8 + 1` is `Int8`;
+  an `int` that does not fit is a `ValueError` when the operation runs). Between two PHP scalars, `int` is computed as
+  PHP's int (`Int64`, `Int32` on 32-bit PHP) and `float` as `Float64`, with the same rules: `/` gives a `float`, `%` of
+  floats is `fmod`.
+* Integers wrap at the width of their dtype; an `int` never becomes a `float`.
+* `(int)` gives PHP's int, `(float)` `Float64`, `(bool)` `Bool`, with PHP's conversions (`(int)` of a float truncates;
+  `NAN` and infinities give 0).
+* A local variable takes the type of what is assigned to it. Where paths meet (after `if`, `?:`, `&&`, `||`, at the start
+  of a loop), a variable that differs between them takes the common type of its values, as for `+`: PHP scalars of the
+  same type stay PHP scalars, a PHP `int` and `float` give `float`, a PHP scalar and a dtype give the dtype, two dtypes
+  their promotion. Values that have no common type (`Bool` and a number) make the variable unusable there: reading it is a
+  `TypeError`.
 
-The inputs broadcast as for the operators (aligned from the right; a dimension of 1 stretches), each input counting
-with its shape, except that an input bound to an `array` parameter counts without its last axis. The closure is
-evaluated once per position of that *iteration shape*, inputs that the closure does not use included.
+## What the code may contain
 
-The closure returns one element, or an array literal of a fixed length k: the result then has a last axis of length k
-after the iteration shape. Every path through the closure must return the same kind of value (an element, or an array
-of the same length).
+* Parameters of type `int`, `float`, `bool`, `Buffers\Tensor`, or no type (the argument's type). Default values.
+* Local variables, assignments and compound assignments, `++` and `--`.
+* `if`/`elseif`/`else`, `for`, `while`, `do`/`while`, `break`, `continue`, `return`.
+* `+ - * / % ** << >> & | ^ ~`, comparisons `== != === !== < <= > >=` (`===` is `==` between numbers), `?:`, `?:` without
+  the middle, `&&`, `||`, `!`, `xor`, casts, with the operators' rules (arithmetic.md).
+* `abs`, `floor`, `ceil`, `round` (no precision argument), `sqrt`, `min`, `max`, `intdiv`, `fmod`, `is_nan`, `is_finite`,
+  `is_infinite`, `count`; called by their global names (also unqualified inside a namespace that does not define a
+  function of that name). On integers, `floor`, `ceil` and `round` give the value, `abs` wraps (`abs` of the minimum is the
+  minimum), `sqrt` computes in `Float64`, `is_nan` and `is_infinite` are `false` and `is_finite` `true`. `min` takes a later
+  argument when it is smaller, `max` when it is greater or the two are unordered (`NAN`), as PHP's do.
+* Functions and static methods written in PHP (`helper($x)`, `self::helper($x)`, `ClassName::helper($x)`, `static::` where
+  no subclass can override the method), compiled into their callers, with PHP's conversions of arguments and return
+  values for their declared types (an `int` passed to a `float` parameter becomes a `float`). Recursion is rejected, and so
+  are calls nested more than 8 deep.
+* Arrays of fixed length: literals (`[$a, $b, 0.5]`), `$list[$i]` with any integer `$i`, `[$a, $b] = $list`, as arguments
+  and return values of functions, and as the returned value.
+* Global and class constants (`M_PI`, `self::OPAQUE`) of type `int`, `float`, `bool`.
+* Tensors: below.
 
-The result's dtype is the dtype of the returned expression; the elements of a returned array take their common dtype
-(as for `+`). A returned constant has its PHP type: `int` gives `Int64` (`Int32` on 32-bit PHP), `float` `Float64`, `bool`
-`Bool`.
+Everything else is a `ValueError` (unsupported construct) or `TypeError` (types) when the code is compiled, before any of
+it runs: other internal functions, instance methods, strings, arrays with keys, assignments to properties, `foreach`, `switch`, `match`, `try`, generators, by-reference parameters or captures, variadic parameters,
+named arguments, and values of other types.
 
-## What the closure may contain
+## Tensors
 
-The body is an expression (an arrow function), or statements without loops: assignments to local variables (`$a = …`,
-`$a += …` and the other compound operators, `++`, `--`), `if` / `elseif` / `else`, and `return`. A local variable names
-the value assigned to it; after an `if`, it has the value of the path the element took. Accepted in expressions:
+A tensor comes from an argument, a captured variable or a property of `$this` (a `Buffers\Tensor`, or a `TensorAggregate`,
+whose `getTensor()` is called once per call). Its dtype must have arithmetic, and its memory must be host memory.
 
-* parameters; captured variables of type `int`, `float` and `bool` (constants), and captured tensors (below);
-* literals of type `int`, `float` and `bool`;
-* `+ - * / % ** << >> & | ^ ~`, with the operators' rules: the promotion of [arithmetic.md](arithmetic.md), integers
-  that wrap at the width of their dtype, one IEEE operation per float operation, PHP scalars taking the other operand's
-  dtype, `ValueError` for a scalar `int` that does not fit it;
-* comparisons `== != === !== < <= > >=`, element-wise, giving `Bool` (the operands are first brought to their common
-  dtype; `===` is `==` and `!==` is `!=`); `Bool` compares only with `Bool`;
-* `? :`, the short `?:`, `&&`, `||`, `!`, `xor`, and `if` with a `return` on each path: a condition is true when it is
-  non-zero (`NAN` is true, as in PHP); the values of the branches must have a common dtype;
-* casts `(int)` (to PHP's int, `Int64` or on 32-bit PHP `Int32`, with PHP's conversion of floats: truncated, `NAN` and
-  infinities give 0), `(float)` (to `Float64`) and `(bool)`;
-* the functions below, called by their global names (also unqualified inside a namespace, unless the namespace defines a
-  function of that name);
-* functions and static methods written in PHP (`helper($x)`, `self::helper($x)`, `ClassName::helper($x)`; `static::` only
-  where no subclass can override the method): they are evaluated as part of the expression, with PHP's conversions of
-  arguments and return values (an `int` passed to a `float` parameter becomes a float) and default arguments. The same
-  rules apply inside them. Recursion, and calls nested more than 8 deep, are rejected;
-* `[$a, $b] = $array` and `$array[0]` on arrays of fixed length (an `array` parameter, an array literal, a returned
-  array of an inlined function);
-* reading a captured tensor (below).
+* `$t[$i]` indexes the first axis, `$t[$i][$j]` the second, and so on; with an index for every axis it is an element. A
+  partial index is a view that can be kept in a variable (`$row = $t[$y]`) and indexed further. An index is any integer;
+  one outside `0 .. length - 1` is a `ValueError` ("Index … is out of range for an axis of length …") when it is used.
+* `$t->shape[$k]` (`$k` a literal), `$t->ndim`, `count($t)` (the length of the first axis).
+* `$t[$i] = $v`, `$t[$i] += $v`, `$t[$i]++` write an element, converting the value to the tensor's dtype as `convert()`
+  converts (a `Float64` result into `UInt8` is truncated and wraps). A tensor written to must be writable: otherwise the
+  call throws `Error("Cannot write to a read-only Tensor")` before the code runs.
+* Reads and writes happen in the order of the code: a write is seen by every later read of the same memory, through any
+  view.
 
-Operations on constants only are what PHP computes for them (`2 ** 3` is `8`), as when the same expression is evaluated
-by PHP before it meets a tensor.
+## Values from outside
 
-Everything else is a `ValueError` (unsupported construct) or `TypeError` (dtypes), thrown by `each()` or `assign()`
-before any element is computed: other internal functions, instance methods, strings, arrays with keys,
-assignments to anything but a local variable, other statements, loops, generators, by-reference parameters or captures, variadic parameters, named
-arguments, and captured values of other types.
+A captured variable (`use ($x)`, or what an arrow function captures), a property of `$this` (for a closure bound to an
+object) and an argument are read at every call. Their types are part of the compiled code: the first call with a new
+combination of types compiles the closure for it, and later calls with the same types reuse that code. A captured `float`
+that changes from one call to the next does not compile the closure again.
 
-### Functions
+* `int`, `float`, `bool`: weak values (above).
+* A tensor, or an object implementing `TensorAggregate`.
+* A PHP array of numbers, read as `Tensor::fromArray()` reads it: all `int`s give `Int64`, any `float` gives `Float64`, all
+  `bool`s give `Bool`; nested arrays give more axes. It is copied at every call.
+* A property must be declared, readable from the closure's scope, without hooks, and initialized; it is read, never
+  written (writing into a tensor it holds is allowed).
 
-| function | integer dtypes | float dtypes |
-|---|---|---|
-| `abs($x)` | wraps (`abs` of the minimum is the minimum) | IEEE `fabs` |
-| `floor`, `ceil`, `round($x)` | the value, in its dtype | `round` rounds half away from zero, as PHP's |
-| `sqrt($x)` | computed in `Float64` | correctly rounded |
-| `min($a, $b, ...)`, `max($a, $b, ...)` | the common dtype | as PHP's: `min` takes a later argument when it is smaller; `max` when it is greater or the two are unordered (`NAN`) |
-| `intdiv($a, $b)` | truncated; by zero `DivisionByZeroError`; the minimum by -1 wraps | `TypeError` |
-| `fmod($a, $b)` | computed in `Float64` | IEEE `fmod` (exact) |
-| `is_nan`, `is_finite`, `is_infinite` | constant `false`, `true`, `false` | `Bool` |
+Assigning to a captured variable changes the closure's local copy only, as in PHP.
 
-`round()` takes no precision argument here.
-
-## Captured tensors
-
-A tensor captured by the closure (an arrow function captures the variables it uses) can be read with one integer index
-per axis: `$img[$y][$x + 1]`, `$lut[$v]`. The indices are any integer expressions. An index outside `0 .. length - 1`
-is a `ValueError` naming the element of the result that needed it; a read in a branch that is not selected (`$x > 0 ?
-$img[$y][$x - 1] : 0`) is not an error. A captured tensor is read as it was before the call, also when `assign()`
-writes into the same memory.
-
-## Errors of elements
+## Errors
 
 Integer `%` and `intdiv()` by zero (`DivisionByZeroError`), a shift by a negative count (`ArithmeticError`), a negative
-integer exponent (`ValueError`), an index out of range, and an operation on constants that PHP itself rejects (`1 % 0`) are
-errors of an element. An element raises the error that calling the closure in PHP for that element would raise: the
-first one met in PHP's evaluation order, including conditions, operations whose value is not used and inlined calls; an
-operation in a branch of `?:`, `&&`, `||` or `if` that the element does not take raises nothing. Of the elements, the
-first in row-major order of the result that has an error raises it. After such an error, `each()` returns nothing and
-`assign()` leaves the tensor unchanged.
+integer exponent (`ValueError`), an index out of range and a PHP `int` that does not fit a dtype (`ValueError`) are
+raised when the operation runs, where PHP raises errors: the first one the code meets in the order it runs, and only on
+the paths it takes. Writes made before the error stay. Loops can be interrupted as PHP's own code can (the time limit,
+signals).
 
-## assign()
+## The returned value
 
-`$t->assign($fn, ...$inputs)` evaluates `$fn` with `$t` as the first input and writes the result into `$t`, converted
-to `$t`'s dtype as `convert()` converts (so a `Float64` result into `UInt8` is truncated and wraps). The result must
-have `$t`'s shape. `$t` must be writable and in host memory, and, as the first input, have a dtype with arithmetic.
-Inputs and captured tensors that share memory with `$t` are read as they were before the call. It returns `$t`.
+A number (an `int` for integer dtypes and `int`, a `float` for float dtypes and `float`, a `bool` for `Bool` and `bool`),
+an array of numbers, or nothing (`null`). All `return` statements must give values of a common type, or arrays of the
+same length.
 
-## Evaluation
+## Running
 
-The expression is compiled into a graph once per call and evaluated chunk by chunk along the last axis: each operation
-runs over a chunk of elements with a loop the compiler vectorizes, so intermediate values occupy a few kilobytes and are
-never materialized as whole tensors. Contiguous inputs of the computation's own representation are read in place, and
-`each()` writes a single computed output straight into the result. Every operation gives the bits the corresponding
-operator gives, whatever the chunking or the CPU.
-
-Opcache's optimizer and JIT do not change which closures are accepted or what they compute.
+The code is compiled for x86-64 and AArch64 with IR (`extras/ir`), the code generator of PHP's own JIT. On other CPUs it
+runs in an interpreter of the same operations. Each operation gives the same bits as the Tensor operators.

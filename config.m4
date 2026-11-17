@@ -13,7 +13,7 @@ PHP_ARG_WITH([buffers-gd],
 PHP_ARG_ENABLE([buffers-extras],
   [whether to build the ext-buffers extras],
   [AS_HELP_STRING([--disable-buffers-extras],
-    [Build without the optional extras (Tensor::each() and Tensor::assign(); docs/extras.md)])],
+    [Build without the optional extras (Buffers\\Compiled; docs/extras.md)])],
   [yes], [no])
 
 if test "$PHP_BUFFERS" != "no"; then
@@ -38,7 +38,21 @@ if test "$PHP_BUFFERS" != "no"; then
 
   if test "$PHP_BUFFERS_EXTRAS" != "no"; then
     AC_DEFINE(HAVE_BUFFERS_EXTRAS, 1, [ Build the ext-buffers extras ])
-    buffers_sources="$buffers_sources extras/each.c"
+    buffers_sources="$buffers_sources extras/compiled.c extras/compiler/cir.c extras/compiler/front.c extras/compiler/native.c"
+    dnl the native backend: IR (extras/ir), on the CPUs it targets, as PHP's opcache builds it
+    BUFFERS_IR=yes
+    AS_CASE([$host_cpu],
+      [x86_64*|amd64*], [IR_TARGET=IR_TARGET_X64; DASM_FLAGS="-D X64=1"; DASM_ARCH=x86],
+      [aarch64*|arm64*], [IR_TARGET=IR_TARGET_AARCH64; DASM_FLAGS=""; DASM_ARCH=aarch64],
+      [BUFFERS_IR=no])
+    AS_CASE([$host_os], [darwin*], [AS_VAR_IF([DASM_ARCH], [x86], [DASM_FLAGS="-D X64APPLE=1 -D X64=1"])])
+    if test "$BUFFERS_IR" = "yes"; then
+      buffers_sources="$buffers_sources extras/ir/ir.c extras/ir/ir_strtab.c extras/ir/ir_cfg.c extras/ir/ir_sccp.c extras/ir/ir_gcm.c extras/ir/ir_ra.c extras/ir/ir_ra_fast.c extras/ir/ir_emit.c extras/ir/ir_check.c extras/ir/ir_cpuinfo.c extras/ir/ir_mem2ssa.c extras/ir/ir_dump.c extras/ir/ir_save.c"
+      buffers_ir_cflags="-D$IR_TARGET -I@ext_srcdir@/extras/ir -I@ext_builddir@/extras/ir"
+      PHP_SUBST([IR_TARGET])
+      PHP_SUBST([DASM_FLAGS])
+      PHP_SUBST([DASM_ARCH])
+    fi
   fi
 
   dnl Tensor arithmetic is exact (docs/proposal-arithmetic.md): no contraction of a * b + c into an FMA, which rounds once
@@ -51,7 +65,13 @@ if test "$PHP_BUFFERS" != "no"; then
   dnl results are the same, IEEE square root is correctly rounded either way).
   AX_CHECK_COMPILE_FLAG([-fno-math-errno], [buffers_cflags="$buffers_cflags -fno-math-errno"], , [-Werror])
   AX_CHECK_COMPILE_FLAG([-fvect-cost-model=dynamic], [buffers_cflags="$buffers_cflags -fvect-cost-model=dynamic"], , [-Werror])
+  buffers_cflags="$buffers_cflags $buffers_ir_cflags"
   PHP_NEW_EXTENSION(buffers, $buffers_sources, $ext_shared,, $buffers_cflags)
   PHP_ADD_BUILD_DIR([$ext_builddir/extras])
+  PHP_ADD_BUILD_DIR([$ext_builddir/extras/compiler])
+  PHP_ADD_BUILD_DIR([$ext_builddir/extras/ir])
+  if test "$PHP_BUFFERS_EXTRAS" != "no" && test "$BUFFERS_IR" = "yes"; then
+    PHP_ADD_MAKEFILE_FRAGMENT([$ext_srcdir/extras/ir/Makefile.frag])
+  fi
   PHP_INSTALL_HEADERS([ext/buffers], [php_buffers_api.h dlpack.h])
 fi

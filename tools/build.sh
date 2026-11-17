@@ -19,5 +19,6 @@ mkdir "$dst/api" && cp -r tests/api-consumer/. "$dst/api"/ && cd "$dst/api"
 $phpize >/dev/null 2>&1
 ./configure --enable-buffers-api-test --with-php-config="$phpconfig" CFLAGS="$cflags -I$dst/inc" >/dev/null
 make -j"$jobs" >>"$log" 2>&1 || { cat "$log"; exit 1; }
-if grep -E "warning:|error:" "$log"; then exit 1; fi
+# warnings in the vendored IR (extras/ir, unmodified upstream code) are not this extension's
+if grep -E "warning:|error:" "$log" | grep -v "/extras/ir/[a-z_0-9]*\.c:[0-9]*:[0-9]*: warning:"; then exit 1; fi
 echo "built $dst/modules/buffers.so and $dst/api/modules/buffers_api_test.so"
