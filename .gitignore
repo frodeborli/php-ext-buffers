@@ -6,7 +6,7 @@
 modules/
 autom4te.cache/
 build/
-Makefile*
+/Makefile*
 config.h
 config.h.in
 config.log
