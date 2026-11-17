@@ -60,7 +60,8 @@ The code computes with numbers: values of a dtype with arithmetic (`Bool`, the i
 * Parameters of type `int`, `float`, `bool`, `string`, `array`, `Buffers\Tensor`, unions and nullable types of these, or no type
   (the argument's type). Default values.
 * Local variables, assignments and compound assignments, `++` and `--`.
-* `if`/`elseif`/`else`, `for`, `while`, `do`/`while`, `break`, `continue`, `return`.
+* `if`/`elseif`/`else`, `for`, `while`, `do`/`while`, `foreach` (over a tensor's first axis: its elements, or views of its
+  rows; over an array of fixed length; with keys; not by reference), `break`, `continue`, `return`.
 * `+ - * / % ** << >> & | ^ ~`, comparisons `== != === !== < <= > >=` (`===` is `==` between numbers), `?:`, `?:` without
   the middle, `&&`, `||`, `!`, `xor`, casts, with the operators' rules (arithmetic.md).
 * `abs`, `floor`, `ceil`, `round` (no precision argument), `sqrt`, `min`, `max`, `intdiv`, `fmod`, `is_nan`, `is_finite`,
@@ -87,7 +88,7 @@ The code computes with numbers: values of a dtype with arithmetic (`Bool`, the i
 * Tensors: below.
 
 Everything else is a `ValueError` (unsupported construct) or `TypeError` (types) when the code is compiled, before any of
-it runs: other internal functions, instance methods, strings made or changed in the code, arrays with keys, assignments to properties, `foreach`, `switch`, `match`, `try`, generators, by-reference parameters or captures, variadic parameters,
+it runs: other internal functions, instance methods, strings made or changed in the code, arrays with keys, assignments to properties, `foreach` by reference, `switch`, `match`, `try`, generators, by-reference parameters or captures, variadic parameters,
 named arguments, and values of other types.
 
 ## Tensors

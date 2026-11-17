@@ -48,6 +48,8 @@ enum {
 	V_SHAPE,     /* $tensor->shape of binding n after a indices */
 	V_THIS,      /* the closure's $this */
 	V_CHAR,      /* $string[$i]: a one-byte string, of which only ord() is taken; r: the byte (UInt8) */
+	V_ITER,      /* a foreach over a tensor's axis a of binding n (dt 0; k.s: the view's byte offset register, -1: 0) or
+	              * over the list of a values at c->sv[n] (dt 1); r: the position (Int64) */
 	V_NULL       /* null: the value of a return without a value */
 };
 
@@ -834,6 +836,7 @@ static bool sval_eq(comp *c, const sval *a, const sval *b)
 	case V_UNDEF: case V_BAD: case V_NULL: case V_THIS: return true;
 	case V_NUM: return a->dt == b->dt && a->r == b->r && (a->r >= 0 || a->k.i == b->k.i);
 	case V_VIEW: case V_ELEM: case V_SHAPE: return a->n == b->n && a->a == b->a && a->r == b->r;
+	case V_ITER: return a->n == b->n && a->a == b->a && a->r == b->r && a->dt == b->dt && a->k.s == b->k.s;
 	case V_LIST:
 		if (a->a != b->a) return false;
 		if (a->n == b->n) return true;
@@ -897,9 +900,9 @@ static sval join_one(comp *c, jplan *pl, const sval *const *v, int n)
 		plan_add(pl, r.r, 0, t);
 		return r;
 	}
-	case V_VIEW: case V_ELEM: case V_SHAPE:
+	case V_VIEW: case V_ELEM: case V_SHAPE: case V_ITER:
 		for (int i = 1; i < n; i++) {
-			if (v[i]->n != v[0]->n || v[i]->a != v[0]->a) return s_bad();
+			if (v[i]->n != v[0]->n || v[i]->a != v[0]->a || v[i]->dt != v[0]->dt || (v[0]->t == V_ITER && v[i]->k.s != v[0]->k.s)) return s_bad();
 		}
 		r = *v[0];
 		r.r = cc_reg(c->f, BUF_T_INT64);
@@ -930,10 +933,19 @@ static sval join_one(comp *c, jplan *pl, const sval *const *v, int n)
 	return s_bad();
 }
 
-/* the arguments one incoming value passes to the plan's parameters (in the plan's order), emitted in c->cur */
-static void join_args(comp *c, const sval *joined, const sval *in, int *args, int *na)
+static bool is_param(const jplan *pl, int r)
 {
-	if (sval_eq(c, joined, in)) return;
+	for (int k = 0; k < pl->np && r >= 0; k++) {
+		if (pl->p[k].reg == r) return true;
+	}
+	return false;
+}
+
+/* the arguments one incoming value passes to the plan's parameters (in the plan's order), emitted in c->cur; a value that
+ * is the parameter itself (a loop variable unchanged on this path) is passed too */
+static void join_args(comp *c, const jplan *pl, const sval *joined, const sval *in, int *args, int *na)
+{
+	if (joined->t != V_LIST && !is_param(pl, joined->r)) return;
 	switch (joined->t) {
 	case V_NUM: {
 		sval x = to_type(c, *in, joined->dt);
@@ -941,11 +953,11 @@ static void join_args(comp *c, const sval *joined, const sval *in, int *args, in
 		args[(*na)++] = DEAD || FAILED ? -1 : materialize(c, x);
 		return;
 	}
-	case V_VIEW: case V_ELEM: case V_SHAPE:
+	case V_VIEW: case V_ELEM: case V_SHAPE: case V_ITER:
 		args[(*na)++] = in->r >= 0 ? in->r : const_reg(c, BUF_T_INT64, 0);
 		return;
 	case V_LIST:
-		for (int k = 0; k < joined->a; k++) join_args(c, &c->sv[joined->n + k], &c->sv[in->n + k], args, na);
+		for (int k = 0; k < joined->a; k++) join_args(c, pl, &c->sv[joined->n + k], &c->sv[in->n + k], args, na);
 		return;
 	}
 }
@@ -1013,7 +1025,7 @@ static void join_connect(comp *c, joinpt *j, int blk, int e, const pstate *s, bo
 			c->cur = cont;
 		}
 	}
-	for (int v = 0; v < j->nvals && !DEAD && !FAILED; v++) join_args(c, &j->merged->cell[v], &s->cell[v], args, &na);
+	for (int v = 0; v < j->nvals && !DEAD && !FAILED; v++) join_args(c, &j->plan, &j->merged->cell[v], &s->cell[v], args, &na);
 	if (!DEAD && !FAILED) {
 		b = &c->f->blk[c->cur];
 		b->term = T_JMP;
@@ -1065,7 +1077,16 @@ static void make_join(comp *c, joinpt *j)
 					plan_add(&j->plan, r.r, 0, jt);
 				}
 			} else {
-				r = t;
+				/* a view or an iterator: what this round's entry value is (its registers are this round's), at a position
+				 * that changes */
+				for (int i = 1; i < j->nin; i++) {
+					if (v[i]->t == V_ITER && v[i]->k.s != v[0]->k.s) kinds = false;
+				}
+				if (!kinds) {
+					j->merged->cell[x] = s_bad();
+					continue;
+				}
+				r = *v[0];
 				r.r = cc_reg(c->f, BUF_T_INT64);
 				plan_add(&j->plan, r.r, 1, BUF_T_INT64);
 			}
@@ -1104,7 +1125,8 @@ static void back_edge(comp *c, joinpt *j, int blk, int e, const pstate *s)
 					h->tmpl[x] = s_num(t, -1);
 					c->redo = true;
 				}
-			} else if ((m->t == V_VIEW || m->t == V_ELEM) && in->t == m->t && in->n == m->n && in->a == m->a) {
+			} else if ((m->t == V_VIEW || m->t == V_ELEM || m->t == V_ITER) && in->t == m->t && in->n == m->n && in->a == m->a
+				&& in->dt == m->dt && (m->t != V_ITER || in->k.s == m->k.s)) {
 				h->carried[x] = 1;
 				h->tmpl[x] = *m;
 				c->redo = true;
@@ -2327,6 +2349,118 @@ static bool run_func(comp *c, const zend_function *fn, const sval *args, int nar
 				break;
 			}
 #endif
+			case ZEND_FE_RESET_R: {
+				/* foreach over a tensor's first (remaining) axis, or over an array of fixed length: a position from 0; an
+				 * empty one is left by FE_FETCH_R, which checks the position first */
+				sval a = operand(c, s, op, op->op1_type, op->op1), it = s_bad();
+
+				if (FAILED) goto out;
+				it.t = V_ITER;
+				if (a.t == V_VIEW && !c->k->src[c->bind[a.n].src].str && a.a < c->bind[a.n].ndim) {
+					it.dt = 0;
+					it.n = a.n;
+					it.a = a.a;
+					it.k.s = a.r;
+				} else if (a.t == V_LIST) {
+					it.dt = 1;
+					it.n = a.n;
+					it.a = a.a;
+				} else {
+					unsupported(c, "foreach over this value (tensors and arrays)");
+					goto out;
+				}
+				it.r = -1;   /* position 0 */
+				set_result(c, s, op, it);
+				break;   /* (on to FE_FETCH_R) */
+			}
+			case ZEND_FE_FETCH_R: {
+				sval it = operand(c, s, op, op->op1_type, op->op1), len, v, nx;
+				int end = (int)cfg.map[ZEND_OFFSET_TO_OPLINE(op, op->extended_value) - oa->opcodes], next = (int)cfg.map[at + 1];
+				int pos, cond, body;
+				pstate *sb;
+
+				if (FAILED) goto out;
+				if (it.t != V_ITER) { unsupported(c, "this foreach"); goto out; }
+				len = it.dt ? s_int(it.a) : s_num(BUFFERS_SCALAR_INT, env_reg(c, c->bind[it.n].env + 1 + it.a, CC_PHPINT));
+				pos = it.r >= 0 ? it.r : const_reg(c, BUF_T_INT64, 0);
+				{
+					int lr = materialize(c, len);
+
+					if (CC_PHPINT != BUF_T_INT64) {
+						cc_ins *cv = emit(c, O_CONV);
+
+						cv->adt = CC_PHPINT;
+						cv->dt = BUF_T_INT64;
+						cv->a = lr;
+						cv->r = reg(c, BUF_T_INT64);
+						lr = cv->r;
+					}
+					cond = cmp_reg(c, CC_LT, BUF_T_INT64, pos, lr);
+				}
+				/* in the loop: the value (and key), the next position; at the end: on */
+				body = cc_block_new(c->f);
+				{
+					cc_block *b = &c->f->blk[c->cur];
+
+					b->term = T_BR;
+					b->cond = cond;
+					b->e[0].to = body;
+				}
+				sb = st_copy(c, s);
+				if (J[end].target >= 0) { unsupported(c, "this foreach"); efree(sb); goto out; }
+				add_incoming(&J[end], c->cur, 1, s);
+				s = sb;
+				c->cur = body;
+				{
+					sval ix = s_num(BUFFERS_SCALAR_INT, pos);
+
+					if (CC_PHPINT != BUF_T_INT64) ix = conv(c, s_num(BUF_T_INT64, pos), BUF_T_INT64, CC_PHPINT), ix.dt = BUFFERS_SCALAR_INT;
+					if (it.dt) {
+						sval list = s_bad();
+
+						list.t = V_LIST;
+						list.n = it.n;
+						list.a = it.a;
+						v = list_index(c, list, ix);
+					} else {
+						sval view = s_bad();
+
+						view.t = V_VIEW;
+						view.n = it.n;
+						view.a = it.a;
+						view.r = (int32_t)it.k.s;
+						v = index_view(c, view, ix, false);
+					}
+					if (FAILED) goto out;
+					if (DEAD) { efree(s); s = NULL; ended = true; break; }   /* (an empty array: never here) */
+					if (op->op2_type == IS_CV || op->op2_type == IS_TMP_VAR || op->op2_type == IS_VAR) *slot(c, s, op->op2.var) = v;
+					if (op->result_type & (IS_TMP_VAR | IS_VAR | IS_CV)) *slot(c, s, op->result.var) = ix;
+				}
+				{
+					int one = const_reg(c, BUF_T_INT64, 1);
+					cc_ins *inc = emit(c, O_IBIN);
+
+					inc->sub = ZEND_ADD;
+					inc->dt = BUF_T_INT64;
+					inc->a = pos;
+					inc->b = one;
+					inc->r = reg(c, BUF_T_INT64);
+					nx = it;
+					nx.r = inc->r;
+					*slot(c, s, op->op1.var) = nx;
+				}
+				c->f->blk[c->cur].term = T_JMP;
+				if (J[next].target >= 0) { back_edge(c, &J[next], c->cur, 0, s); efree(s); }
+				else add_incoming(&J[next], c->cur, 0, s);
+				s = NULL;
+				ended = true;
+				break;
+			}
+			case ZEND_FE_FREE:
+				break;
+			case ZEND_FE_RESET_RW: case ZEND_FE_FETCH_RW:
+				unsupported(c, "foreach by reference");
+				goto out;
 			case ZEND_JMP: {
 				int to = jump_block(&cfg, oa, op, op->op1);
 				cc_block *b = &c->f->blk[c->cur];

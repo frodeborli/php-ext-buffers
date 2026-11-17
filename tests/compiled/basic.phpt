@@ -95,6 +95,22 @@ show('a string\'s bytes, and null: as PHP', fn() => [(new Compiled($k))("\x01\x0
 show('array|Tensor parameter', fn() => (new Compiled(function (array|Tensor $p) { $s = 0; for ($i = 0; $i < count($p); $i++) $s += $p[$i]; return $s; }))(Tensor::fromArray([4, 5], DType::Int8)));
 show('writing into a captured PHP array', function () { $a = [1, 2]; return (new Compiled(function () use ($a) { $a[0] = 5; }))(); });
 show('writing into a string', function () { $s = 'ab'; return (new Compiled(function () use ($s) { $s[0] = 'c'; }))(); });
+
+echo "-- foreach\n";
+$m = Tensor::fromArray([[1, 2, 3], [4, 5, 6]], DType::Int16);
+show('over a tensor\'s rows and their elements, keys', fn() => (new Compiled(function () use ($m) {
+    $s = 0; $keys = 0;
+    foreach ($m as $y => $row) { foreach ($row as $x => $v) { $s += $v * ($x + 1); } $keys += $y; }
+    return [$s, $keys];
+}))());
+show('over a literal array, continue, break, empty', fn() => (new Compiled(function () use ($m) {
+    $w = 0.0; $n = 0;
+    foreach ([0.5, 1.5, 2.0] as $k => $c) { if ($k == 1) continue; $w += $c; }
+    foreach ($m[1] as $v) { if ($v == 5) break; $n += 100; }
+    foreach ([] as $v) { $n++; }
+    return [$w, $n];
+}))());
+show('by reference', fn() => (new Compiled(function () use ($m) { foreach ($m[0] as &$v) { $v = 0; } }))());
 --EXPECT--
 -- scalars and control flow
 arguments: 2.0
@@ -211,3 +227,13 @@ a string's bytes, and null: as PHP: array (
 array|Tensor parameter: 9
 writing into a captured PHP array: TypeError: Buffers\Compiled: writing into a PHP array: it is read as a copy; use a Buffers\Tensor (line 90)
 writing into a string: ValueError: Buffers\Compiled: a constant of type string is not supported (line 91)
+-- foreach
+over a tensor's rows and their elements, keys: array (
+  0 => 46,
+  1 => 1,
+)
+over a literal array, continue, break, empty: array (
+  0 => 2.5,
+  1 => 100,
+)
+by reference: ValueError: Buffers\Compiled: foreach by reference is not supported (line 107)
