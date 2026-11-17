@@ -74,7 +74,7 @@ show('missing argument', fn() => (new Compiled(fn($v) => clamp01()))(1.0));
 show('instance method', fn() => (new Pixel)->method(0.5));
 show('static:: that a subclass could override', fn() => Open::run(0.5));
 show('assigning a property', fn() => $img->assignProperty());
-show('a property holding a string', fn() => $img->untyped());
+show('returning a string property', fn() => $img->untyped());
 show('an internal function', fn() => (new Compiled(fn($v) => mt_rand(0, 1) + $v))(1));
 show('a string', fn() => (new Compiled(fn() => 'text'))());
 show('by-reference capture', function () { $n = 1; return (new Compiled(function () use (&$n) { return $n; }))(); });
@@ -105,7 +105,7 @@ missing argument: ValueError: Buffers\Compiled: a call of clamp01() without its 
 instance method: ValueError: Buffers\Compiled: $this as a value and instance methods is not supported (line 26)
 static:: that a subclass could override: ValueError: Buffers\Compiled: static::f(), which a subclass could override (use self::) is not supported (line 31)
 assigning a property: ValueError: Buffers\Compiled: writing to a property is not supported (line 44)
-a property holding a string: ValueError: Buffers\Compiled: this property of type string is not supported (line 45)
+returning a string property: ValueError: Buffers\Compiled: returning a string is not supported (line 0)
 an internal function: ValueError: Buffers\Compiled: the function mt_rand() is not supported (line 72)
 a string: ValueError: Buffers\Compiled: a constant of type string is not supported (line 73)
 by-reference capture: ValueError: Buffers\Compiled: the by-reference capture of $n is not supported (line 74)

@@ -12,6 +12,7 @@ typedef struct {
 	uint8_t tensor;      /* a tensor (or a TensorAggregate, or a captured array: arr) bound to env slots */
 	uint8_t arr;         /* a PHP array, read as Tensor::fromArray() reads it */
 	uint8_t written;     /* the code writes into the tensor */
+	uint8_t str;         /* a PHP string, read as its bytes (UInt8, read-only) */
 	int16_t dt;          /* a tensor's dtype; a scalar's type (BUFFERS_SCALAR_*) */
 	uint8_t ndim;
 	uint32_t index;      /* ARG: the parameter; CAPTURE: the byte offset of its bucket in the static variables; PROP: the
@@ -19,6 +20,7 @@ typedef struct {
 	int32_t env;         /* first env slot: a tensor's data, then shape[ndim], then byte strides[ndim]; a scalar's value */
 } cc_src;
 
+#define CC_T_NULL (-10)   /* cc_src.dt of a null */
 #define CC_MAX_RET 64
 
 typedef struct cc_kernel {

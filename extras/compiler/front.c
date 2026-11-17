@@ -25,9 +25,9 @@
 #define MAX_INLINE 8
 #define MAX_ROUNDS 32
 
-enum { FN_ABS, FN_FLOOR, FN_CEIL, FN_ROUND, FN_SQRT, FN_ISNAN, FN_ISFINITE, FN_ISINF, FN_MIN, FN_MAX, FN_INTDIV, FN_FMOD, FN_CNT, FN_COUNT };
+enum { FN_ABS, FN_FLOOR, FN_CEIL, FN_ROUND, FN_SQRT, FN_ISNAN, FN_ISFINITE, FN_ISINF, FN_MIN, FN_MAX, FN_INTDIV, FN_FMOD, FN_CNT, FN_ORD, FN_STRLEN, FN_COUNT };
 static const char *const fn_names[FN_COUNT] = {
-	"abs", "floor", "ceil", "round", "sqrt", "is_nan", "is_finite", "is_infinite", "min", "max", "intdiv", "fmod", "count"
+	"abs", "floor", "ceil", "round", "sqrt", "is_nan", "is_finite", "is_infinite", "min", "max", "intdiv", "fmod", "count", "ord", "strlen"
 };
 
 /* ---- values of the abstract state ---- */
@@ -41,6 +41,7 @@ enum {
 	V_LIST,      /* a fixed-length array: a values from c->sv[n] */
 	V_SHAPE,     /* $tensor->shape of binding n after a indices */
 	V_THIS,      /* the closure's $this */
+	V_CHAR,      /* $string[$i]: a one-byte string, of which only ord() is taken; r: the byte (UInt8) */
 	V_NULL       /* null: the value of a return without a value */
 };
 
@@ -616,6 +617,11 @@ static sval index_view(comp *c, sval view, sval ix, bool lvalue)
 			i->dt = (int16_t)b->dt;
 			i->a = addr;
 			i->r = reg(c, b->dt);
+			if (c->k->src[b->src].str) {   /* a one-byte string */
+				r = s_num(b->dt, i->r);
+				r.t = V_CHAR;
+				return r;
+			}
 			return s_num(b->dt, i->r);
 		}
 		return r;
@@ -628,6 +634,8 @@ static void store_elem(comp *c, sval el, sval v)
 	cc_ins *i;
 
 	if (v.t != V_NUM) { unsupported(c, "storing this value in a tensor"); return; }
+	if (c->k->src[b->src].arr) { type_err(c, "writing into a PHP array: it is read as a copy; use a Buffers\\Tensor"); return; }
+	if (c->k->src[b->src].str) { type_err(c, "writing into a string: strings are read-only"); return; }
 	/* as convert() converts */
 	v = conv(c, v, nat(v.dt), b->dt);
 	c->k->src[b->src].written = 1;
@@ -692,6 +700,38 @@ static sval env_value(comp *c, int kind, uint32_t index, zval *z, const char *wh
 		s->dt = (int16_t)t;
 		s->env = c->k->nenv++;
 		return s_num(t, env_reg(c, s->env, nat(t)));
+	}
+	case IS_NULL: {
+		sval r = s_bad();
+
+		si = add_src(c, kind, index);
+		c->k->src[si].dt = CC_T_NULL;
+		c->k->src[si].env = -1;
+		r.t = V_NULL;
+		return r;
+	}
+	case IS_STRING: {   /* its bytes, read-only */
+		sval r;
+
+		if (c->nbind == 64) return unsupported(c, "more than 64 tensors and strings");
+		si = add_src(c, kind, index);
+		s = &c->k->src[si];
+		s->tensor = 1;
+		s->str = 1;
+		s->dt = BUF_T_UINT8;
+		s->ndim = 1;
+		s->env = c->k->nenv;
+		c->k->nenv += 3;
+		if (c->k->nenv > 256) return unsupported(c, "this many tensor axes");
+		c->bind[c->nbind].src = si;
+		c->bind[c->nbind].dt = BUF_T_UINT8;
+		c->bind[c->nbind].ndim = 1;
+		c->bind[c->nbind].env = s->env;
+		memset(&r, 0, sizeof r);
+		r.t = V_VIEW;
+		r.n = c->nbind++;
+		r.r = -1;
+		return r;
 	}
 	case IS_ARRAY: case IS_OBJECT: {
 		zval t;
@@ -1326,6 +1366,19 @@ static sval call_builtin(comp *c, int fid, sval *args, int nargs)
 	sval x;
 
 	if (fid == FN_CNT) return nargs == 1 ? count_of(c, args[0]) : unsupported(c, "count() with %d arguments", nargs);
+	if (fid == FN_ORD) {
+		if (nargs != 1 || args[0].t != V_CHAR) return unsupported(c, "ord() of anything but a byte of a string ($s[$i])");
+		{
+			sval r = conv(c, s_num(BUF_T_UINT8, args[0].r), BUF_T_UINT8, CC_PHPINT);
+
+			r.dt = BUFFERS_SCALAR_INT;
+			return r;
+		}
+	}
+	if (fid == FN_STRLEN) {
+		if (nargs != 1 || args[0].t != V_VIEW || !c->k->src[c->bind[args[0].n].src].str) return unsupported(c, "strlen() of anything but a string");
+		return s_num(BUFFERS_SCALAR_INT, env_reg(c, c->bind[args[0].n].env + 1, CC_PHPINT));
+	}
 
 	for (int i = 0; i < nargs; i++) {
 		if (args[i].t == V_ELEM) args[i] = load_elem(c, args[i]);
@@ -1466,26 +1519,46 @@ static sval call_builtin(comp *c, int fid, sval *args, int nargs)
 	return s_bad();
 }
 
-/* an argument of an inlined call converted as PHP converts it for the parameter's declared type */
+/* whether a declared type names Buffers\Tensor */
+static bool type_has_tensor(zend_type t)
+{
+	const zend_type *e;
+
+	ZEND_TYPE_FOREACH(t, e) {
+		if (ZEND_TYPE_HAS_NAME(*e) && zend_string_equals_literal_ci(ZEND_TYPE_NAME(*e), "Buffers\\Tensor")) return true;
+	} ZEND_TYPE_FOREACH_END();
+	return false;
+}
+
+/* an argument (or a returned value) checked against, and converted to, a declared type, as PHP does */
 static sval coerce_param(comp *c, const zend_arg_info *ai, sval v)
 {
 	uint32_t mask;
+	const char *name = ai->name ? ZSTR_VAL(ai->name) : "(return)";
 
 	if (!ZEND_TYPE_IS_SET(ai->type) || v.t == V_BAD) return v;
 	if (v.t == V_ELEM) v = load_elem(c, v);
-	if (ZEND_TYPE_HAS_NAME(ai->type)) {
-		if (v.t == V_VIEW && zend_string_equals_literal_ci(ZEND_TYPE_NAME(ai->type), "Buffers\\Tensor")) return v;
-		return unsupported(c, "the type of parameter $%s", ZSTR_VAL(ai->name));
-	}
 	mask = ZEND_TYPE_PURE_MASK(ai->type);
-	if (ZEND_TYPE_IS_COMPLEX(ai->type) || (mask & ~(MAY_BE_ARRAY | MAY_BE_LONG | MAY_BE_DOUBLE | MAY_BE_BOOL))) {
-		return unsupported(c, "the type of parameter $%s", ZSTR_VAL(ai->name));
+	if ((mask & MAY_BE_ANY) == MAY_BE_ANY) return v;   /* mixed */
+	switch (v.t) {
+	case V_NULL:
+		if (mask & MAY_BE_NULL) return v;
+		return type_err(c, "parameter $%s does not accept null", name);
+	case V_VIEW:
+		if (c->k->src[c->bind[v.n].src].str && v.a == 0) {
+			if (mask & MAY_BE_STRING) return v;
+			return type_err(c, "parameter $%s does not accept a string", name);
+		}
+		if (type_has_tensor(ai->type) || (mask & MAY_BE_OBJECT) || (c->k->src[c->bind[v.n].src].arr && (mask & MAY_BE_ARRAY))) return v;
+		return type_err(c, "parameter $%s does not accept a tensor", name);
+	case V_LIST:
+		if (mask & MAY_BE_ARRAY) return v;
+		return type_err(c, "parameter $%s does not take an array", name);
+	case V_NUM:
+		break;
+	default:
+		return type_err(c, "parameter $%s does not take this value", name);
 	}
-	if (v.t == V_LIST) {
-		if (!(mask & MAY_BE_ARRAY)) return type_err(c, "parameter $%s does not take an array", ZSTR_VAL(ai->name));
-		return v;
-	}
-	if (v.t != V_NUM) return type_err(c, "parameter $%s does not take this value", ZSTR_VAL(ai->name));
 	if (v.dt == BUFFERS_SCALAR_INT || cc_int(v.dt)) {
 		if (mask & MAY_BE_LONG) return v;
 		if (mask & MAY_BE_DOUBLE) {   /* an int for a float parameter becomes a float */
@@ -1496,10 +1569,10 @@ static sval coerce_param(comp *c, const zend_arg_info *ai, sval v)
 		}
 	} else if (v.dt == BUFFERS_SCALAR_FLOAT || cc_float(v.dt)) {
 		if (mask & MAY_BE_DOUBLE) return v;
-	} else if (mask & MAY_BE_BOOL) {
+	} else if (mask & (MAY_BE_BOOL | MAY_BE_TRUE | MAY_BE_FALSE)) {
 		return v;
 	}
-	return type_err(c, "parameter $%s does not accept %s", ZSTR_VAL(ai->name), tname(v.dt));
+	return type_err(c, "parameter $%s does not accept %s", name, tname(v.dt));
 }
 
 /* ---- properties and constants ---- */
@@ -1826,9 +1899,59 @@ static bool run_func(comp *c, const zend_function *fn, const sval *args, int nar
 				if (FAILED) goto out;
 				break;
 			}
+			case ZEND_TYPE_CHECK: {
+				/* is_int(), $x === null ...: the type of every value is known here */
+				sval a = operand(c, s, op, op->op1_type, op->op1);
+				uint32_t t;
+
+				if (FAILED) goto out;
+				switch (a.t) {
+				case V_NULL: t = MAY_BE_NULL; break;
+				case V_NUM:
+					t = a.dt == BUFFERS_SCALAR_BOOL || a.dt == BUF_T_BOOL ? MAY_BE_BOOL
+						: a.dt == BUFFERS_SCALAR_FLOAT || cc_float(a.dt) ? MAY_BE_DOUBLE : MAY_BE_LONG;
+					break;
+				case V_ELEM: t = cc_float(c->bind[a.n].dt) ? MAY_BE_DOUBLE : c->bind[a.n].dt == BUF_T_BOOL ? MAY_BE_BOOL : MAY_BE_LONG; break;
+				case V_LIST: t = MAY_BE_ARRAY; break;
+				case V_CHAR: t = MAY_BE_STRING; break;
+				case V_VIEW: t = c->k->src[c->bind[a.n].src].str && a.a == 0 ? MAY_BE_STRING : MAY_BE_OBJECT; break;
+				default: unsupported(c, "this type check"); goto out;
+				}
+				{
+					cc_val k;
+
+					/* a bool value: true and false are both MAY_BE_BOOL here (is_bool) */
+					k.i = (op->extended_value & t) != 0 || (t == MAY_BE_BOOL && (op->extended_value & (MAY_BE_TRUE | MAY_BE_FALSE)) == (MAY_BE_TRUE | MAY_BE_FALSE));
+					set_result(c, s, op, s_const(BUFFERS_SCALAR_BOOL, k));
+				}
+				break;
+			}
+			case ZEND_STRLEN: {
+				sval a = operand(c, s, op, op->op1_type, op->op1);
+
+				if (FAILED) goto out;
+				set_result(c, s, op, call_builtin(c, FN_STRLEN, &a, 1));
+				if (FAILED) goto out;
+				break;
+			}
 			case ZEND_IS_EQUAL: case ZEND_IS_NOT_EQUAL: case ZEND_IS_IDENTICAL: case ZEND_IS_NOT_IDENTICAL:
 			case ZEND_IS_SMALLER: case ZEND_IS_SMALLER_OR_EQUAL: {
-				sval a = num_operand(c, s, op, op->op1_type, op->op1), b = FAILED ? s_bad() : num_operand(c, s, op, op->op2_type, op->op2);
+				sval a, b;
+
+				a = operand(c, s, op, op->op1_type, op->op1);
+				b = FAILED ? s_bad() : operand(c, s, op, op->op2_type, op->op2);
+				if (FAILED) goto out;
+				if ((a.t == V_NULL || b.t == V_NULL) && (op->opcode == ZEND_IS_IDENTICAL || op->opcode == ZEND_IS_NOT_IDENTICAL)) {
+					/* === null: known here */
+					cc_val k;
+
+					k.i = (a.t == V_NULL && b.t == V_NULL) == (op->opcode == ZEND_IS_IDENTICAL);
+					set_result(c, s, op, s_const(BUFFERS_SCALAR_BOOL, k));
+					break;
+				}
+				if (a.t == V_ELEM) a = load_elem(c, a);
+				if (b.t == V_ELEM) b = load_elem(c, b);
+				if (a.t != V_NUM || b.t != V_NUM) { unsupported(c, "comparing this value (numbers, and === null)"); goto out; }
 				int which = op->opcode == ZEND_IS_SMALLER ? CC_LT : op->opcode == ZEND_IS_SMALLER_OR_EQUAL ? CC_LE
 					: (op->opcode == ZEND_IS_EQUAL || op->opcode == ZEND_IS_IDENTICAL) ? CC_EQ : CC_NE;
 
@@ -2083,9 +2206,9 @@ static bool run_func(comp *c, const zend_function *fn, const sval *args, int nar
 				sval av[3];
 
 				if (fid < 0) { unsupported(c, "the function %s()", f ? ZSTR_VAL(f->common.function_name) : "?"); goto out; }
-				if (na >= 1) av[0] = num_operand(c, s, op, op->op1_type, op->op1);
-				if (na >= 2 && !FAILED) av[1] = num_operand(c, s, op, op->op2_type, op->op2);
-				if (na >= 3 && !FAILED) av[2] = num_operand(c, s, op + 1, (op + 1)->op1_type, (op + 1)->op1);
+				if (na >= 1) av[0] = operand(c, s, op, op->op1_type, op->op1);
+				if (na >= 2 && !FAILED) av[1] = operand(c, s, op, op->op2_type, op->op2);
+				if (na >= 3 && !FAILED) av[2] = operand(c, s, op + 1, (op + 1)->op1_type, (op + 1)->op1);
 				if (FAILED) goto out;
 				set_result(c, s, op, call_builtin(c, fid, av, na));
 				if (FAILED) goto out;
@@ -2356,7 +2479,7 @@ cc_kernel *cc_compile(zend_object *closure, zval *args, uint32_t nargs)
 					k->retdt[e] = x.dt;
 				}
 			} else if (ret.t == V_VIEW) {
-				unsupported(&c, "returning a tensor");
+				unsupported(&c, c.k->src[c.bind[ret.n].src].str ? "returning a string" : "returning a tensor");
 			} else if (ret.t != V_NULL) {
 				unsupported(&c, "returning this value");
 			}

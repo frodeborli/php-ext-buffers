@@ -121,6 +121,10 @@ static bool cc_bind(buf_compiled *bc, cc_kernel *k, zval *args, cc_val *env, cc_
 		if (!s->tensor) {
 			cc_val v;
 
+			if (s->dt == CC_T_NULL) {
+				if (Z_TYPE_P(z) != IS_NULL) return false;
+				continue;
+			}
 			if (scalar_type(z) != s->dt) return false;
 			switch (Z_TYPE_P(z)) {
 			case IS_LONG: v.s = Z_LVAL_P(z); break;
@@ -129,6 +133,13 @@ static bool cc_bind(buf_compiled *bc, cc_kernel *k, zval *args, cc_val *env, cc_
 			}
 			if (s->kind == SRC_ARG) argv[s->index] = v;
 			else env[s->env] = v;
+			continue;
+		}
+		if (s->str) {   /* the string's bytes (held by its zval for the call) */
+			if (Z_TYPE_P(z) != IS_STRING) return false;
+			env[s->env].p = (uint8_t *)Z_STRVAL_P(z);
+			env[s->env + 1].s = (int64_t)Z_STRLEN_P(z);
+			env[s->env + 2].s = 1;
 			continue;
 		}
 		{

@@ -57,7 +57,8 @@ The code computes with numbers: values of a dtype with arithmetic (`Bool`, the i
 
 ## What the code may contain
 
-* Parameters of type `int`, `float`, `bool`, `Buffers\Tensor`, or no type (the argument's type). Default values.
+* Parameters of type `int`, `float`, `bool`, `string`, `array`, `Buffers\Tensor`, unions and nullable types of these, or no type
+  (the argument's type). Default values.
 * Local variables, assignments and compound assignments, `++` and `--`.
 * `if`/`elseif`/`else`, `for`, `while`, `do`/`while`, `break`, `continue`, `return`.
 * `+ - * / % ** << >> & | ^ ~`, comparisons `== != === !== < <= > >=` (`===` is `==` between numbers), `?:`, `?:` without
@@ -74,10 +75,14 @@ The code computes with numbers: values of a dtype with arithmetic (`Bool`, the i
 * Arrays of fixed length: literals (`[$a, $b, 0.5]`), `$list[$i]` with any integer `$i`, `[$a, $b] = $list`, as arguments
   and return values of functions, and as the returned value.
 * Global and class constants (`M_PI`, `self::OPAQUE`) of type `int`, `float`, `bool`.
+* `null`: a value from outside that is `null` is known when the code is compiled, so `$x === null`, `$x !== null` and
+  `is_null($x)` (and the other `is_*()` type checks) are decided then, and the branch that cannot run is not compiled.
+  Called with `null` and with a value, the closure is compiled once for each.
+* Strings from outside, read-only: `\ord($s[$i])` reads a byte, `strlen($s)` is the length.
 * Tensors: below.
 
 Everything else is a `ValueError` (unsupported construct) or `TypeError` (types) when the code is compiled, before any of
-it runs: other internal functions, instance methods, strings, arrays with keys, assignments to properties, `foreach`, `switch`, `match`, `try`, generators, by-reference parameters or captures, variadic parameters,
+it runs: other internal functions, instance methods, strings made or changed in the code, arrays with keys, assignments to properties, `foreach`, `switch`, `match`, `try`, generators, by-reference parameters or captures, variadic parameters,
 named arguments, and values of other types.
 
 ## Tensors
@@ -105,7 +110,8 @@ that changes from one call to the next does not compile the closure again.
 * `int`, `float`, `bool`: weak values (above).
 * A tensor, or an object implementing `TensorAggregate`.
 * A PHP array of numbers, read as `Tensor::fromArray()` reads it: all `int`s give `Int64`, any `float` gives `Float64`, all
-  `bool`s give `Bool`; nested arrays give more axes. It is copied at every call.
+  `bool`s give `Bool`; nested arrays give more axes. It is copied at every call, so writing into it is a `TypeError`.
+* A string (its bytes), or `null`.
 * A property must be declared, readable from the closure's scope, without hooks, and initialized; it is read, never
   written (writing into a tensor it holds is allowed).
 

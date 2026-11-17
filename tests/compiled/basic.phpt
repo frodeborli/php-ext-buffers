@@ -88,6 +88,13 @@ show('shift by a negative count', fn() => (new Compiled(fn(int $a, int $b) => $a
 show('negative integer exponent', fn() => (new Compiled(fn(int $a, int $b) => $a ** $b))(2, -1));
 show('an int that does not fit the other operand\'s dtype', fn() => (new Compiled(fn(int $k) => $t[0][0] + $k))(100000));
 show('not reached: no error', fn() => (new Compiled(fn(int $a, int $b) => $b != 0 ? $a % $b : -1))(7, 0));
+
+echo "-- null, strings, union types\n";
+$k = function (?string $mask, int $n) { $s = 0; for ($i = 0; $i < $n; $i++) { $m = $mask === null ? 255 : \ord($mask[$i]); $s += $m; } return [$s, is_null($mask), $mask === null ? -1 : strlen($mask)]; };
+show('a string\'s bytes, and null: as PHP', fn() => [(new Compiled($k))("\x01\x02\xff", 3), (new Compiled($k))(null, 3), $k("\x01\x02\xff", 3), $k(null, 3)]);
+show('array|Tensor parameter', fn() => (new Compiled(function (array|Tensor $p) { $s = 0; for ($i = 0; $i < count($p); $i++) $s += $p[$i]; return $s; }))(Tensor::fromArray([4, 5], DType::Int8)));
+show('writing into a captured PHP array', function () { $a = [1, 2]; return (new Compiled(function () use ($a) { $a[0] = 5; }))(); });
+show('writing into a string', function () { $s = 'ab'; return (new Compiled(function () use ($s) { $s[0] = 'c'; }))(); });
 --EXPECT--
 -- scalars and control flow
 arguments: 2.0
@@ -174,3 +181,33 @@ shift by a negative count: ArithmeticError: Bit shift by negative number
 negative integer exponent: ValueError: Negative exponent in an integer power; convert() to a float dtype first
 an int that does not fit the other operand's dtype: ValueError: Operand 100000 does not fit the dtype Int16 of the other operand
 not reached: no error: -1
+-- null, strings, union types
+a string's bytes, and null: as PHP: array (
+  0 => 
+  array (
+    0 => 258,
+    1 => false,
+    2 => 3,
+  ),
+  1 => 
+  array (
+    0 => 765,
+    1 => true,
+    2 => -1,
+  ),
+  2 => 
+  array (
+    0 => 258,
+    1 => false,
+    2 => 3,
+  ),
+  3 => 
+  array (
+    0 => 765,
+    1 => true,
+    2 => -1,
+  ),
+)
+array|Tensor parameter: 9
+writing into a captured PHP array: TypeError: Buffers\Compiled: writing into a PHP array: it is read as a copy; use a Buffers\Tensor (line 90)
+writing into a string: ValueError: Buffers\Compiled: a constant of type string is not supported (line 91)
