@@ -220,11 +220,60 @@ static inline cc_val cc_conv(int from, int to, cc_val v)
 	return r;
 }
 
-enum { CC_FLOOR, CC_CEIL, CC_ROUND, CC_SQRT, CC_FABS };
+enum { CC_FLOOR, CC_CEIL, CC_ROUND, CC_SQRT, CC_FABS,
+	/* computed in double as PHP computes them, then rounded once to the dtype */
+	CC_SIN, CC_COS, CC_TAN, CC_ASIN, CC_ACOS, CC_ATAN, CC_SINH, CC_COSH, CC_TANH, CC_ASINH, CC_ACOSH, CC_ATANH,
+	CC_EXP, CC_EXPM1, CC_LOG, CC_LOG10, CC_LOG2, CC_LOG1P, CC_DEG2RAD, CC_RAD2DEG };
+enum { CC_ATAN2, CC_HYPOT, CC_FDIV, CC_LOGB };   /* O_MATH2 */
+
+static inline double cc_dmath1(int fn, double x)
+{
+	switch (fn) {
+	case CC_SIN: return sin(x); case CC_COS: return cos(x); case CC_TAN: return tan(x);
+	case CC_ASIN: return asin(x); case CC_ACOS: return acos(x); case CC_ATAN: return atan(x);
+	case CC_SINH: return sinh(x); case CC_COSH: return cosh(x); case CC_TANH: return tanh(x);
+	case CC_ASINH: return asinh(x); case CC_ACOSH: return acosh(x); case CC_ATANH: return atanh(x);
+	case CC_EXP: return exp(x); case CC_EXPM1: return expm1(x); case CC_LOG: return log(x);
+	case CC_LOG10: return log10(x); case CC_LOG2: return log2(x); case CC_LOG1P: return log1p(x);
+	case CC_DEG2RAD: return (x / 180.0) * M_PI;   /* PHP's deg2rad() */
+	case CC_RAD2DEG: return (x / M_PI) * 180;     /* PHP's rad2deg() */
+	}
+	return 0;
+}
+
+/* log($num, $base) as PHP computes it (a base that is not greater than 0 is the caller's error) */
+static inline double cc_dmath2(int fn, double a, double b)
+{
+	switch (fn) {
+	case CC_ATAN2: return atan2(a, b);
+	case CC_HYPOT: return hypot(a, b);
+	case CC_FDIV: return a / b;
+	default:
+		if (b == 2.0) return log2(a);
+		if (b == 10.0) return log10(a);
+		if (b == 1.0) return ZEND_NAN;
+		return log(a) / log(b);
+	}
+}
+
+static inline cc_val cc_math2(int fn, int dt, cc_val a, cc_val b)
+{
+	cc_val r;
+
+	if (cc_mt(dt) == CC_MD) r.d = cc_dmath2(fn, a.d, b.d);
+	else r.f = cc_round_to(cc_dmath2(fn, (double)a.f, (double)b.f), dt);
+	return r;
+}
 
 static inline cc_val cc_math1(int fn, int dt, cc_val a)
 {
 	cc_val r;
+
+	if (fn >= CC_SIN) {
+		if (cc_mt(dt) == CC_MD) r.d = cc_dmath1(fn, a.d);
+		else r.f = cc_round_to(cc_dmath1(fn, (double)a.f), dt);
+		return r;
+	}
 
 	if (cc_mt(dt) == CC_MD) {
 		switch (fn) {

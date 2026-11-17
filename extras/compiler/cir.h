@@ -22,6 +22,7 @@ enum {
 	O_SEL,       /* r = a ? b : c (a Bool) */
 	O_CONV,      /* r = a converted from adt to dt: cc_conv() */
 	O_MATH1,     /* r = sub(a) for a float dt: cc_math1() */
+	O_MATH2,     /* r = sub(a, b) for a float dt: cc_math2() */
 	O_LOAD,      /* r = the element of dtype dt at address a */
 	O_STORE,     /* the element of dtype dt at address a = b */
 	O_PADD,      /* r (an address) = a + b (Int64 bytes) */
@@ -84,6 +85,7 @@ enum {
 	CC_E_FIT,       /* ValueError: the PHP int ea does not fit the dtype eaux */
 	CC_E_RANGE,     /* ValueError: index ea out of range for an axis of length eb */
 	CC_E_DEPTH,     /* Error: calls nested too deep */
+	CC_E_LOGBASE,   /* ValueError: log() of a base that is not greater than 0 */
 	CC_E_THROWN     /* an exception is already set (an interrupt) */
 };
 

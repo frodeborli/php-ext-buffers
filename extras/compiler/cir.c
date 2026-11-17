@@ -75,7 +75,7 @@ cc_ins *cc_emit(cc_func *f, int b, int op)
 }
 
 static const char *const op_names[O_COUNT_] = {
-	"const", "arg", "env", "copy", "ibin", "fbin", "bwnot", "cmp", "sel", "conv", "math1", "load", "store", "padd", "call", "intr", "errq", "setret"
+	"const", "arg", "env", "copy", "ibin", "fbin", "bwnot", "cmp", "sel", "conv", "math1", "math2", "load", "store", "padd", "call", "intr", "errq", "setret"
 };
 
 static const char *dtn(int dt)
@@ -160,6 +160,7 @@ void cc_interp(const cc_func *const *fns, int fi, cc_ctx *ctx, cc_val *ret)
 			case O_SEL: R[x->r] = R[x->a].i ? R[x->b] : R[x->c]; break;
 			case O_CONV: R[x->r] = cc_conv(x->adt, x->dt, R[x->a]); break;
 			case O_MATH1: R[x->r] = cc_math1(x->sub, x->dt, R[x->a]); break;
+			case O_MATH2: R[x->r] = cc_math2(x->sub, x->dt, R[x->a], R[x->b]); break;
 			case O_LOAD: R[x->r] = cc_load(x->dt, R[x->a].p); break;
 			case O_STORE: cc_store(x->dt, R[x->a].p, R[x->b]); break;
 			case O_PADD: R[x->r].p = (uint8_t *)R[x->a].p + R[x->b].s; break;

@@ -25,9 +25,15 @@
 #define MAX_INLINE 8
 #define MAX_ROUNDS 32
 
-enum { FN_ABS, FN_FLOOR, FN_CEIL, FN_ROUND, FN_SQRT, FN_ISNAN, FN_ISFINITE, FN_ISINF, FN_MIN, FN_MAX, FN_INTDIV, FN_FMOD, FN_CNT, FN_ORD, FN_STRLEN, FN_COUNT };
+enum { FN_ABS, FN_FLOOR, FN_CEIL, FN_ROUND, FN_SQRT, FN_ISNAN, FN_ISFINITE, FN_ISINF, FN_MIN, FN_MAX, FN_INTDIV, FN_FMOD, FN_CNT, FN_ORD, FN_STRLEN,
+	FN_SIN, FN_COS, FN_TAN, FN_ASIN, FN_ACOS, FN_ATAN, FN_SINH, FN_COSH, FN_TANH, FN_ASINH, FN_ACOSH, FN_ATANH,
+	FN_EXP, FN_EXPM1, FN_LOG10, FN_LOG2, FN_LOG1P, FN_DEG2RAD, FN_RAD2DEG,
+	FN_LOG, FN_ATAN2, FN_HYPOT, FN_FDIV, FN_POW, FN_PI, FN_COUNT };
 static const char *const fn_names[FN_COUNT] = {
-	"abs", "floor", "ceil", "round", "sqrt", "is_nan", "is_finite", "is_infinite", "min", "max", "intdiv", "fmod", "count", "ord", "strlen"
+	"abs", "floor", "ceil", "round", "sqrt", "is_nan", "is_finite", "is_infinite", "min", "max", "intdiv", "fmod", "count", "ord", "strlen",
+	"sin", "cos", "tan", "asin", "acos", "atan", "sinh", "cosh", "tanh", "asinh", "acosh", "atanh",
+	"exp", "expm1", "log10", "", "log1p", "deg2rad", "rad2deg",
+	"log", "atan2", "hypot", "fdiv", "pow", "pi"
 };
 
 /* ---- values of the abstract state ---- */
@@ -1265,7 +1271,7 @@ static sval list_index(comp *c, sval list, sval ix)
 static int fn_id(zend_string *lcname)
 {
 	for (int i = 0; i < FN_COUNT; i++) {
-		if (zend_string_equals_cstr(lcname, fn_names[i], strlen(fn_names[i]))) return i;
+		if (fn_names[i][0] && zend_string_equals_cstr(lcname, fn_names[i], strlen(fn_names[i]))) return i;
 	}
 	return -1;
 }
@@ -1361,6 +1367,83 @@ static sval count_of(comp *c, sval a)
 	return unsupported(c, "count() of this value");
 }
 
+/* a value of a float dtype for a math function: an int (weak or not) as a float in Float64, a float dtype as it is */
+static sval math_arg(comp *c, sval x, int *dt)
+{
+	if (x.t == V_ELEM) x = load_elem(c, x);
+	if (x.t != V_NUM) return unsupported(c, "this argument of a math function");
+	if (x.dt == BUF_T_BOOL || x.dt == BUFFERS_SCALAR_BOOL) return type_err(c, "a math function of a %s", tname(x.dt));
+	if (cc_float(x.dt) || x.dt == BUFFERS_SCALAR_FLOAT) { *dt = x.dt; return x; }
+	{
+		sval r = conv(c, x, nat(x.dt), BUF_T_FLOAT64);
+
+		r.dt = is_weak(x.dt) ? BUFFERS_SCALAR_FLOAT : BUF_T_FLOAT64;
+		*dt = r.dt;
+		return r;
+	}
+}
+
+/* sin() ... rad2deg(), log(), atan2(), hypot(), fdiv(): computed in double, as PHP's own functions compute them, and
+ * rounded once to a float dtype of the argument (Float32, Float16, BFloat16) */
+static sval math_call(comp *c, int fid, sval *args, int nargs)
+{
+	int ta, tb, t, cdt, sub;
+	sval a, b;
+	cc_ins *i;
+
+	if (fid < FN_LOG || (fid == FN_LOG && nargs == 1)) {
+		static const uint8_t m1[] = {CC_SIN, CC_COS, CC_TAN, CC_ASIN, CC_ACOS, CC_ATAN, CC_SINH, CC_COSH, CC_TANH, CC_ASINH,
+			CC_ACOSH, CC_ATANH, CC_EXP, CC_EXPM1, CC_LOG10, CC_LOG2, CC_LOG1P, CC_DEG2RAD, CC_RAD2DEG};
+
+		if (nargs != 1) return unsupported(c, "%s() with %d arguments", fn_names[fid], nargs);
+		a = math_arg(c, args[0], &ta);
+		if (FAILED) return s_bad();
+		cdt = nat(ta);
+		sub = fid == FN_LOG ? CC_LOG : m1[fid - FN_SIN];
+		if (a.r < 0) return s_const(ta, cc_math1(sub, cdt, a.k));
+		i = emit(c, O_MATH1);
+		i->sub = (uint8_t)sub;
+		i->dt = (int16_t)cdt;
+		i->a = a.r;
+		i->r = reg(c, cdt);
+		return s_num(ta, i->r);
+	}
+	if (nargs != 2) return unsupported(c, "%s() with %d arguments", fn_names[fid], nargs);
+	a = math_arg(c, args[0], &ta);
+	b = FAILED ? s_bad() : math_arg(c, args[1], &tb);
+	if (FAILED) return s_bad();
+	t = common(c, ta, tb, true);
+	if (t == -1) return s_bad();
+	a = to_type(c, a, t);
+	b = to_type(c, b, t);
+	if (FAILED || DEAD) return s_bad();
+	cdt = nat(t);
+	sub = fid == FN_ATAN2 ? CC_ATAN2 : fid == FN_HYPOT ? CC_HYPOT : fid == FN_FDIV ? CC_FDIV : CC_LOGB;
+	if (sub == CC_LOGB) {   /* a base that is not greater than 0: ValueError */
+		if (b.r < 0) {
+			double bv = cc_mt(cdt) == CC_MD ? b.k.d : (double)b.k.f;
+
+			if (!(bv > 0.0)) return fail_now(c, CC_E_LOGBASE, s_bad(), s_bad(), 0);
+		} else {
+			int z = const_reg(c, cdt, 0);   /* 0.0, as float or double */
+
+			check(c, cmp_reg(c, CC_GT, cdt, b.r, z), CC_E_LOGBASE, -1, -1, 0);
+		}
+	}
+	if (a.r < 0 && b.r < 0) return s_const(t, cc_math2(sub, cdt, a.k, b.k));
+	{
+		int ra = materialize(c, a), rb = materialize(c, b);
+
+		i = emit(c, O_MATH2);
+		i->sub = (uint8_t)sub;
+		i->dt = (int16_t)cdt;
+		i->a = ra;
+		i->b = rb;
+		i->r = reg(c, cdt);
+		return s_num(t, i->r);
+	}
+}
+
 static sval call_builtin(comp *c, int fid, sval *args, int nargs)
 {
 	sval x;
@@ -1375,6 +1458,18 @@ static sval call_builtin(comp *c, int fid, sval *args, int nargs)
 			return r;
 		}
 	}
+	if (fid == FN_PI) {
+		cc_val k;
+
+		if (nargs) return unsupported(c, "pi() with arguments");
+		k.d = M_PI;
+		return s_const(BUFFERS_SCALAR_FLOAT, k);
+	}
+	if (fid == FN_POW) {
+		if (nargs != 2) return unsupported(c, "pow() with %d arguments", nargs);
+		return bin(c, ZEND_POW, args[0].t == V_ELEM ? load_elem(c, args[0]) : args[0], args[1].t == V_ELEM ? load_elem(c, args[1]) : args[1]);
+	}
+	if (fid >= FN_SIN && fid <= FN_FDIV) return math_call(c, fid, args, nargs);
 	if (fid == FN_STRLEN) {
 		if (nargs != 1 || args[0].t != V_VIEW || !c->k->src[c->bind[args[0].n].src].str) return unsupported(c, "strlen() of anything but a string");
 		return s_num(BUFFERS_SCALAR_INT, env_reg(c, c->bind[args[0].n].env + 1, CC_PHPINT));

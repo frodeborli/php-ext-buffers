@@ -64,10 +64,15 @@ The code computes with numbers: values of a dtype with arithmetic (`Bool`, the i
 * `+ - * / % ** << >> & | ^ ~`, comparisons `== != === !== < <= > >=` (`===` is `==` between numbers), `?:`, `?:` without
   the middle, `&&`, `||`, `!`, `xor`, casts, with the operators' rules (arithmetic.md).
 * `abs`, `floor`, `ceil`, `round` (no precision argument), `sqrt`, `min`, `max`, `intdiv`, `fmod`, `is_nan`, `is_finite`,
-  `is_infinite`, `count`; called by their global names (also unqualified inside a namespace that does not define a
+  `is_infinite`, `count`, and the functions below; called by their global names (also unqualified inside a namespace that does not define a
   function of that name). On integers, `floor`, `ceil` and `round` give the value, `abs` wraps (`abs` of the minimum is the
   minimum), `sqrt` computes in `Float64`, `is_nan` and `is_infinite` are `false` and `is_finite` `true`. `min` takes a later
   argument when it is smaller, `max` when it is greater or the two are unordered (`NAN`), as PHP's do.
+* `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2`, `sinh`, `cosh`, `tanh`, `asinh`, `acosh`, `atanh`, `exp`,
+  `expm1`, `log` (with an optional base), `log10`, `log1p`, `hypot`, `fdiv`, `deg2rad`, `rad2deg`, `pi`: computed in
+  double as PHP's own functions compute them (the same results, NaN payloads aside), then rounded once to a float dtype
+  of the arguments (`Float32` stays `Float32`); integers are computed as `Float64`. `log()` with a base that is not
+  greater than 0 is PHP's `ValueError`. `pow()` is the `**` operator.
 * Functions and static methods written in PHP (`helper($x)`, `self::helper($x)`, `ClassName::helper($x)`, `static::` where
   no subclass can override the method), compiled into their callers, with PHP's conversions of arguments and return
   values for their declared types (an `int` passed to a `float` parameter becomes a `float`). Recursion is rejected, and so

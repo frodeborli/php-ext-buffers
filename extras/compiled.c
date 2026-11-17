@@ -222,6 +222,7 @@ static void cc_raise(const cc_ctx *ctx)
 	case CC_E_POWNEG: zend_value_error("Negative exponent in an integer power; convert() to a float dtype first"); break;
 	case CC_E_FIT: zend_value_error("Operand %" PRId64 " does not fit the dtype %s of the other operand", ctx->ea, buf_dtypes[ctx->eaux].name); break;
 	case CC_E_RANGE: zend_value_error("Index %" PRId64 " is out of range for an axis of length %" PRId64, ctx->ea, ctx->eb); break;
+	case CC_E_LOGBASE: zend_value_error("log(): Argument #2 ($base) must be greater than 0"); break;
 	case CC_E_DEPTH: zend_throw_error(NULL, "Maximum call depth of %d reached. Infinite recursion?", CC_MAX_DEPTH); break;
 	default: break;   /* CC_E_THROWN: already set */
 	}

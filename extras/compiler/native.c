@@ -240,8 +240,29 @@ static ir_ref conv(gen *g, int from, int to, ir_ref v)
 	}
 }
 
+static double rt_dmath1(int64_t fn, double x) { return cc_dmath1((int)fn, x); }
+static double rt_dmath2(int64_t fn, double a, double b) { return cc_dmath2((int)fn, a, b); }
+
+/* a double result rounded once to the float dtype dt */
+static ir_ref from_double(gen *g, int dt, ir_ref d)
+{
+	if (cc_mt(dt) == CC_MD) return d;
+	if (dt == BUF_T_FLOAT32) return ir_D2F(d);
+	return ir_CALL_2(IR_FLOAT, fn_addr(g, rt_d2f, P2(IR_FLOAT, IR_I64, IR_DOUBLE)), ir_CONST_I64(dt), d);
+}
+
+static ir_ref math2(gen *g, int fn, int dt, ir_ref a, ir_ref b)
+{
+	if (cc_mt(dt) != CC_MD) { a = ir_F2D(a); b = ir_F2D(b); }
+	return from_double(g, dt, ir_CALL_3(IR_DOUBLE, fn_addr(g, rt_dmath2, P3(IR_DOUBLE, IR_I64, IR_DOUBLE, IR_DOUBLE)), ir_CONST_I64(fn), a, b));
+}
+
 static ir_ref math1(gen *g, int fn, int dt, ir_ref a)
 {
+	if (fn >= CC_SIN) {
+		if (cc_mt(dt) != CC_MD) a = ir_F2D(a);
+		return from_double(g, dt, ir_CALL_2(IR_DOUBLE, fn_addr(g, rt_dmath1, P2(IR_DOUBLE, IR_I64, IR_DOUBLE)), ir_CONST_I64(fn), a));
+	}
 	if (cc_mt(dt) == CC_MD) {
 		void *f = fn == CC_FLOOR ? (void *)rt_floor : fn == CC_CEIL ? (void *)rt_ceil : fn == CC_ROUND ? (void *)rt_round : (void *)rt_sqrt;
 
@@ -312,6 +333,7 @@ static void lower(gen *g, const cc_ins *x)
 	case O_SEL: r = ir_COND(itype(f->rdt[x->r]), ir_NE(V[x->a], ir_CONST_I64(0)), V[x->b], V[x->c]); break;
 	case O_CONV: r = conv(g, x->adt, dt, V[x->a]); break;
 	case O_MATH1: r = math1(g, x->sub, dt, V[x->a]); break;
+	case O_MATH2: r = math2(g, x->sub, dt, V[x->a], V[x->b]); break;
 	case O_LOAD: r = load(g, dt, V[x->a]); break;
 	case O_STORE: store(g, dt, V[x->a], V[x->b]); break;
 	case O_PADD: r = ir_ADD_A(V[x->a], V[x->b]); break;
