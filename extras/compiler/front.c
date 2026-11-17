@@ -10,6 +10,7 @@
  * are weak and take the other operand's dtype; integers wrap. Anything outside the supported subset throws before the
  * code runs. */
 #include "front.h"
+#include "zarr.h"
 #include "zend_closures.h"
 #include "zend_exceptions.h"
 #include "zend_interfaces.h"
@@ -80,6 +81,7 @@ typedef struct {
 	int src;             /* index in k->src */
 	int dt, ndim;
 	int env;
+	int ak;              /* a PHP array: what it holds (AK_*); 0: a tensor or a string */
 } binding;
 
 typedef struct comp {
@@ -113,6 +115,9 @@ typedef struct comp {
 	/* user functions called (fid FN_COUNT + i) */
 	const zend_function *ufn[64];
 	int nufn;
+	/* arrays of ints or of floats that the code writes the other into: read as AK_NUM (by k->src index; kept
+	 * between rounds) */
+	uint8_t forcenum[256];
 } comp;
 
 static bool is_weak(int dt) { return dt <= BUFFERS_SCALAR_BOOL && dt >= BUFFERS_SCALAR_FLOAT; }
@@ -555,6 +560,159 @@ static int elem_addr(comp *c, int bi, int off)
 	return i->r;
 }
 
+/* ---- PHP arrays: zvals read and written in place ---- */
+
+/* pointers are read from zvals as integers of this dtype */
+#define PTR_INT (sizeof(void *) == 8 ? BUF_T_INT64 : BUF_T_UINT32)
+
+static int host_load(comp *c, int dt, int addr)
+{
+	cc_ins *i = emit(c, O_LOAD);
+
+	i->sub = 1;
+	i->dt = (int16_t)dt;
+	i->a = addr;
+	i->r = reg(c, dt);
+	return i->r;
+}
+
+static void host_store(comp *c, int dt, int addr, int val)
+{
+	cc_ins *i = emit(c, O_STORE);
+
+	i->sub = 1;
+	i->dt = (int16_t)dt;
+	i->a = addr;
+	i->b = val;
+}
+
+static int addr_plus(comp *c, int addr, int64_t k)
+{
+	int kr = const_reg(c, BUF_T_INT64, (uint64_t)k);
+	cc_ins *i = emit(c, O_PADD);
+
+	i->a = addr;
+	i->b = kr;
+	i->r = reg(c, CC_DT_PTR);
+	return i->r;
+}
+
+static int ibin_reg(comp *c, int op, int dt, int a, int b)
+{
+	cc_ins *i = emit(c, O_IBIN);
+
+	i->sub = (uint8_t)op;
+	i->dt = (int16_t)dt;
+	i->a = a;
+	i->b = b;
+	i->r = reg(c, dt);
+	return i->r;
+}
+
+/* a pointer read from memory at addr, as an Int64 offset from the address of binding bi's data */
+static int ptr_offset(comp *c, int bi, int addr)
+{
+	binding *b = &c->bind[bi];
+	int p = host_load(c, PTR_INT, addr), base = env_reg(c, b->env + 1 + 2 * b->ndim, BUF_T_INT64);
+
+	if (PTR_INT != BUF_T_INT64) {
+		cc_ins *i = emit(c, O_CONV);
+
+		i->adt = PTR_INT;
+		i->dt = BUF_T_INT64;
+		i->a = p;
+		i->r = reg(c, BUF_T_INT64);
+		p = i->r;
+	}
+	return ibin_reg(c, ZEND_SUB, BUF_T_INT64, p, base);
+}
+
+/* the zval at offset off of binding bi holds an array: the offset of that array's zvals */
+static int zarr_inner(comp *c, int bi, int off)
+{
+	int ht = ptr_offset(c, bi, elem_addr(c, bi, off));   /* its zend_array */
+
+	return ptr_offset(c, bi, elem_addr(c, bi, ibin_reg(c, ZEND_ADD, BUF_T_INT64, ht,
+		const_reg(c, BUF_T_INT64, (uint64_t)XtOffsetOf(zend_array, arPacked)))));
+}
+
+/* the value of the zval at addr, in an array of kind ak: a weak value, as PHP has it */
+static sval load_zval(comp *c, int ak, int addr)
+{
+	switch (ak) {
+	case AK_FLOAT: return s_num(BUFFERS_SCALAR_FLOAT, host_load(c, BUF_T_FLOAT64, addr));
+	case AK_BOOL: {
+		int t = host_load(c, BUF_T_UINT32, addr_plus(c, addr, XtOffsetOf(zval, u1.type_info)));
+
+		return s_num(BUFFERS_SCALAR_BOOL, cmp_reg(c, CC_EQ, BUF_T_UINT32, t, const_reg(c, BUF_T_UINT32, IS_TRUE)));
+	}
+	case AK_NUM: {   /* an int is read as a float */
+		int t = host_load(c, BUF_T_UINT32, addr_plus(c, addr, XtOffsetOf(zval, u1.type_info)));
+		int isd = cmp_reg(c, CC_EQ, BUF_T_UINT32, t, const_reg(c, BUF_T_UINT32, IS_DOUBLE));
+		int d = host_load(c, BUF_T_FLOAT64, addr);
+		sval l = conv(c, s_num(CC_PHPINT, host_load(c, CC_PHPINT, addr)), CC_PHPINT, BUF_T_FLOAT64);
+		cc_ins *i = emit(c, O_SEL);
+
+		i->a = isd;
+		i->b = d;
+		i->c = l.r;
+		i->r = reg(c, BUF_T_FLOAT64);
+		return s_num(BUFFERS_SCALAR_FLOAT, i->r);
+	}
+	}
+	return s_num(BUFFERS_SCALAR_INT, host_load(c, CC_PHPINT, addr));   /* AK_INT, AK_EMPTY */
+}
+
+/* v written into the zval at addr of binding bi, as PHP writes it (its type with it) */
+static void store_zval(comp *c, int bi, int addr, sval v)
+{
+	binding *b = &c->bind[bi];
+	int si = b->src;
+	bool isbool = v.dt == BUFFERS_SCALAR_BOOL || v.dt == BUF_T_BOOL, isint = !isbool && (v.dt == BUFFERS_SCALAR_INT || cc_int(v.dt));
+
+	if (b->ak == AK_BOOL) {
+		if (!isbool) { type_err(c, "writing %s into an array of bools", tname(v.dt)); return; }
+		{
+			sval t = conv(c, v, nat(v.dt), BUF_T_UINT32);
+			int tr = ibin_reg(c, ZEND_ADD, BUF_T_UINT32, materialize(c, t), const_reg(c, BUF_T_UINT32, IS_FALSE));
+
+			host_store(c, BUF_T_UINT32, addr_plus(c, addr, XtOffsetOf(zval, u1.type_info)), tr);
+		}
+		return;
+	}
+	if (isbool) { type_err(c, "writing a bool into an array of numbers"); return; }
+	if ((b->ak == AK_INT || b->ak == AK_EMPTY) && !isint) goto mixed;
+	if (b->ak == AK_FLOAT && isint) goto mixed;
+	if (isint) {
+		sval x = conv(c, v, nat(v.dt), CC_PHPINT);
+		int xr = materialize(c, x);
+
+		host_store(c, CC_PHPINT, addr, xr);
+		if (b->ak == AK_NUM) host_store(c, BUF_T_UINT32, addr_plus(c, addr, XtOffsetOf(zval, u1.type_info)), const_reg(c, BUF_T_UINT32, IS_LONG));
+	} else {
+		sval x = conv(c, v, nat(v.dt), BUF_T_FLOAT64);
+		int xr = materialize(c, x);
+
+		host_store(c, BUF_T_FLOAT64, addr, xr);
+		if (b->ak == AK_NUM) host_store(c, BUF_T_UINT32, addr_plus(c, addr, XtOffsetOf(zval, u1.type_info)), const_reg(c, BUF_T_UINT32, IS_DOUBLE));
+	}
+	return;
+mixed:   /* ints and floats: the array is read as AK_NUM, in another round */
+	if (si < 256) c->forcenum[si] = 1;
+	c->redo = true;
+}
+
+/* a copy of the array that view v belongs to is made (PHP's value semantics): the code may not write it */
+static void array_copied(comp *c, sval v)
+{
+	cc_src *s;
+
+	if (v.t != V_VIEW || !c->bind[v.n].ak) return;
+	s = &c->k->src[c->bind[v.n].src];
+	s->copied = 1;
+	if (s->written) type_err(c, "an array the code writes into is also copied here (assigned, passed by value, or iterated with foreach); write into it through one variable, with for and an index");
+}
+
 /* $view[$ix]: the offset of the next axis, after checking the index */
 static sval index_view(comp *c, sval view, sval ix, bool lvalue)
 {
@@ -570,7 +728,7 @@ static sval index_view(comp *c, sval view, sval ix, bool lvalue)
 	if (!is_weak(ix.dt)) ix = conv(c, ix, ix.dt, CC_PHPINT);
 	ix.dt = BUFFERS_SCALAR_INT;
 	len = env_reg(c, b->env + 1 + axis, CC_PHPINT);
-	stride = env_reg(c, b->env + 1 + b->ndim + axis, BUF_T_INT64);
+	stride = b->ak ? const_reg(c, BUF_T_INT64, sizeof(zval)) : env_reg(c, b->env + 1 + b->ndim + axis, BUF_T_INT64);
 	/* 0 <= ix < len (unsigned) */
 	{
 		int ixr = materialize(c, ix);
@@ -618,6 +776,8 @@ static sval index_view(comp *c, sval view, sval ix, bool lvalue)
 		r.n = view.n;
 		r.a = axis + 1;
 		r.r = off;
+		if (r.t == V_VIEW && b->ak) r.r = zarr_inner(c, view.n, off);
+		if (r.t == V_NUM && b->ak) return load_zval(c, b->ak, elem_addr(c, view.n, off));
 		if (r.t == V_NUM) {
 			int addr = elem_addr(c, view.n, off);
 
@@ -642,8 +802,15 @@ static void store_elem(comp *c, sval el, sval v)
 	cc_ins *i;
 
 	if (v.t != V_NUM) { unsupported(c, "storing this value in a tensor"); return; }
-	if (c->k->src[b->src].arr) { type_err(c, "writing into a PHP array: it is read as a copy; use a Buffers\\Tensor"); return; }
 	if (c->k->src[b->src].str) { type_err(c, "writing into a string: strings are read-only"); return; }
+	if (b->ak) {
+		cc_src *s = &c->k->src[b->src];
+
+		if (s->copied) { type_err(c, "an array the code writes into is also copied (assigned, passed by value, or iterated with foreach); write into it through one variable, with for and an index"); return; }
+		s->written = 1;
+		store_zval(c, el.n, elem_addr(c, el.n, el.r), v);
+		return;
+	}
 	/* as convert() converts */
 	v = conv(c, v, nat(v.dt), b->dt);
 	c->k->src[b->src].written = 1;
@@ -661,7 +828,10 @@ static sval load_elem(comp *c, sval el)
 {
 	binding *b = &c->bind[el.n];
 	int addr = elem_addr(c, el.n, el.r);
-	cc_ins *i = emit(c, O_LOAD);
+	cc_ins *i;
+
+	if (b->ak) return load_zval(c, b->ak, addr);
+	i = emit(c, O_LOAD);
 
 	i->dt = (int16_t)b->dt;
 	i->a = addr;
@@ -735,22 +905,53 @@ static sval env_value(comp *c, int kind, uint32_t index, zval *z, const char *wh
 		c->bind[c->nbind].dt = BUF_T_UINT8;
 		c->bind[c->nbind].ndim = 1;
 		c->bind[c->nbind].env = s->env;
+		c->bind[c->nbind].ak = 0;
 		memset(&r, 0, sizeof r);
 		r.t = V_VIEW;
 		r.n = c->nbind++;
 		r.r = -1;
 		return r;
 	}
-	case IS_ARRAY: case IS_OBJECT: {
+	case IS_ARRAY: {   /* its zvals, in place: a list of numbers or bools, or nested lists of equal lengths */
+		int64_t shape[ZA_MAX_NDIM];
+		unsigned seen = 0;
+		int ndim = za_ndim(z), ak;
+		sval r;
+
+		if (ndim > ZA_MAX_NDIM) return unsupported(c, "an array nested more than %d deep", ZA_MAX_NDIM);
+		if (za_check(z, 0, ndim, ZA_PEEK, shape, &seen) != 0 || (ak = za_kind(seen)) < 0) {
+			return type_err(c, "%s is not an array the code can read: a list (array_is_list()) of ints and floats, or of bools, or lists of such lists of equal lengths", what);
+		}
+		if (c->nbind == 64) return unsupported(c, "more than 64 tensors, strings and arrays");
+		si = add_src(c, kind, index);
+		if (ak == AK_EMPTY) ak = AK_INT;
+		if ((ak == AK_INT || ak == AK_FLOAT) && si < 256 && c->forcenum[si]) ak = AK_NUM;
+		s = &c->k->src[si];
+		s->tensor = 1;
+		s->arr = 1;
+		s->ak = (uint8_t)ak;
+		s->dt = (int16_t)(ak == AK_BOOL ? BUF_T_BOOL : ak == AK_INT ? CC_PHPINT : BUF_T_FLOAT64);
+		s->ndim = (uint8_t)ndim;
+		s->env = c->k->nenv;
+		c->k->nenv += 2 + 2 * ndim;
+		if (c->k->nenv > 256) return unsupported(c, "this many tensor axes");
+		c->bind[c->nbind].src = si;
+		c->bind[c->nbind].dt = s->dt;
+		c->bind[c->nbind].ndim = ndim;
+		c->bind[c->nbind].env = s->env;
+		c->bind[c->nbind].ak = ak;
+		memset(&r, 0, sizeof r);
+		r.t = V_VIEW;
+		r.n = c->nbind++;
+		r.r = -1;
+		return r;
+	}
+	case IS_OBJECT: {
 		zval t;
 		buf_view *v;
-		bool arr = Z_TYPE_P(z) == IS_ARRAY;
 
 		ZVAL_UNDEF(&t);
-		if (arr) {
-			zend_call_method_with_1_params(NULL, buf_ce_tensor, NULL, "fromarray", &t, z);
-			if (FAILED) return s_bad();
-		} else if (Z_OBJCE_P(z) == buf_ce_tensor) {
+		if (Z_OBJCE_P(z) == buf_ce_tensor) {
 			ZVAL_COPY(&t, z);
 		} else if (instanceof_function(Z_OBJCE_P(z), buf_ce_tensor_agg)) {
 			zend_call_method_with_0_params(Z_OBJ_P(z), Z_OBJCE_P(z), NULL, "gettensor", &t);
@@ -773,7 +974,6 @@ static sval env_value(comp *c, int kind, uint32_t index, zval *z, const char *wh
 			si = add_src(c, kind, index);
 			s = &c->k->src[si];
 			s->tensor = 1;
-			s->arr = arr;
 			s->dt = (int16_t)dt;
 			s->ndim = (uint8_t)ndim;
 			s->env = c->k->nenv;
@@ -783,6 +983,7 @@ static sval env_value(comp *c, int kind, uint32_t index, zval *z, const char *wh
 			c->bind[c->nbind].dt = dt;
 			c->bind[c->nbind].ndim = ndim;
 			c->bind[c->nbind].env = s->env;
+			c->bind[c->nbind].ak = 0;
 			{
 				sval r;
 
@@ -1789,6 +1990,7 @@ static bool run_func(comp *c, const zend_function *fn, const sval *args, int nar
 	joinpt *J = NULL, exitj;
 	pstate *s = NULL;   /* the state of the block being read */
 	bool ok = false;
+	uint8_t *byref = ecalloc((size_t)oa->last_var + 1, 1);   /* variables that are by-reference parameters or captures */
 	/* the caller's context */
 	const zend_op_array *s_oa = c->oa;
 	const zend_function *s_fn = c->fn;
@@ -1815,9 +2017,6 @@ static bool run_func(comp *c, const zend_function *fn, const sval *args, int nar
 		goto out;
 	}
 	if (oa->last_try_catch) { unsupported(c, "try/catch"); goto out; }
-	for (uint32_t i = 0; i < oa->num_args; i++) {
-		if (ZEND_ARG_SEND_MODE(&oa->arg_info[i])) { unsupported(c, "the by-reference parameter $%s", ZSTR_VAL(oa->arg_info[i].name)); goto out; }
-	}
 
 	/* blocks, and their reverse post-order */
 	memset(&cfg, 0, sizeof cfg);
@@ -1932,6 +2131,14 @@ static bool run_func(comp *c, const zend_function *fn, const sval *args, int nar
 				}
 				v = coerce_param(c, &oa->arg_info[i], v);
 				if (FAILED) goto out;
+				if (ZEND_ARG_SEND_MODE(&oa->arg_info[i])) {   /* by reference: an array or a tensor, written in place */
+					if (v.t != V_VIEW || c->k->src[c->bind[v.n].src].str) { unsupported(c, "the by-reference parameter $%s of this type (only arrays and tensors)", ZSTR_VAL(oa->arg_info[i].name)); goto out; }
+					if (!args) c->k->src[c->bind[v.n].src].byref = 1;
+					byref[i] = 1;
+				} else if (args) {
+					array_copied(c, v);   /* an array passed by value */
+					if (FAILED) goto out;
+				}
 				set_result(c, s, op, v);
 				break;
 			}
@@ -1944,9 +2151,18 @@ static bool run_func(comp *c, const zend_function *fn, const sval *args, int nar
 				if (args || fn != c->top) { unsupported(c, "static variables"); goto out; }
 				ht = ZEND_MAP_PTR_GET(fn->op_array.static_variables_ptr);
 				if (!ht) ht = fn->op_array.static_variables;
-				if (!ht || (op->extended_value & ZEND_BIND_REF)) { unsupported(c, "the by-reference capture of $%s", name); goto out; }
+				if (!ht) { unsupported(c, "the capture of $%s", name); goto out; }
 				z = (zval *)((char *)ht->arData + off);
-				if (Z_ISREF_P(z)) { unsupported(c, "the by-reference capture of $%s", name); goto out; }
+				if ((op->extended_value & ZEND_BIND_REF) || Z_ISREF_P(z)) {   /* an array or a tensor, written in place */
+					sval v = env_value(c, SRC_CAPTURE, off, z, "the captured variable");
+
+					if (FAILED) goto out;
+					if (v.t != V_VIEW || c->k->src[c->bind[v.n].src].str) { unsupported(c, "the by-reference capture of $%s of this type (only arrays and tensors)", name); goto out; }
+					c->k->src[c->bind[v.n].src].byref = 1;
+					byref[EX_VAR_TO_NUM(op->op1.var)] = 1;
+					*slot(c, s, op->op1.var) = v;
+					break;
+				}
 				*slot(c, s, op->op1.var) = env_value(c, SRC_CAPTURE, off, z, "the captured variable");
 				if (FAILED) goto out;
 				break;
@@ -2031,7 +2247,7 @@ static bool run_func(comp *c, const zend_function *fn, const sval *args, int nar
 				case V_ELEM: t = cc_float(c->bind[a.n].dt) ? MAY_BE_DOUBLE : c->bind[a.n].dt == BUF_T_BOOL ? MAY_BE_BOOL : MAY_BE_LONG; break;
 				case V_LIST: t = MAY_BE_ARRAY; break;
 				case V_CHAR: t = MAY_BE_STRING; break;
-				case V_VIEW: t = c->k->src[c->bind[a.n].src].str && a.a == 0 ? MAY_BE_STRING : MAY_BE_OBJECT; break;
+				case V_VIEW: t = c->k->src[c->bind[a.n].src].str && a.a == 0 ? MAY_BE_STRING : c->bind[a.n].ak ? MAY_BE_ARRAY : MAY_BE_OBJECT; break;
 				default: unsupported(c, "this type check"); goto out;
 				}
 				{
@@ -2100,9 +2316,12 @@ static bool run_func(comp *c, const zend_function *fn, const sval *args, int nar
 				sval v;
 
 				if (op->op1_type != IS_CV) { unsupported(c, "assigning to anything but a local variable"); goto out; }
+				if (byref[EX_VAR_TO_NUM(op->op1.var)]) { unsupported(c, "assigning to $%s, a by-reference parameter or capture (write its elements)", ZSTR_VAL(oa->vars[EX_VAR_TO_NUM(op->op1.var)])); goto out; }
 				v = operand(c, s, op, op->op2_type, op->op2);
 				if (FAILED) goto out;
 				if (v.t == V_ELEM) v = load_elem(c, v);
+				array_copied(c, v);
+				if (FAILED) goto out;
 				*slot(c, s, op->op1.var) = v;
 				set_result(c, s, op, v);
 				break;
@@ -2115,6 +2334,7 @@ static bool run_func(comp *c, const zend_function *fn, const sval *args, int nar
 				sval el = elem ? *target : s_bad();
 
 				if (!target || (op->op1_type == IS_VAR && !elem)) { unsupported(c, "assigning to anything but a local variable or a tensor element"); goto out; }
+				if (!elem && byref[EX_VAR_TO_NUM(op->op1.var)]) { unsupported(c, "assigning to $%s, a by-reference parameter or capture (write its elements)", ZSTR_VAL(oa->vars[EX_VAR_TO_NUM(op->op1.var)])); goto out; }
 				cur = elem ? load_elem(c, el) : num_operand(c, s, op, op->op1_type, op->op1);
 				if (FAILED) goto out;
 				if (op->opcode == ZEND_ASSIGN_OP) {
@@ -2281,7 +2501,7 @@ static bool run_func(comp *c, const zend_function *fn, const sval *args, int nar
 				break;
 			}
 			case ZEND_SEND_VAL: case ZEND_SEND_VAR: case ZEND_SEND_VAL_EX: case ZEND_SEND_VAR_EX: case ZEND_SEND_VAR_NO_REF_EX:
-			case ZEND_SEND_FUNC_ARG: case ZEND_SEND_VAR_NO_REF: {
+			case ZEND_SEND_FUNC_ARG: case ZEND_SEND_VAR_NO_REF: case ZEND_SEND_REF: {
 				int pos;
 				sval v;
 
@@ -2357,6 +2577,8 @@ static bool run_func(comp *c, const zend_function *fn, const sval *args, int nar
 				if (FAILED) goto out;
 				it.t = V_ITER;
 				if (a.t == V_VIEW && !c->k->src[c->bind[a.n].src].str && a.a < c->bind[a.n].ndim) {
+					array_copied(c, a);   /* foreach reads a copy of an array */
+					if (FAILED) goto out;
 					it.dt = 0;
 					it.n = a.n;
 					it.a = a.a;
@@ -2587,6 +2809,7 @@ static bool run_func(comp *c, const zend_function *fn, const sval *args, int nar
 	}
 	ok = true;
 out:
+	efree(byref);
 	if (s) efree(s);
 	if (J) {
 		for (int b = 0; b < cfg.blocks_count; b++) {
@@ -2707,8 +2930,10 @@ cc_kernel *cc_compile(zend_object *closure, zval *args, uint32_t nargs)
 					}
 					k->retdt[e] = x.dt;
 				}
+			} else if (ret.t == V_VIEW && c.bind[ret.n].ak && ret.a == 0) {
+				k->ret_src = c.bind[ret.n].src + 1;
 			} else if (ret.t == V_VIEW) {
-				unsupported(&c, c.k->src[c.bind[ret.n].src].str ? "returning a string" : "returning a tensor");
+				unsupported(&c, c.k->src[c.bind[ret.n].src].str ? "returning a string" : c.bind[ret.n].ak ? "returning an array from outside" : "returning a tensor");
 			} else if (ret.t != V_NULL) {
 				unsupported(&c, "returning this value");
 			}

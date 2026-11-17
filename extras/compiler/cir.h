@@ -23,8 +23,8 @@ enum {
 	O_CONV,      /* r = a converted from adt to dt: cc_conv() */
 	O_MATH1,     /* r = sub(a) for a float dt: cc_math1() */
 	O_MATH2,     /* r = sub(a, b) for a float dt: cc_math2() */
-	O_LOAD,      /* r = the element of dtype dt at address a */
-	O_STORE,     /* the element of dtype dt at address a = b */
+	O_LOAD,      /* r = the element of dtype dt at address a (sub 1: in this machine's byte order, as in a zval) */
+	O_STORE,     /* the element of dtype dt at address a = b (sub 1: as O_LOAD) */
 	O_PADD,      /* r (an address) = a + b (Int64 bytes) */
 	O_CALL,      /* r = function k.i (args: the function's pool, args .. args + nargs); may set ctx->err */
 	O_INTR,      /* a loop's back edge: PHP's interrupts (time limit, signals); may set ctx->err */

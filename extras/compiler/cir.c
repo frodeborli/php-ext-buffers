@@ -161,8 +161,8 @@ void cc_interp(const cc_func *const *fns, int fi, cc_ctx *ctx, cc_val *ret)
 			case O_CONV: R[x->r] = cc_conv(x->adt, x->dt, R[x->a]); break;
 			case O_MATH1: R[x->r] = cc_math1(x->sub, x->dt, R[x->a]); break;
 			case O_MATH2: R[x->r] = cc_math2(x->sub, x->dt, R[x->a], R[x->b]); break;
-			case O_LOAD: R[x->r] = cc_load(x->dt, R[x->a].p); break;
-			case O_STORE: cc_store(x->dt, R[x->a].p, R[x->b]); break;
+			case O_LOAD: R[x->r] = x->sub ? cc_load_host(x->dt, R[x->a].p) : cc_load(x->dt, R[x->a].p); break;
+			case O_STORE: if (x->sub) cc_store_host(x->dt, R[x->a].p, R[x->b]); else cc_store(x->dt, R[x->a].p, R[x->b]); break;
 			case O_PADD: R[x->r].p = (uint8_t *)R[x->a].p + R[x->b].s; break;
 			case O_CALL: {
 				cc_val *args = emalloc(sizeof(cc_val) * (size_t)(x->nargs ? x->nargs : 1)), *saved = ctx->args, rv;

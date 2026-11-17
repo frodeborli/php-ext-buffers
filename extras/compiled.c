@@ -9,12 +9,14 @@
 #include "zend_exceptions.h"
 #include "zend_interfaces.h"
 #include "compiler/native.h"
+#include "compiler/zarr.h"
 #include "extras.h"
 
 #define MAX_SPECS 16
 
 typedef struct {
 	zval closure;
+	zend_function *call;   /* what a call of the object runs (call_fn()) */
 	zend_object std;
 } buf_compiled;
 
@@ -57,8 +59,70 @@ static cc_entry *cache_entry(const zend_function *fn, const zend_class_entry *ce
 	return e;
 }
 
+/* What $compiled(...) and ->__invoke() run: __invoke, with the closure's parameters as references where the closure takes
+ * them by reference, then any others by value. One per function code for the rest of the request, not part of the
+ * object: the engine reads the function after a call has released the object. */
+typedef struct cc_callfn {
+	const zend_op *code;
+	zend_function fn;
+	zend_internal_arg_info *ai;
+	zval keep;   /* (as cc_entry.keep) */
+	struct cc_callfn *next;
+} cc_callfn;
+
+ZEND_TLS cc_callfn *cc_calls;
+
+ZEND_METHOD(Buffers_Compiled, __invoke);
+static zend_class_entry *buf_ce_compiled;
+
+static zend_function *call_fn(const zend_function *f)
+{
+	cc_callfn *c;
+	uint32_t n = f->common.num_args;
+	zend_internal_function *cf;
+
+	for (c = cc_calls; c; c = c->next) {
+		if (c->code == f->op_array.opcodes) return &c->fn;
+	}
+	c = ecalloc(1, sizeof *c);
+	c->code = f->op_array.opcodes;
+	ZVAL_UNDEF(&c->keep);
+	if (f->common.fn_flags & ZEND_ACC_CLOSURE) zend_create_closure(&c->keep, (zend_function *)f, f->common.scope, f->common.scope, NULL);
+	c->ai = ecalloc(n + 2, sizeof *c->ai);
+	c->ai[0].type = (zend_type)ZEND_TYPE_INIT_CODE(IS_MIXED, 0, 0);   /* (the return) */
+	for (uint32_t i = 0; i < n; i++) {
+		uint32_t mode = ZEND_ARG_SEND_MODE(&f->common.arg_info[i]);
+
+		c->ai[1 + i].name = ZSTR_VAL(f->common.arg_info[i].name);
+		c->ai[1 + i].type = (zend_type)ZEND_TYPE_INIT_CODE(IS_MIXED, 0, _ZEND_ARG_INFO_FLAGS(mode, 0, 0));
+		if (mode && i < MAX_ARG_FLAG_NUM) ZEND_SET_ARG_FLAG(&c->fn, i + 1, mode);
+	}
+	c->ai[1 + n].name = "args";
+	c->ai[1 + n].type = (zend_type)ZEND_TYPE_INIT_CODE(IS_MIXED, 0, _ZEND_ARG_INFO_FLAGS(0, 1, 0));
+	cf = &c->fn.internal_function;
+	cf->type = ZEND_INTERNAL_FUNCTION;
+	cf->fn_flags = ZEND_ACC_PUBLIC | ZEND_ACC_VARIADIC;
+	cf->function_name = ZSTR_KNOWN(ZEND_STR_MAGIC_INVOKE);
+	cf->scope = buf_ce_compiled;
+	cf->num_args = n;
+	cf->required_num_args = 0;
+	cf->arg_info = c->ai + 1;
+	cf->handler = zim_Buffers_Compiled___invoke;
+	c->next = cc_calls;
+	cc_calls = c;
+	return &c->fn;
+}
+
 void buf_extras_rshutdown(void)
 {
+	while (cc_calls) {
+		cc_callfn *c = cc_calls;
+
+		cc_calls = c->next;
+		efree(c->ai);
+		zval_ptr_dtor(&c->keep);
+		efree(c);
+	}
 	for (int i = 0; i < cc_ncache; i++) {
 		for (int k = 0; k < cc_cache[i].nspec; k++) cc_kernel_free(cc_cache[i].spec[k]);
 		zval_ptr_dtor(&cc_cache[i].keep);
@@ -68,7 +132,6 @@ void buf_extras_rshutdown(void)
 	cc_ncache = cc_ccache = 0;
 }
 
-static zend_class_entry *buf_ce_compiled;
 static zend_object_handlers compiled_handlers;
 
 static inline buf_compiled *compiled_from(zend_object *o) { return (buf_compiled *)((char *)o - XtOffsetOf(buf_compiled, std)); }
@@ -81,6 +144,7 @@ static zend_object *compiled_new(zend_class_entry *ce)
 	object_properties_init(&c->std, ce);
 	c->std.handlers = &compiled_handlers;
 	ZVAL_UNDEF(&c->closure);
+	c->call = NULL;
 	return &c->std;
 }
 
@@ -135,14 +199,10 @@ static int scalar_type(zval *z)
 }
 
 /* the tensor a source holds for this call (a new reference in *hold), or NULL if it is not a tensor */
-static buf_view *src_tensor(zval *z, bool arr, zval *hold)
+static buf_view *src_tensor(zval *z, zval *hold)
 {
 	ZVAL_UNDEF(hold);
-	if (arr) {
-		if (Z_TYPE_P(z) != IS_ARRAY) return NULL;
-		zend_call_method_with_1_params(NULL, buf_ce_tensor, NULL, "fromarray", hold, z);
-		if (EG(exception)) { zend_clear_exception(); return NULL; }
-	} else if (Z_TYPE_P(z) == IS_OBJECT && Z_OBJCE_P(z) == buf_ce_tensor) {
+	if (Z_TYPE_P(z) == IS_OBJECT && Z_OBJCE_P(z) == buf_ce_tensor) {
 		ZVAL_COPY(hold, z);
 	} else if (Z_TYPE_P(z) == IS_OBJECT && instanceof_function(Z_OBJCE_P(z), buf_ce_tensor_agg)) {
 		zend_call_method_with_0_params(Z_OBJ_P(z), Z_OBJCE_P(z), NULL, "gettensor", hold);
@@ -154,8 +214,53 @@ static buf_view *src_tensor(zval *z, bool arr, zval *hold)
 	return buf_view_from(Z_OBJ_P(hold));
 }
 
+/* a PHP array of a source (z: where it is) for this call: checked against what the kernel reads, and separated first if
+ * the code writes into it. Its zvals are read in place */
+static bool bind_array(const cc_src *s, zval *z, cc_val *env, zval *hold, zval **where)
+{
+	int64_t shape[ZA_MAX_NDIM];
+	unsigned seen = 0;
+	int r, ak;
+
+	if (s->written) {
+		if (s->byref || s->kind == SRC_PROP) {
+			ZVAL_DEREF(z);   /* the array itself */
+		} else if (s->kind == SRC_ARG && !Z_ISREF_P(z)) {
+			/* the call's own copy */
+		} else {   /* a capture by value, or an argument by value given as a reference: a copy for this call */
+			ZVAL_DEREF(z);
+			ZVAL_COPY(hold, z);
+			z = hold;
+		}
+		r = za_check(z, 0, s->ndim, ZA_WRITE, shape, &seen);
+	} else {
+		ZVAL_DEREF(z);
+		r = za_check(z, 0, s->ndim, ZA_READ, shape, &seen);
+		if (r == 1) {   /* a list that is not packed: a packed copy for this call */
+			ZVAL_COPY(hold, z);
+			z = hold;
+			seen = 0;
+			r = za_check(z, 0, s->ndim, ZA_WRITE, shape, &seen);
+		}
+	}
+	if (r != 0 || (ak = za_kind(seen)) < 0) return false;
+	*where = z;
+	if (ak != AK_EMPTY && ak != s->ak && !(s->ak == AK_NUM && (ak == AK_INT || ak == AK_FLOAT))) return false;
+	{
+		zval *a = Z_ARRVAL_P(z)->nNumUsed ? Z_ARRVAL_P(z)->arPacked : NULL;
+
+		env[s->env].p = (uint8_t *)a;
+		for (int d = 0; d < s->ndim; d++) {
+			env[s->env + 1 + d].s = shape[d];
+			env[s->env + 1 + s->ndim + d].s = (int64_t)sizeof(zval);
+		}
+		env[s->env + 1 + 2 * s->ndim].s = (int64_t)(uintptr_t)a;
+	}
+	return true;
+}
+
 /* fills env and args from this call's values if they have the kernel's types; false if they do not (or after throwing) */
-static bool cc_bind(buf_compiled *bc, cc_kernel *k, zval *args, cc_val *env, cc_val *argv, zval *holds, bool *thrown)
+static bool cc_bind(buf_compiled *bc, cc_kernel *k, zval *args, cc_val *env, cc_val *argv, zval *holds, zval **where, bool *thrown)
 {
 	*thrown = false;
 	for (int i = 0; i < k->nsrc; i++) {
@@ -163,6 +268,10 @@ static bool cc_bind(buf_compiled *bc, cc_kernel *k, zval *args, cc_val *env, cc_
 		zval *z = src_zval(bc, s, args);
 
 		ZVAL_UNDEF(&holds[i]);
+		if (s->arr) {
+			if (!bind_array(s, z, env, &holds[i], &where[i])) return false;
+			continue;
+		}
 		ZVAL_DEREF(z);
 		if (!s->tensor) {
 			cc_val v;
@@ -189,7 +298,7 @@ static bool cc_bind(buf_compiled *bc, cc_kernel *k, zval *args, cc_val *env, cc_
 			continue;
 		}
 		{
-			buf_view *v = src_tensor(z, s->arr, &holds[i]);
+			buf_view *v = src_tensor(z, &holds[i]);
 
 			if (EG(exception)) { *thrown = true; return false; }
 			if (!v || v->dt != s->dt || v->ndim != s->ndim) return false;
@@ -239,6 +348,26 @@ static void ret_zval(int dt, cc_val v, zval *z)
 	ZVAL_LONG(z, (zend_long)v.s);
 }
 
+static zend_result compiled_get_closure(zend_object *obj, zend_class_entry **ce_ptr, zend_function **fptr_ptr, zend_object **obj_ptr, bool check_only)
+{
+	buf_compiled *bc = compiled_from(obj);
+
+	if (Z_TYPE(bc->closure) == IS_UNDEF) return zend_std_get_closure(obj, ce_ptr, fptr_ptr, obj_ptr, check_only);
+	*ce_ptr = obj->ce;
+	*fptr_ptr = bc->call;
+	*obj_ptr = obj;
+	return SUCCESS;
+}
+
+/* ->__invoke() too takes the closure's by-reference parameters */
+static zend_function *compiled_get_method(zend_object **obj, zend_string *name, const zval *key)
+{
+	buf_compiled *bc = compiled_from(*obj);
+
+	if (Z_TYPE(bc->closure) != IS_UNDEF && zend_string_equals_literal_ci(name, "__invoke")) return bc->call;
+	return zend_std_get_method(obj, name, key);
+}
+
 ZEND_METHOD(Buffers_Compiled, __construct)
 {
 	zval *fn;
@@ -256,6 +385,7 @@ ZEND_METHOD(Buffers_Compiled, __construct)
 		RETURN_THROWS();
 	}
 	ZVAL_COPY(&bc->closure, fn);
+	bc->call = call_fn(zend_get_closure_method_def(Z_OBJ_P(fn)));
 }
 
 ZEND_METHOD(Buffers_Compiled, __invoke)
@@ -265,6 +395,7 @@ ZEND_METHOD(Buffers_Compiled, __invoke)
 	buf_compiled *bc = compiled_from(Z_OBJ_P(ZEND_THIS));
 	cc_kernel *k = NULL;
 	cc_val *env = NULL, *argv = NULL, rets[CC_MAX_RET];
+	zval **where = NULL;
 	cc_ctx ctx;
 	bool thrown = false;
 	const zend_function *fn;
@@ -289,15 +420,18 @@ ZEND_METHOD(Buffers_Compiled, __invoke)
 
 			env = ecalloc((size_t)c->nenv + 1, sizeof(cc_val));
 			holds = ecalloc((size_t)c->nsrc + 1, sizeof(zval));
-			if (cc_bind(bc, c, args, env, argv, holds, &thrown)) {
+			where = ecalloc((size_t)c->nsrc + 1, sizeof(zval *));
+			if (cc_bind(bc, c, args, env, argv, holds, where, &thrown)) {
 				k = c;
 				break;
 			}
 			for (int h = 0; h < c->nsrc; h++) zval_ptr_dtor(&holds[h]);
 			efree(holds);
 			efree(env);
+			efree(where);
 			holds = NULL;
 			env = NULL;
+			where = NULL;
 			if (thrown) goto done;
 		}
 		if (!k) {
@@ -315,7 +449,8 @@ ZEND_METHOD(Buffers_Compiled, __invoke)
 			e->spec[e->nspec++] = k;
 			env = ecalloc((size_t)k->nenv + 1, sizeof(cc_val));
 			holds = ecalloc((size_t)k->nsrc + 1, sizeof(zval));
-			if (!cc_bind(bc, k, args, env, argv, holds, &thrown)) {
+			where = ecalloc((size_t)k->nsrc + 1, sizeof(zval *));
+			if (!cc_bind(bc, k, args, env, argv, holds, where, &thrown)) {
 				if (!thrown) zend_throw_error(NULL, "Buffers\\Compiled: the values changed while compiling");
 				goto done;
 			}
@@ -345,6 +480,8 @@ ZEND_METHOD(Buffers_Compiled, __invoke)
 		}
 	} else if (k->nret) {
 		ret_zval(k->retdt[0], rets[0], return_value);
+	} else if (k->ret_src) {
+		ZVAL_COPY(return_value, where[k->ret_src - 1]);
 	}
 done:
 	if (holds) {
@@ -352,6 +489,7 @@ done:
 		efree(holds);
 	}
 	if (env) efree(env);
+	if (where) efree(where);
 	efree(argv);
 }
 
@@ -382,4 +520,6 @@ void buf_extras_minit(void)
 	compiled_handlers.free_obj = compiled_free;
 	compiled_handlers.get_gc = compiled_gc;
 	compiled_handlers.clone_obj = NULL;
+	compiled_handlers.get_closure = compiled_get_closure;
+	compiled_handlers.get_method = compiled_get_method;
 }

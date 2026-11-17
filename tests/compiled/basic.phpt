@@ -63,7 +63,7 @@ show('Float16 rounds after every operation', function () {
 });
 show('a literal array, indexed by a variable', fn() => (new Compiled(function () { $a = [1, 2.5, 3]; $s = 0; for ($i = 0; $i < count($a); $i++) $s += $a[$i]; return $s; }))());
 $stops = [[0.0, 10], [0.5, 20]];
-show('a captured array is read as Tensor::fromArray()', fn() => (new Compiled(fn() => [$stops[1][0], $stops[0][1], count($stops)]))());
+show('a captured array of lists of ints and floats: read as floats', fn() => (new Compiled(fn() => [$stops[1][0], $stops[0][1], count($stops)]))());
 show('captured values are read at every call', function () {
     $k = 2; $c = new Compiled(fn() => $k * 10);
     $k = 3; $d = new Compiled(fn() => $k * 10);
@@ -93,7 +93,7 @@ echo "-- null, strings, union types\n";
 $k = function (?string $mask, int $n) { $s = 0; for ($i = 0; $i < $n; $i++) { $m = $mask === null ? 255 : \ord($mask[$i]); $s += $m; } return [$s, is_null($mask), $mask === null ? -1 : strlen($mask)]; };
 show('a string\'s bytes, and null: as PHP', fn() => [(new Compiled($k))("\x01\x02\xff", 3), (new Compiled($k))(null, 3), $k("\x01\x02\xff", 3), $k(null, 3)]);
 show('array|Tensor parameter', fn() => (new Compiled(function (array|Tensor $p) { $s = 0; for ($i = 0; $i < count($p); $i++) $s += $p[$i]; return $s; }))(Tensor::fromArray([4, 5], DType::Int8)));
-show('writing into a captured PHP array', function () { $a = [1, 2]; return (new Compiled(function () use ($a) { $a[0] = 5; }))(); });
+show('writing into a captured PHP array: a copy for the call', function () { $a = [1, 2]; return [(new Compiled(function () use ($a) { $a[0] = 5; return $a[0]; }))(), $a]; });
 show('writing into a string', function () { $s = 'ab'; return (new Compiled(function () use ($s) { $s[0] = 'c'; }))(); });
 
 echo "-- foreach\n";
@@ -176,7 +176,7 @@ a write converts as convert(): 70000 into Int16 wraps, a float truncates: [[9,10
 tensor parameter, writes visible to later reads: [1,2.5,5.5,11.5] Float32
 Float16 rounds after every operation: [1,1] Float16
 a literal array, indexed by a variable: 6.5
-a captured array is read as Tensor::fromArray(): array (
+a captured array of lists of ints and floats: read as floats: array (
   0 => 0.5,
   1 => 10.0,
   2 => 2,
@@ -225,7 +225,14 @@ a string's bytes, and null: as PHP: array (
   ),
 )
 array|Tensor parameter: 9
-writing into a captured PHP array: TypeError: Buffers\Compiled: writing into a PHP array: it is read as a copy; use a Buffers\Tensor (line 90)
+writing into a captured PHP array: a copy for the call: array (
+  0 => 5,
+  1 => 
+  array (
+    0 => 1,
+    1 => 2,
+  ),
+)
 writing into a string: ValueError: Buffers\Compiled: a constant of type string is not supported (line 91)
 -- foreach
 over a tensor's rows and their elements, keys: array (

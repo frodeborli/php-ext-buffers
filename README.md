@@ -438,8 +438,10 @@ $img = new Compiled(function (Tensor $px) use ($gain) {   // captured values and
 });
 ```
 
-* Parameters `int`, `float`, `bool`, `Tensor` (or untyped); captured `int`/`float`/`bool` values, tensors and arrays of numbers;
-  declared properties of `$this`; constants. The first call with new types compiles the closure for them; later calls reuse it.
+* Parameters `int`, `float`, `bool`, `string`, `array`, `Tensor` (or untyped), captured values and declared properties of
+  `$this` of these types; constants. PHP arrays (lists of numbers or bools, and lists of such lists) are read and written
+  in place, as PHP has them, also by reference (`array &$a`). The first call with new types compiles the closure for them;
+  later calls reuse it.
 * Types are fixed before the code runs: elements have their tensor's dtype, PHP scalars are weak, integers wrap.
 * Errors (`%` by zero, an index out of range, ...) are raised where PHP raises them, on the paths the code takes.
 * Machine code on x86-64 and AArch64 (IR, as PHP's JIT); an interpreter of the same operations elsewhere. Every operation
@@ -453,6 +455,10 @@ written into a tensor (an array) that exists:
 | `$d + ($s - $d) * $k * 0.5`, `Float32` | 1.14 | 0.67 | 14.8 |
 | `($d * (255 - $k) + $s * $k) >> 8`, `Int32` | 1.22 | 1.66 | 14.7 |
 | `$k > 0 ? sqrt($s * $d) * $k + $d * (1 - $k) : $d`, `Float32` | 1.44 | — | 14.7 |
+
+The same `Compiled` loops over PHP arrays (`array $d, array $s, array &$out`, same CPU): 4.64 and 5.44 ns, against 15.7
+and 16.7 for the PHP loop with the tracing JIT. Of that, 0.81 ns is the check of the three arrays at the call (each element's
+type is read once); the rest is mostly memory, since a PHP array takes 16 bytes per element.
 
 Compiled code computes one element at a time: a short expression over whole tensors is faster with the operators, whose
 loops are vectorized. The first call with new types compiles the closure: 6 µs for `fn($a, $b) => $a * $b + 1`, 16 µs for a

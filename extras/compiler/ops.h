@@ -339,4 +339,27 @@ static inline void cc_store(int dt, uint8_t *p, cc_val v)
 	}
 }
 
+/* values in this machine's own byte order (zvals): Int32, UInt32, Int64, Float64 */
+static inline cc_val cc_load_host(int dt, const uint8_t *p)
+{
+	cc_val r;
+
+	switch (dt) {
+	case BUF_T_INT32: { int32_t v; memcpy(&v, p, 4); r.s = v; break; }
+	case BUF_T_UINT32: { uint32_t v; memcpy(&v, p, 4); r.i = v; break; }
+	case BUF_T_INT64: memcpy(&r.s, p, 8); break;
+	default: memcpy(&r.d, p, 8);
+	}
+	return r;
+}
+
+static inline void cc_store_host(int dt, uint8_t *p, cc_val v)
+{
+	switch (dt) {
+	case BUF_T_INT32: case BUF_T_UINT32: { uint32_t w = (uint32_t)v.i; memcpy(p, &w, 4); break; }
+	case BUF_T_INT64: memcpy(p, &v.s, 8); break;
+	default: memcpy(p, &v.d, 8);
+	}
+}
+
 #endif

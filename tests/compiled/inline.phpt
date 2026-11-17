@@ -108,7 +108,7 @@ assigning a property: ValueError: Buffers\Compiled: writing to a property is not
 returning a string property: ValueError: Buffers\Compiled: returning a string is not supported (line 0)
 an internal function: ValueError: Buffers\Compiled: the function mt_rand() is not supported (line 72)
 a string: ValueError: Buffers\Compiled: a constant of type string is not supported (line 73)
-by-reference capture: ValueError: Buffers\Compiled: the by-reference capture of $n is not supported (line 74)
+by-reference capture: ValueError: Buffers\Compiled: the by-reference capture of $n of this type (only arrays and tensors) is not supported (line 74)
 a generator: ValueError: Buffers\Compiled: a generator is not supported (line 75)
 try/catch: ValueError: Buffers\Compiled: try/catch is not supported (line 76)
 Bool and a number: TypeError: Buffers\Compiled: Unsupported operand types for +: bool and int (line 77)

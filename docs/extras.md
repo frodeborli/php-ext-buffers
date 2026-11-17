@@ -58,10 +58,11 @@ The code computes with numbers: values of a dtype with arithmetic (`Bool`, the i
 ## What the code may contain
 
 * Parameters of type `int`, `float`, `bool`, `string`, `array`, `Buffers\Tensor`, unions and nullable types of these, or no type
-  (the argument's type). Default values.
+  (the argument's type). Default values. By-reference parameters (`array &$a`) and captures (`use (&$a)`) of arrays and
+  tensors.
 * Local variables, assignments and compound assignments, `++` and `--`.
 * `if`/`elseif`/`else`, `for`, `while`, `do`/`while`, `foreach` (over a tensor's first axis: its elements, or views of its
-  rows; over an array of fixed length; with keys; not by reference), `break`, `continue`, `return`.
+  rows; over an array; with keys; not by reference), `break`, `continue`, `return`.
 * `+ - * / % ** << >> & | ^ ~`, comparisons `== != === !== < <= > >=` (`===` is `==` between numbers), `?:`, `?:` without
   the middle, `&&`, `||`, `!`, `xor`, casts, with the operators' rules (arithmetic.md).
 * `abs`, `floor`, `ceil`, `round` (no precision argument), `sqrt`, `min`, `max`, `intdiv`, `fmod`, `is_nan`, `is_finite`,
@@ -88,8 +89,10 @@ The code computes with numbers: values of a dtype with arithmetic (`Bool`, the i
 * Tensors: below.
 
 Everything else is a `ValueError` (unsupported construct) or `TypeError` (types) when the code is compiled, before any of
-it runs: other internal functions, instance methods, strings made or changed in the code, arrays with keys, assignments to properties, `foreach` by reference, `switch`, `match`, `try`, generators, by-reference parameters or captures, variadic parameters,
-named arguments, and values of other types.
+it runs: other internal functions, instance methods, strings made or changed in the code, arrays with keys, appending to
+an array, assignments to properties, `foreach` by reference, `switch`, `match`, `try`, generators, by-reference
+parameters and captures of other types, assigning to a by-reference variable, variadic parameters, named arguments, and
+values of other types.
 
 ## Tensors
 
@@ -117,13 +120,32 @@ that changes from one call to the next does not compile the closure again.
 
 * `int`, `float`, `bool`: weak values (above).
 * A tensor, or an object implementing `TensorAggregate`.
-* A PHP array of numbers, read as `Tensor::fromArray()` reads it: all `int`s give `Int64`, any `float` gives `Float64`, all
-  `bool`s give `Bool`; nested arrays give more axes. It is copied at every call, so writing into it is a `TypeError`.
+* A PHP array: below.
 * A string (its bytes), or `null`.
 * A property must be declared, readable from the closure's scope, without hooks, and initialized; it is read, never
   written (writing into a tensor it holds is allowed).
 
 Assigning to a captured variable changes the closure's local copy only, as in PHP.
+
+## PHP arrays
+
+An array from outside (an argument, a captured variable, a property) is read and written in place, in PHP's own
+storage. It must be a list (`array_is_list()`) of `int`s and `float`s, or of `bool`s; or a list of such lists, all of the
+same length, which gives more axes (`$m[$y][$x]`). Each call checks this before the code runs (it reads the type of every
+element once); anything else is a `TypeError`.
+
+* An element is read as PHP has it: a weak `int`, `float` or `bool`. In a list that holds both `int`s and `float`s,
+  every element is read as a `float`.
+* `$a[$i] = $v`, `$a[$i] += $v`, `$a[$i]++` write an element as PHP does: an `int` stays an `int` and a `float` a
+  `float`, also in a list of the other type; a `bool` only into a list of `bool`s.
+* `$a[$i]` with `$i` outside `0 .. count($a) - 1` is a `ValueError` (PHP warns and gives `null`, or adds a key).
+  `count($a)` and `foreach` work as for tensors.
+* The array is PHP's value: an array the code writes into is separated first if it is shared, as PHP does before a
+  write. A parameter by value and a captured variable by value are the call's own copy; a by-reference parameter or
+  capture, and a property of `$this`, are written where they are. The code may write into an array only through one
+  variable: an array that is written and also assigned to another variable, passed by value or iterated with `foreach`
+  is a `TypeError`, since PHP would copy it there.
+* An array the code received can be returned (`return $a;`), with what the code wrote into it.
 
 ## Errors
 
@@ -136,7 +158,7 @@ signals).
 ## The returned value
 
 A number (an `int` for integer dtypes and `int`, a `float` for float dtypes and `float`, a `bool` for `Bool` and `bool`),
-an array of numbers, or nothing (`null`). All `return` statements must give values of a common type, or arrays of the
+an array of numbers, an array from outside, or nothing (`null`). All `return` statements must give values of a common type, or arrays of the
 same length.
 
 ## Running
