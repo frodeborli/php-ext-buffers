@@ -45,10 +45,15 @@
 
 /* ---- nodes of the expression graph ---- */
 
-enum { NK_CONST, NK_INPUT, NK_COORD, NK_BIN, NK_CMP, NK_TOBOOL, NK_NOT, NK_BWNOT, NK_CAST, NK_SELECT, NK_FN1, NK_FN2, NK_GATHER };
+enum { NK_CONST, NK_INPUT, NK_COORD, NK_BIN, NK_CMP, NK_TOBOOL, NK_NOT, NK_BWNOT, NK_CAST, NK_SELECT, NK_FN1, NK_FN2, NK_GATHER,
+	NK_ERRS,      /* Bool 0; the error codes of a (the errors so far on a path), then b's */
+	NK_WITHERR,   /* the value of b, with the error codes of a first */
+	NK_FAILC,     /* an operation on constants that failed: 0, with its error (k.i) in every element */
+	NK_NOERR      /* the value of a without its errors: a condition as a path predicate (its errors are the path's) */
+};
 enum { FN_ABS, FN_FLOOR, FN_CEIL, FN_ROUND, FN_SQRT, FN_ISNAN, FN_ISFINITE, FN_ISINF, FN_MIN, FN_MAX, FN_INTDIV, FN_FMOD, FN_COUNT };
 enum { CMP_EQ, CMP_NE, CMP_LT, CMP_LE };
-enum { E_OK, E_MOD0, E_SHIFTNEG, E_POWNEG, E_DIV0, E_RANGE };
+enum { E_OK, E_MOD0, E_SHIFTNEG, E_POWNEG, E_DIV0, E_RANGE, E_CUSTOM = 16 };   /* E_CUSTOM + i: comp.ferr[i] */
 enum { RC_I32, RC_I64, RC_F32, RC_F64 };   /* computation representations, see the evaluator */
 
 static const char *const fn_names[FN_COUNT] = {
@@ -64,6 +69,8 @@ typedef struct {
 	int slot;               /* NK_INPUT: input; NK_COORD: axis; NK_GATHER: capture */
 	int64_t off;            /* NK_INPUT: byte offset of an array parameter's element */
 	bool fails;             /* carries per-element error codes */
+	bool owns;              /* can raise an error of its own (not only pass on its operands') */
+	bool ealias;            /* shares the error codes of the operand they come from (no array of its own) */
 	bool live;
 	int last;               /* the last node that reads it */
 	int reg, ereg;
@@ -77,8 +84,12 @@ typedef struct {
 	int pred;               /* Bool node: when this path is taken; -1 always */
 	int depth;
 	int fid[FR_DEPTH], nargs[FR_DEPTH];
-	sval cell[1];           /* slots, then FR_DEPTH * FR_ARGS call arguments */
+	sval cell[1];           /* slots, the path's errors, then FR_DEPTH * FR_ARGS call arguments */
 } pstate;
+
+/* cell of argument k of the call open at depth d; PERR: the errors raised so far on the path (V_UNDEF: none) */
+#define FRAME_CELL(c, d, k) ((c)->nslots + 1 + (d) * FR_ARGS + (k))
+#define PERR(c, s) ((s)->cell[(c)->nslots])
 
 typedef struct {
 	bool scalar;            /* a PHP int, float or bool */
@@ -91,6 +102,8 @@ typedef struct {
 typedef struct {
 	enode *nodes;
 	int nn, ncap;
+	int *ht;                /* hash of the pure nodes (common subexpressions), open addressing; -1 empty */
+	int hcap, hn;
 	int *pool;
 	int npool, pcap;
 	const zend_op_array *oa;
@@ -107,6 +120,15 @@ typedef struct {
 	int ncapt;
 	sval ret;
 	bool returned;
+	/* the function being evaluated: the closure, or a function or static method it calls (inlined) */
+	const zend_function *fn;
+	const sval *args;       /* arguments of an inlined call; NULL for the closure itself */
+	int nargs, depth;
+	const zend_function *ufn[64];   /* user functions called: fid FN_COUNT + i */
+	int nufn;
+	const zend_function *chain[8];  /* the calls being inlined, outermost first (no recursion) */
+	struct { zend_class_entry *ce; zend_string *msg; } ferr[64];   /* errors of operations on constants */
+	int nferr;
 } comp;
 
 static bool is_weak(const comp *c, int n) { return c->nodes[n].dt < 0; }
@@ -180,9 +202,61 @@ static int type_err(comp *c, const char *fmt, ...)
 
 /* ---- building nodes ---- */
 
+static bool cse_kind(int kind)
+{
+	switch (kind) {
+	case NK_BIN: case NK_CMP: case NK_TOBOOL: case NK_NOT: case NK_BWNOT: case NK_CAST: case NK_SELECT: case NK_FN1: case NK_FN2:
+		return true;
+	}
+	return false;
+}
+
+static uint32_t cse_hash(int kind, int op, int dt, int a, int b, int cc)
+{
+	uint32_t h = 2166136261u;
+	int v[6] = {kind, op, dt, a, b, cc};
+
+	for (int i = 0; i < 6; i++) h = (h ^ (uint32_t)v[i]) * 16777619u;
+	return h;
+}
+
+static void cse_insert(comp *c, int id)
+{
+	const enode *x = &c->nodes[id];
+	uint32_t m;
+
+	if (c->hn * 2 >= c->hcap) {   /* grow and rehash */
+		int old = c->hcap, *oht = c->ht;
+
+		c->hcap = c->hcap ? c->hcap * 2 : 256;
+		c->ht = emalloc(sizeof(int) * (size_t)c->hcap);
+		for (int i = 0; i < c->hcap; i++) c->ht[i] = -1;
+		c->hn = 0;
+		for (int i = 0; i < old; i++) {
+			if (oht[i] >= 0) cse_insert(c, oht[i]);
+		}
+		if (oht) efree(oht);
+	}
+	m = (uint32_t)c->hcap - 1;
+	for (uint32_t i = cse_hash(x->kind, x->op, x->dt, x->a, x->b, x->c) & m;; i = (i + 1) & m) {
+		if (c->ht[i] < 0) { c->ht[i] = id; c->hn++; return; }
+	}
+}
+
+/* a node with these fields: an identical pure node made before, or a new one */
 static int mk(comp *c, int kind, int op, int dt, int a, int b, int cc)
 {
 	enode *n;
+
+	if (cse_kind(kind) && c->hcap) {
+		uint32_t m = (uint32_t)c->hcap - 1;
+
+		for (uint32_t i = cse_hash(kind, op, dt, a, b, cc) & m; c->ht[i] >= 0; i = (i + 1) & m) {
+			const enode *y = &c->nodes[c->ht[i]];
+
+			if (y->kind == kind && y->op == op && y->dt == dt && y->a == a && y->b == b && y->c == cc) return c->ht[i];
+		}
+	}
 
 	if (c->nn == c->ncap) {
 		c->ncap = c->ncap ? c->ncap * 2 : 64;
@@ -199,7 +273,9 @@ static int mk(comp *c, int kind, int op, int dt, int a, int b, int cc)
 	n->reg = n->ereg = -1;
 	ZVAL_UNDEF(&n->cv);
 	n->fails = kind != NK_GATHER && ((a >= 0 && c->nodes[a].fails) || (b >= 0 && c->nodes[b].fails) || (cc >= 0 && c->nodes[cc].fails));
-	return c->nn++;
+	c->nn++;
+	if (cse_kind(kind)) cse_insert(c, c->nn - 1);
+	return c->nn - 1;
 }
 
 static int pool_add(comp *c, int v)
@@ -282,11 +358,21 @@ static int concretize(comp *c, int n, int dt)
 			c->method, Z_LVAL_P(z), buf_dtypes[dt].name, c->line);
 		return -1;
 	}
-	r = mk(c, NK_CONST, 0, dt, -1, -1, -1);
-	switch (rclass(dt)) {
-	case RC_I32: case RC_I64: c->nodes[r].k.i = Z_TYPE_P(z) == IS_LONG ? norm1((uint64_t)Z_LVAL_P(z), dt) : (Z_TYPE_P(z) == IS_TRUE); break;
-	case RC_F64: c->nodes[r].k.d = Z_TYPE_P(z) == IS_LONG ? (double)Z_LVAL_P(z) : Z_DVAL_P(z); break;
-	default: c->nodes[r].k.f = Z_TYPE_P(z) == IS_LONG ? int_to_f((uint64_t)Z_LVAL_P(z), true, dt) : round_to(Z_DVAL_P(z), dt); break;
+	{
+		enode k;
+
+		memset(&k.k, 0, sizeof k.k);
+		switch (rclass(dt)) {
+		case RC_I32: case RC_I64: k.k.i = Z_TYPE_P(z) == IS_LONG ? norm1((uint64_t)Z_LVAL_P(z), dt) : (Z_TYPE_P(z) == IS_TRUE); break;
+		case RC_F64: k.k.d = Z_TYPE_P(z) == IS_LONG ? (double)Z_LVAL_P(z) : Z_DVAL_P(z); break;
+		default: k.k.f = Z_TYPE_P(z) == IS_LONG ? int_to_f((uint64_t)Z_LVAL_P(z), true, dt) : round_to(Z_DVAL_P(z), dt); break;
+		}
+		/* the same constant made before (compared bit for bit: -0.0 is not 0.0) */
+		for (int i = 0; i < c->nn; i++) {
+			if (c->nodes[i].kind == NK_CONST && c->nodes[i].dt == dt && !memcmp(&c->nodes[i].k, &k.k, sizeof k.k)) return i;
+		}
+		r = mk(c, NK_CONST, 0, dt, -1, -1, -1);
+		c->nodes[r].k = k.k;
 	}
 	return r;
 }
@@ -320,6 +406,25 @@ static const char *op_symbol(int op)
 	return "?";
 }
 
+/* an operation on constants threw (PHP's own operator or function): an error of every element that evaluates it, of dtype
+ * dt; -1 if it cannot be recorded */
+static int fail_const(comp *c, int dt)
+{
+	zend_object *ex = EG(exception);
+	zval rv, *msg;
+	int n;
+
+	if (!ex || c->nferr == 64) return -1;
+	msg = zend_read_property_ex(zend_ce_exception, ex, ZSTR_KNOWN(ZEND_STR_MESSAGE), 1, &rv);
+	c->ferr[c->nferr].ce = ex->ce;
+	c->ferr[c->nferr].msg = msg && Z_TYPE_P(msg) == IS_STRING ? zend_string_copy(Z_STR_P(msg)) : ZSTR_EMPTY_ALLOC();
+	zend_clear_exception();
+	n = mk(c, NK_FAILC, 0, dt, -1, -1, -1);
+	c->nodes[n].k.i = (uint64_t)(E_CUSTOM + c->nferr++);
+	c->nodes[n].fails = c->nodes[n].owns = true;
+	return n;
+}
+
 /* a PHP operator on two weak constants: what PHP itself computes */
 static int fold_binary(comp *c, int opcode, int a, int b)
 {
@@ -328,7 +433,12 @@ static int fold_binary(comp *c, int opcode, int a, int b)
 	int n;
 
 	if (!f || f(&r, &c->nodes[a].cv, &c->nodes[b].cv) == FAILURE || EG(exception)) {
-		if (!EG(exception)) unsupported(c, "this operation on constants");
+		if (EG(exception)) {
+			bool fl = c->nodes[a].dt == BUFFERS_SCALAR_FLOAT || c->nodes[b].dt == BUFFERS_SCALAR_FLOAT;
+
+			return fail_const(c, fl ? BUF_T_FLOAT64 : DT_PHPINT);
+		}
+		unsupported(c, "this operation on constants");
 		return -1;
 	}
 	n = mk_weak(c, &r);
@@ -355,7 +465,7 @@ static int bin(comp *c, int op, int a, int b)
 		const enode *k = &c->nodes[b];
 		bool safe = k->kind == NK_CONST && (op == ZEND_MOD ? k->k.i != 0 : !dt_signed(rt) || (int64_t)k->k.i >= 0);
 
-		if (!safe) c->nodes[n].fails = true;
+		if (!safe) c->nodes[n].fails = c->nodes[n].owns = true;
 	}
 	return n;
 }
@@ -481,7 +591,7 @@ static int fold_call(comp *c, int fid, const int *args, int nargs)
 	if (!f) return unsupported(c, "%s()", fn_names[fid]);
 	for (int i = 0; i < nargs; i++) ZVAL_COPY_VALUE(&params[i], &c->nodes[args[i]].cv);
 	zend_call_known_function(f, NULL, NULL, &r, (uint32_t)nargs, params, NULL);
-	if (EG(exception)) return -1;
+	if (EG(exception)) return fail_const(c, fid == FN_FMOD || fid == FN_SQRT ? BUF_T_FLOAT64 : DT_PHPINT);
 	n = mk_weak(c, &r);
 	zval_ptr_dtor(&r);
 	return n;
@@ -544,7 +654,7 @@ static int call(comp *c, int fid, const int *args, int nargs)
 		y = cast(c, y, rt);
 		if (x < 0 || y < 0) return -1;
 		x = mk(c, NK_FN2, fid, rt, x, y, -1);
-		c->nodes[x].fails = true;
+		c->nodes[x].fails = c->nodes[x].owns = true;
 		return x;
 	}
 	case FN_FMOD: {
@@ -584,16 +694,60 @@ static bool sval_eq(const sval *a, const sval *b)
 	return a->t == b->t && a->n == b->n && a->a == b->a && a->len == b->len;
 }
 
-/* one value from two disjoint paths: where pa holds, a; else b */
+static int input_node(comp *c, int inp, int64_t elem);
+
+/* the elements of an array parameter as a list */
+static sval arrparam_list(comp *c, const sval *v)
+{
+	sval r = {V_LIST, 0, c->npool, v->len};
+
+	for (int i = 0; i < v->len; i++) pool_add(c, -1);
+	for (int i = 0; i < v->len; i++) c->pool[r.a + i] = input_node(c, v->n, i);
+	return r;
+}
+
+/* whether two values can meet in a select without an error (checked before building one: a slot that holds values of
+ * different dtypes on two paths is often dead after they join, as when opcache reuses a temporary, and must only fail
+ * when it is read) */
+static bool can_select(comp *c, int a, int b)
+{
+	int da = c->nodes[a].dt, db = c->nodes[b].dt;
+	bool ba = da == BUF_T_BOOL || da == BUFFERS_SCALAR_BOOL, bb = db == BUF_T_BOOL || db == BUFFERS_SCALAR_BOOL;
+
+	if (ba || bb) return ba && bb;
+	if (da < 0 && db < 0) return true;
+	if (da < 0 || db < 0) {
+		int t = da < 0 ? db : da, w = da < 0 ? a : b;
+
+		if (rclass(t) == RC_F32 || rclass(t) == RC_F64) return true;
+		return Z_TYPE(c->nodes[w].cv) == IS_LONG && int_fits(Z_LVAL(c->nodes[w].cv), t);
+	}
+	return buf_dtype_promote(da, db, ZEND_ADD) >= 0;
+}
+
+/* one value from two disjoint paths: where pa holds, a; else b. Values that cannot be combined give V_BAD, an error only
+ * when read. */
 static sval sval_merge(comp *c, int pa, const sval *a, const sval *b)
 {
 	sval r = {V_BAD, 0, 0, 0};
 
+	sval la, lb;
+
 	if (sval_eq(a, b)) return *a;
 	if (a->t == V_UNDEF || b->t == V_UNDEF) { r.t = V_UNDEF; return r; }
+	if (a->t == V_BAD || b->t == V_BAD) return r;
+	/* an array parameter meeting an array literal: its elements */
+	if ((a->t == V_ARRPARAM && b->t == V_LIST) || (a->t == V_LIST && b->t == V_ARRPARAM)) {
+		la = a->t == V_ARRPARAM ? arrparam_list(c, a) : *a;
+		lb = b->t == V_ARRPARAM ? arrparam_list(c, b) : *b;
+		a = &la;
+		b = &lb;
+	}
 	if (a->t == V_NODE && b->t == V_NODE) {
+		if (pa == -1) return *a;
+		if (!can_select(c, a->n, b->n)) return r;
 		r.t = V_NODE;
-		r.n = pa == -1 ? a->n : sel(c, pa, a->n, b->n);
+		r.n = sel(c, pa, a->n, b->n);
 		if (r.n < 0) r.t = V_BAD;
 		return r;
 	}
@@ -604,6 +758,7 @@ static sval sval_merge(comp *c, int pa, const sval *a, const sval *b)
 		for (int i = 0; i < a->len; i++) {
 			int x = c->pool[a->a + i], y = c->pool[b->a + i];
 
+			if (pa != -1 && x != y && !can_select(c, x, y)) return r;
 			c->pool[start + i] = pa == -1 ? x : sel(c, pa, x, y);
 			if (c->pool[start + i] < 0) return r;
 		}
@@ -632,7 +787,15 @@ static pstate *st_merge(comp *c, pstate **in, int n)
 			unsupported(c, "control flow inside function arguments of this shape");
 			return NULL;
 		}
-		live = c->nslots + r->depth * FR_ARGS;
+		live = c->nslots + 1 + r->depth * FR_ARGS;
+		if (PERR(c, s).t == V_NODE || PERR(c, r).t == V_NODE) {   /* errors on one path only: none on the other */
+			sval *pa = &PERR(c, s), *pb = &PERR(c, r);
+			zval f;
+
+			ZVAL_FALSE(&f);
+			if (pa->t != V_NODE) { pa->t = V_NODE; pa->n = concretize(c, mk_weak(c, &f), BUF_T_BOOL); }
+			if (pb->t != V_NODE) { pb->t = V_NODE; pb->n = concretize(c, mk_weak(c, &f), BUF_T_BOOL); }
+		}
 		for (int k = 0; k < c->ncells; k++) {
 			if (k >= live) { r->cell[k].t = V_UNDEF; continue; }
 			r->cell[k] = sval_merge(c, s->pred, &s->cell[k], &r->cell[k]);
@@ -646,6 +809,42 @@ static pstate *st_merge(comp *c, pstate **in, int n)
 }
 
 static sval *slot(comp *c, pstate *s, uint32_t var) { (void)c; return &s->cell[EX_VAR_TO_NUM(var)]; }
+
+
+/* the errors of the path joined with those of node n, which was evaluated after them. Only sources of errors join (an
+ * operation that can fail itself, or the value of an inlined call, which carries its own path's errors): any other
+ * failing node has only the errors of sources made, and joined, before it. */
+static void perr_join(comp *c, pstate *s, int n)
+{
+	sval *pe = &PERR(c, s);
+
+	if (n < 0 || !c->nodes[n].fails || !(c->nodes[n].owns || c->nodes[n].kind == NK_WITHERR)) return;
+	if (pe->t == V_NODE && pe->n == n) return;
+	pe->n = mk(c, NK_ERRS, 0, BUF_T_BOOL, pe->t == V_NODE ? pe->n : -1, n, -1);
+	pe->t = V_NODE;
+}
+
+/* value v with the errors of the path before its own */
+static sval with_path_errors(comp *c, pstate *s, sval v)
+{
+	sval *pe = &PERR(c, s);
+
+	if (pe->t != V_NODE) return v;
+	if (v.t == V_NODE) {
+		v.n = mk(c, NK_WITHERR, 0, c->nodes[v.n].dt, pe->n, v.n, -1);
+	} else if (v.t == V_LIST) {
+		int start = c->npool;
+
+		for (int i = 0; i < v.len; i++) pool_add(c, -1);
+		for (int i = 0; i < v.len; i++) {
+			int e = c->pool[v.a + i];
+
+			c->pool[start + i] = is_weak(c, e) ? e : mk(c, NK_WITHERR, 0, c->nodes[e].dt, pe->n, e, -1);
+		}
+		v.a = start;
+	}
+	return v;
+}
 
 /* the value of an operand of an opline */
 static sval operand_val(comp *c, pstate *s, const zend_op *op, zend_uchar type, znode_op node)
@@ -710,7 +909,7 @@ static int scalar_val(comp *c, pstate *s, const zend_op *op, zend_uchar type, zn
 	case V_LIST: return unsupported(c, "an array here (arrays may only be returned)");
 	case V_TENSOR: return unsupported(c, "a captured tensor not indexed down to one element");
 	}
-	return unsupported(c, "this value");
+	return type_err(c, "the paths that reach this value give it dtypes that have no common dtype (such as Bool and a number), or an array on one and an element on another");
 }
 
 static void set_result(comp *c, pstate *s, const zend_op *op, sval v)
@@ -745,6 +944,59 @@ static zend_function *find_function(zval *name)
 	return Z_TYPE_P(name) == IS_STRING ? zend_hash_find_ptr(EG(function_table), Z_STR_P(name)) : NULL;
 }
 
+/* a function written in PHP, to be inlined: its fid, or -1 after throwing */
+static int user_fid(comp *c, const zend_function *f)
+{
+	for (int i = 0; i < c->nufn; i++) {
+		if (c->ufn[i] == f) return FN_COUNT + i;
+	}
+	if (c->nufn == 64) return unsupported(c, "calls to more than 64 different functions");
+	c->ufn[c->nufn] = f;
+	return FN_COUNT + c->nufn++;
+}
+
+/* the static method an INIT_STATIC_METHOD_CALL calls (self::, a class name, or static:: when it cannot be overridden) */
+static int resolve_static_call(comp *c, const zend_op *op)
+{
+	zend_class_entry *ce = NULL, *scope = c->fn->common.scope;
+	zend_function *f;
+	zval *mname;
+
+	if (op->op1_type == IS_CONST) {
+		zval *cn = RT_CONSTANT(op, op->op1);
+
+		ce = zend_lookup_class_ex(Z_STR_P(cn), Z_STR_P(cn + 1), ZEND_FETCH_CLASS_NO_AUTOLOAD);
+		if (!ce) return unsupported(c, "a call to a method of the class %s, which is not loaded", Z_STRVAL_P(cn));
+	} else if (op->op1_type == IS_UNUSED) {
+		switch (op->op1.num & ZEND_FETCH_CLASS_MASK) {
+		case ZEND_FETCH_CLASS_SELF: ce = scope; break;
+		case ZEND_FETCH_CLASS_STATIC: ce = scope; break;   /* checked below: only where it is the same as self:: */
+		default: return unsupported(c, "parent:: calls");
+		}
+		if (!ce) return unsupported(c, "self:: outside a class");
+	} else {
+		return unsupported(c, "a call to a method of a class named at run time");
+	}
+	if (op->op2_type != IS_CONST) return unsupported(c, "a method named at run time");
+	mname = RT_CONSTANT(op, op->op2);
+	f = zend_hash_find_ptr(&ce->function_table, Z_STR_P(mname + 1));
+	if (!f) return unsupported(c, "the undefined method %s::%s()", ZSTR_VAL(ce->name), Z_STRVAL_P(mname));
+	if (!(f->common.fn_flags & ZEND_ACC_STATIC) || f->type != ZEND_USER_FUNCTION) {
+		return unsupported(c, "the method %s::%s() (only static methods written in PHP)", ZSTR_VAL(ce->name), Z_STRVAL_P(mname));
+	}
+	if ((op->op1.num & ZEND_FETCH_CLASS_MASK) == ZEND_FETCH_CLASS_STATIC && op->op1_type == IS_UNUSED
+		&& !(ce->ce_flags & ZEND_ACC_FINAL) && !(f->common.fn_flags & (ZEND_ACC_PRIVATE | ZEND_ACC_FINAL))) {
+		return unsupported(c, "static::%s(), which a subclass could override (use self::)", Z_STRVAL_P(mname));
+	}
+	if ((f->common.fn_flags & ZEND_ACC_PRIVATE) && f->common.scope != scope) {
+		return unsupported(c, "the private method %s::%s() from outside its class", ZSTR_VAL(ce->name), Z_STRVAL_P(mname));
+	}
+	if ((f->common.fn_flags & ZEND_ACC_PROTECTED) && (!scope || !instanceof_function(scope, f->common.scope))) {
+		return unsupported(c, "the protected method %s::%s() from outside its class", ZSTR_VAL(ce->name), Z_STRVAL_P(mname));
+	}
+	return user_fid(c, f);
+}
+
 /* the function an INIT_* opline calls: one of ours (an internal function of that name), or -1 after throwing */
 static int resolve_call(comp *c, const zend_op *op)
 {
@@ -755,14 +1007,17 @@ static int resolve_call(comp *c, const zend_op *op)
 	case ZEND_INIT_FCALL: f = find_function(name); break;
 	case ZEND_INIT_FCALL_BY_NAME: name++; f = find_function(name); break;
 	case ZEND_INIT_NS_FCALL_BY_NAME:
-		if (find_function(name + 1)) return unsupported(c, "the namespaced function %s()", Z_STRVAL_P(name));
-		name += 2;
-		f = find_function(name);
+		f = find_function(name + 1);   /* a function of the namespace is what PHP calls */
+		if (!f) f = find_function(name + 2);
 		break;
 	default: return unsupported(c, "this kind of call");
 	}
+	if (f && f->type == ZEND_USER_FUNCTION) return user_fid(c, f);
 	if (!f || f->type != ZEND_INTERNAL_FUNCTION || fn_id(f->common.function_name) < 0) {
-		return unsupported(c, "the function %s()", Z_TYPE_P(name) == IS_STRING ? Z_STRVAL_P(name) : "?");
+		/* the declared name (opcache may have bound the call to the lower-cased one) */
+		const char *n = f ? ZSTR_VAL(f->common.function_name) : Z_TYPE_P(name) == IS_STRING ? Z_STRVAL_P(name) : "?";
+
+		return unsupported(c, "the %sfunction %s()", strchr(n, '\\') ? "namespaced " : "", n);
 	}
 	return fn_id(f->common.function_name);
 }
@@ -811,7 +1066,7 @@ static int fetch_dim(comp *c, pstate *s, const zend_op *op, sval *out)
 			int n = mk(c, NK_GATHER, 0, v->dt, start, base.len + 1, -1);
 
 			c->nodes[n].slot = base.n;
-			c->nodes[n].fails = true;
+			c->nodes[n].fails = c->nodes[n].owns = true;
 			*out = node_val(n);
 			return n;
 		}
@@ -927,6 +1182,50 @@ static int recv_param(comp *c, pstate *s, const zend_op *op)
 	}
 }
 
+static bool run_func(comp *c, const zend_function *fn, const sval *args, int nargs);
+
+/* an argument of an inlined call converted as PHP converts it for the parameter's declared type */
+static sval coerce_param(comp *c, const zend_arg_info *ai, sval v)
+{
+	uint32_t mask;
+	int dt;
+
+	if (!ZEND_TYPE_IS_SET(ai->type)) return v;
+	mask = ZEND_TYPE_PURE_MASK(ai->type);
+	if (ZEND_TYPE_IS_COMPLEX(ai->type) || (mask & ~(MAY_BE_ARRAY | MAY_BE_LONG | MAY_BE_DOUBLE | MAY_BE_BOOL))) {
+		unsupported(c, "the type of parameter $%s", ZSTR_VAL(ai->name));
+		v.t = V_BAD;
+		return v;
+	}
+	if (v.t == V_LIST || v.t == V_ARRPARAM) {
+		if (!(mask & MAY_BE_ARRAY)) { type_err(c, "parameter $%s does not take an array", ZSTR_VAL(ai->name)); v.t = V_BAD; }
+		return v;
+	}
+	if (v.t != V_NODE) return v;
+	dt = c->nodes[v.n].dt;
+	if (dt == BUFFERS_SCALAR_INT || (dt >= 0 && is_ic(dt) && dt != BUF_T_BOOL)) {
+		if (mask & MAY_BE_LONG) return v;
+		if (mask & MAY_BE_DOUBLE) {   /* an int for a float parameter becomes a float */
+			if (dt < 0) {
+				zval d;
+
+				ZVAL_DOUBLE(&d, (double)Z_LVAL(c->nodes[v.n].cv));
+				v.n = mk_weak(c, &d);
+			} else {
+				v.n = cast(c, v.n, BUF_T_FLOAT64);
+			}
+			return v;
+		}
+	} else if (dt == BUFFERS_SCALAR_FLOAT || (dt >= 0 && rclass(dt) >= RC_F32)) {
+		if (mask & MAY_BE_DOUBLE) return v;
+	} else if (dt == BUFFERS_SCALAR_BOOL || dt == BUF_T_BOOL) {
+		if (mask & MAY_BE_BOOL) return v;
+	}
+	type_err(c, "parameter $%s does not accept %s", ZSTR_VAL(ai->name), tname(dt));
+	v.t = V_BAD;
+	return v;
+}
+
 static bool push_state(comp *c, pstate ***pend, int *npend, int *cpend, int to, pstate *s)
 {
 	if (npend[to] == cpend[to]) {
@@ -947,33 +1246,52 @@ static int jump_target(comp *c, const zend_op *op, znode_op node, uint32_t at)
 }
 
 /* compiles the closure; false after throwing */
-static bool compile(comp *c, const zend_function *fn)
+/* the closure (args NULL) or an inlined function: its value, in c->ret; false after throwing */
+static bool run_func(comp *c, const zend_function *fn, const sval *args, int nargs)
 {
 	const zend_op_array *oa = &fn->op_array;
 	uint32_t nops = oa->last;
-	pstate ***pend;
-	int *npend, *cpend;
+	pstate ***pend = NULL;
+	int *npend = NULL, *cpend = NULL;
 	sval *rv = NULL;
 	int *rp = NULL, nret = 0;
 	bool ok = false;
+	int nn0;
+	/* the caller's context, restored at the end */
+	const zend_op_array *s_oa = c->oa;
+	const zend_function *s_fn = c->fn;
+	const sval *s_args = c->args;
+	int s_nslots = c->nslots, s_ncells = c->ncells, s_nargs = c->nargs;
+	uint32_t s_line = c->line;
 
+	if (args) {
+		for (int i = 0; i < c->depth; i++) {
+			if (c->chain[i] == fn) return unsupported(c, "the recursive call of %s()", ZSTR_VAL(fn->common.function_name)) == 0;
+		}
+		if (c->depth == 8) return unsupported(c, "calls nested more than 8 deep") == 0;
+		if ((uint32_t)nargs > oa->num_args) return unsupported(c, "more arguments than %s() takes", ZSTR_VAL(fn->common.function_name)) == 0;
+		c->chain[c->depth++] = fn;
+	}
 	c->oa = oa;
+	c->fn = fn;
+	c->args = args;
+	c->nargs = nargs;
 	c->line = oa->line_start;
 	c->nslots = (int)(oa->last_var + oa->T);
-	c->ncells = c->nslots + FR_DEPTH * FR_ARGS;
+	c->ncells = c->nslots + 1 + FR_DEPTH * FR_ARGS;   /* slots, the errors of the path (PERR), call arguments */
 	if (fn->common.fn_flags & (ZEND_ACC_VARIADIC | ZEND_ACC_GENERATOR | ZEND_ACC_RETURN_REFERENCE)) {
 		unsupported(c, fn->common.fn_flags & ZEND_ACC_GENERATOR ? "a generator" : fn->common.fn_flags & ZEND_ACC_VARIADIC ? "a variadic parameter" : "returning by reference");
-		return false;
+		goto done;
 	}
 	for (uint32_t i = 0; i < oa->num_args; i++) {
 		if (ZEND_ARG_SEND_MODE(&oa->arg_info[i])) {
 			unsupported(c, "the by-reference parameter $%s", ZSTR_VAL(oa->arg_info[i].name));
-			return false;
+			goto done;
 		}
 	}
-	if ((int)oa->num_args < c->nin) {
+	if (!args && (int)oa->num_args < c->nin) {
 		zend_argument_count_error("Buffers\\Tensor::%s(): the closure must take a parameter for each of the %d inputs, it takes %u", c->method, c->nin, oa->num_args);
-		return false;
+		goto done;
 	}
 	pend = ecalloc(nops + 1, sizeof(pstate **));
 	npend = ecalloc(nops + 1, sizeof(int));
@@ -991,14 +1309,35 @@ static bool compile(comp *c, const zend_function *fn)
 		npend[at] = 0;
 		if (!s) goto done;
 		c->line = op->lineno;
+		nn0 = c->nn;
 
 		switch (op->opcode) {
 		case ZEND_NOP: case ZEND_EXT_STMT: case ZEND_EXT_NOP: case ZEND_EXT_FCALL_BEGIN: case ZEND_EXT_FCALL_END:
 			break;
-		case ZEND_RECV:
-			if (recv_param(c, s, op) < 0) goto fail;
+		case ZEND_RECV: case ZEND_RECV_INIT:
+			if (!args) {
+				if (op->opcode == ZEND_RECV_INIT) { unsupported(c, "a default value of a closure parameter"); goto fail; }
+				if (recv_param(c, s, op) < 0) goto fail;
+			} else {
+				uint32_t i = op->op1.num - 1;
+				sval v;
+
+				if ((int)i < nargs) {
+					v = args[i];
+				} else if (op->opcode == ZEND_RECV_INIT) {
+					v = operand_val(c, s, op, op->op2_type, op->op2);   /* the default (a constant) */
+					if (EG(exception)) goto fail;
+				} else {
+					unsupported(c, "a call of %s() without its argument $%s", ZSTR_VAL(fn->common.function_name), ZSTR_VAL(oa->arg_info[i].name));
+					goto fail;
+				}
+				v = coerce_param(c, &oa->arg_info[i], v);
+				if (EG(exception)) goto fail;
+				*slot(c, s, op->result.var) = v;
+			}
 			break;
 		case ZEND_BIND_STATIC:
+			if (args) { unsupported(c, "static variables"); goto fail; }
 			if (bind_static(c, s, op, fn) < 0) goto fail;
 			break;
 		case ZEND_QM_ASSIGN: case ZEND_VERIFY_RETURN_TYPE:
@@ -1006,6 +1345,10 @@ static bool compile(comp *c, const zend_function *fn)
 				sval v = operand_val(c, s, op, op->op1_type, op->op1);
 
 				if (EG(exception)) goto fail;
+				if (op->opcode == ZEND_VERIFY_RETURN_TYPE && (fn->common.fn_flags & ZEND_ACC_HAS_RETURN_TYPE)) {
+					v = coerce_param(c, (const zend_arg_info *)oa->arg_info - 1, v);   /* the same rules as a parameter */
+					if (EG(exception)) goto fail;
+				}
 				set_result(c, s, op, v);
 			}
 			break;
@@ -1088,7 +1431,53 @@ static bool compile(comp *c, const zend_function *fn)
 			if (EG(exception)) goto fail;
 			break;
 		}
-		case ZEND_FETCH_DIM_R: {
+		case ZEND_ASSIGN: case ZEND_ASSIGN_OP: case ZEND_PRE_INC: case ZEND_PRE_DEC: case ZEND_POST_INC: case ZEND_POST_DEC: {
+			/* a local variable takes a new value: the variable names that value from here on (no loops, so no phi) */
+			sval old, v;
+
+			if (op->op1_type != IS_CV) { unsupported(c, "assigning to anything but a local variable"); goto fail; }
+			if (op->opcode == ZEND_ASSIGN) {
+				v = operand_val(c, s, op, op->op2_type, op->op2);
+				if (EG(exception)) goto fail;
+				if (v.t == V_BAD) { unsupported(c, "this value"); goto fail; }
+			} else {
+				int cur = scalar_val(c, s, op, op->op1_type, op->op1), rhs, opc;
+				zval one;
+
+				if (cur < 0) goto fail;
+				old = node_val(cur);
+				if (op->opcode == ZEND_ASSIGN_OP) {
+					rhs = scalar_val(c, s, op, op->op2_type, op->op2);
+					opc = (int)op->extended_value;
+				} else {
+					ZVAL_LONG(&one, 1);
+					rhs = mk_weak(c, &one);
+					opc = op->opcode == ZEND_PRE_INC || op->opcode == ZEND_POST_INC ? ZEND_ADD : ZEND_SUB;
+				}
+				if (rhs < 0) goto fail;
+				switch (opc) {
+				case ZEND_ADD: case ZEND_SUB: case ZEND_MUL: case ZEND_DIV: case ZEND_MOD: case ZEND_POW:
+				case ZEND_SL: case ZEND_SR: case ZEND_BW_AND: case ZEND_BW_OR: case ZEND_BW_XOR:
+					break;
+				default:
+					unsupported(c, "this compound assignment");
+					goto fail;
+				}
+				v = node_val(bin(c, opc, cur, rhs));
+				if (EG(exception)) goto fail;
+				if (op->opcode == ZEND_POST_INC || op->opcode == ZEND_POST_DEC) {
+					*slot(c, s, op->op1.var) = v;
+					set_result(c, s, op, old);
+					break;
+				}
+			}
+			*slot(c, s, op->op1.var) = v;
+			set_result(c, s, op, v);
+			break;
+		}
+		case ZEND_FREE:   /* the unused result of an assignment or an increment */
+			break;
+		case ZEND_FETCH_DIM_R: case ZEND_FETCH_LIST_R: {   /* LIST_R: [$a, $b] = $list */
 			sval v = {V_BAD, 0, 0, 0};
 
 			if (fetch_dim(c, s, op, &v) < 0) goto fail;
@@ -1123,14 +1512,14 @@ static bool compile(comp *c, const zend_function *fn)
 			set_result(c, s, op, arr);
 			break;
 		}
-		case ZEND_INIT_FCALL: case ZEND_INIT_FCALL_BY_NAME: case ZEND_INIT_NS_FCALL_BY_NAME: {
-			int fid = resolve_call(c, op);
+		case ZEND_INIT_FCALL: case ZEND_INIT_FCALL_BY_NAME: case ZEND_INIT_NS_FCALL_BY_NAME: case ZEND_INIT_STATIC_METHOD_CALL: {
+			int fid = op->opcode == ZEND_INIT_STATIC_METHOD_CALL ? resolve_static_call(c, op) : resolve_call(c, op);
 
 			if (fid < 0) goto fail;
 			if (s->depth == FR_DEPTH) { unsupported(c, "calls nested this deep"); goto fail; }
 			s->fid[s->depth] = fid;
 			s->nargs[s->depth] = 0;
-			for (int k = 0; k < FR_ARGS; k++) s->cell[c->nslots + s->depth * FR_ARGS + k].t = V_UNDEF;
+			for (int k = 0; k < FR_ARGS; k++) s->cell[FRAME_CELL(c, s->depth, k)].t = V_UNDEF;
 			s->depth++;
 			break;
 		}
@@ -1140,9 +1529,16 @@ static bool compile(comp *c, const zend_function *fn)
 			if (!s->depth || op->op2_type == IS_CONST) { unsupported(c, "this argument (named arguments are not supported)"); goto fail; }
 			pos = (int)op->op2.num - 1;
 			if (pos < 0 || pos >= FR_ARGS) { unsupported(c, "more than %d arguments", FR_ARGS); goto fail; }
-			n = scalar_val(c, s, op, op->op1_type, op->op1);
-			if (n < 0) goto fail;
-			s->cell[c->nslots + (s->depth - 1) * FR_ARGS + pos] = node_val(n);
+			if (s->fid[s->depth - 1] >= FN_COUNT) {   /* to a function written in PHP: arrays too */
+				sval v = operand_val(c, s, op, op->op1_type, op->op1);
+
+				if (EG(exception)) goto fail;
+				s->cell[FRAME_CELL(c, s->depth - 1, pos)] = v;
+			} else {
+				n = scalar_val(c, s, op, op->op1_type, op->op1);
+				if (n < 0) goto fail;
+				s->cell[FRAME_CELL(c, s->depth - 1, pos)] = node_val(n);
+			}
 			if (pos + 1 > s->nargs[s->depth - 1]) s->nargs[s->depth - 1] = pos + 1;
 			break;
 		}
@@ -1151,8 +1547,20 @@ static bool compile(comp *c, const zend_function *fn)
 
 			if (!s->depth) { unsupported(c, "this call"); goto fail; }
 			d = --s->depth;
+			if (s->fid[d] >= FN_COUNT) {   /* a function written in PHP: inlined */
+				sval av[FR_ARGS];
+				const zend_function *f = c->ufn[s->fid[d] - FN_COUNT];
+
+				for (int k = 0; k < s->nargs[d]; k++) {
+					av[k] = s->cell[FRAME_CELL(c, d, k)];
+					if (av[k].t == V_UNDEF || av[k].t == V_BAD) { unsupported(c, "a missing argument"); goto fail; }
+				}
+				if (!run_func(c, f, av, s->nargs[d])) goto fail;
+				set_result(c, s, op, c->ret);
+				break;
+			}
 			for (int k = 0; k < s->nargs[d]; k++) {
-				sval *a = &s->cell[c->nslots + d * FR_ARGS + k];
+				sval *a = &s->cell[FRAME_CELL(c, d, k)];
 
 				if (a->t != V_NODE) { unsupported(c, "a missing argument"); goto fail; }
 				args[k] = a->n;
@@ -1210,6 +1618,11 @@ static bool compile(comp *c, const zend_function *fn)
 			if (op->opcode == ZEND_JMPZ_EX || op->opcode == ZEND_JMPNZ_EX) set_result(c, s, op, node_val(cond));
 			if (op->opcode == ZEND_JMP_SET) set_result(c, s, op, operand_val(c, s, op, op->op1_type, op->op1));
 			/* jump when cond is false (JMPZ*) or true (JMPNZ*, JMP_SET) */
+			/* the path predicates take the condition's value; its errors are already the path's (PERR) */
+			if (c->nodes[cond].fails) {
+				cond = mk(c, NK_NOERR, 0, BUF_T_BOOL, cond, -1, -1);
+				c->nodes[cond].fails = false;
+			}
 			jcond = (op->opcode == ZEND_JMPZ || op->opcode == ZEND_JMPZ_EX) ? lnot(c, cond) : cond;
 			if (jcond < 0) goto fail;
 			if (is_weak(c, jcond)) {
@@ -1230,12 +1643,11 @@ static bool compile(comp *c, const zend_function *fn)
 			sval v = operand_val(c, s, op, op->op1_type, op->op1);
 
 			if (EG(exception)) goto fail;
-			if (v.t == V_ARRPARAM) {   /* the whole array parameter: its elements */
-				int start = c->npool;
-
-				for (int i = 0; i < v.len; i++) pool_add(c, input_node(c, v.n, i));
-				v.t = V_LIST;
-				v.a = start;
+			if (v.t == V_ARRPARAM) v = arrparam_list(c, &v);   /* the whole array parameter: its elements */
+			v = with_path_errors(c, s, v);   /* the errors met on the way to this return come first */
+			if (v.t == V_BAD) {
+				type_err(c, "the paths that reach this value give it dtypes that have no common dtype (such as Bool and a number), or an array on one and an element on another");
+				goto fail;
 			}
 			if (v.t != V_NODE && v.t != V_LIST) { unsupported(c, "returning this value"); goto fail; }
 			rv[nret] = v;
@@ -1243,9 +1655,21 @@ static bool compile(comp *c, const zend_function *fn)
 			efree(s);
 			continue;
 		}
+		case ZEND_FETCH_THIS: case ZEND_INIT_METHOD_CALL: case ZEND_FETCH_OBJ_R:
+			unsupported(c, "$this, instance methods and properties");
+			goto fail;
 		default:
 			unsupported(c, "the operation %s", zend_get_opcode_name(op->opcode) ? zend_get_opcode_name(op->opcode) + 5 : "?");
 			goto fail;
+		}
+		/* an operation evaluated here that can fail: its errors join the path's, in evaluation order (PHP raises the
+		 * first error an element meets, whether or not the value reaches the result) */
+		if ((op->result_type & (IS_TMP_VAR | IS_VAR | IS_CV)) && slot(c, s, op->result.var)->t == V_NODE
+			&& slot(c, s, op->result.var)->n >= nn0) {
+			perr_join(c, s, slot(c, s, op->result.var)->n);
+		}
+		if (op->op1_type == IS_CV && slot(c, s, op->op1.var)->t == V_NODE && slot(c, s, op->op1.var)->n >= nn0) {
+			perr_join(c, s, slot(c, s, op->op1.var)->n);   /* assignments and increments */
 		}
 		push_state(c, pend, npend, cpend, at + 1, s);
 		continue;
@@ -1262,19 +1686,32 @@ static bool compile(comp *c, const zend_function *fn)
 	for (int i = nret - 2; i >= 0; i--) {
 		c->ret = sval_merge(c, rp[i], &rv[i], &c->ret);
 		if (EG(exception)) goto done;
-		if (c->ret.t == V_BAD) { unsupported(c, "returning an array on one path and a value (or an array of another length) on another"); goto done; }
+		if (c->ret.t == V_BAD) {
+			type_err(c, "the paths that reach this value give it dtypes that have no common dtype (such as Bool and a number), or an array on one and an element on another");
+			goto done;
+		}
 	}
 	ok = true;
 done:
-	for (uint32_t i = 0; i <= nops; i++) {
-		for (int k = 0; k < npend[i]; k++) efree(pend[i][k]);
-		if (pend[i]) efree(pend[i]);
+	if (pend) {
+		for (uint32_t i = 0; i <= nops; i++) {
+			for (int k = 0; k < npend[i]; k++) efree(pend[i][k]);
+			if (pend[i]) efree(pend[i]);
+		}
+		efree(pend);
+		efree(npend);
+		efree(cpend);
+		efree(rv);
+		efree(rp);
 	}
-	efree(pend);
-	efree(npend);
-	efree(cpend);
-	efree(rv);
-	efree(rp);
+	if (args) c->depth--;
+	c->oa = s_oa;
+	c->fn = s_fn;
+	c->args = s_args;
+	c->nargs = s_nargs;
+	c->nslots = s_nslots;
+	c->ncells = s_ncells;
+	if (args) c->line = s_line;
 	return ok;
 }
 
@@ -1294,6 +1731,8 @@ typedef struct {
 	int64_t idx[BUF_MAX_NDIM];
 	int64_t at;                         /* first element of the chunk along the last axis */
 	uint8_t scratch[EV_CHUNK];          /* error codes of an operation whose errors cannot reach an output */
+	int64_t off[EV_CHUNK];              /* byte offsets of a gather */
+	uint8_t zero[EV_CHUNK];             /* no errors */
 } evalr;
 
 /* each node's values for the current chunk: its register, or (inputs) the input's own memory, or (the output of each())
@@ -1370,6 +1809,55 @@ static EVCLONE void store_elems(int dt, const void *in, uint8_t *q, int64_t s, i
 	case BUF_T_FLOAT64: ST(double, di[k]) break;
 	}
 #undef ST
+}
+
+/* off[k] += index * stride along one axis; an index outside 0..len-1 adds 0. The number of those. */
+#define GATHER_AXIS(NAME, T) \
+	static EVCLONE int NAME(const T *ix, uint64_t len, int64_t sb, int64_t *off, int n) \
+	{ \
+		int bad = 0; \
+		for (int k = 0; k < n; k++) { \
+			uint64_t u = (uint64_t)(int64_t)ix[k]; \
+			int b = u >= len; \
+			bad += b; \
+			off[k] += (int64_t)(b ? 0 : u) * sb; \
+		} \
+		return bad; \
+	}
+GATHER_AXIS(gather_axis32, int32_t)
+GATHER_AXIS(gather_axis64, int64_t)
+
+/* n elements at base + off[k] (any byte offsets), into the computation representation */
+static EVCLONE void gather_elems(int dt, const uint8_t *base, const int64_t *off, int n, void *out)
+{
+	uint32_t *ou = out;
+	uint64_t *oi = out;
+	float *of = out;
+	double *od = out;
+
+#define LDG(T, DST, CONV) \
+	if (!BUF_SWAP) { \
+		typedef T U __attribute__((aligned(1), may_alias)); \
+		for (int k = 0; k < n; k++) { T x = *(const U *)(base + off[k]); DST[k] = CONV; } \
+	} else { \
+		for (int k = 0; k < n; k++) { T x; buf_ld_le(&x, base + off[k], sizeof x); DST[k] = CONV; } \
+	}
+	switch (dt) {
+	case BUF_T_BOOL: for (int k = 0; k < n; k++) ou[k] = base[off[k]] != 0; break;
+	case BUF_T_INT8: LDG(int8_t, ou, (uint32_t)(int32_t)x) break;
+	case BUF_T_INT16: LDG(int16_t, ou, (uint32_t)(int32_t)x) break;
+	case BUF_T_INT32: LDG(int32_t, ou, (uint32_t)x) break;
+	case BUF_T_UINT8: LDG(uint8_t, ou, (uint32_t)x) break;
+	case BUF_T_UINT16: LDG(uint16_t, ou, (uint32_t)x) break;
+	case BUF_T_UINT32: LDG(uint32_t, ou, x) break;
+	case BUF_T_INT64: LDG(int64_t, oi, (uint64_t)x) break;
+	case BUF_T_UINT64: LDG(uint64_t, oi, x) break;
+	case BUF_T_FLOAT16: LDG(uint16_t, of, (float)buf_dec_FLOAT16(x)) break;
+	case BUF_T_BFLOAT16: LDG(uint16_t, of, (float)buf_dec_BFLOAT16(x)) break;
+	case BUF_T_FLOAT32: LDG(float, of, x) break;
+	case BUF_T_FLOAT64: LDG(double, od, x) break;
+	}
+#undef LDG
 }
 
 /* after an operation in Float32 for a Float16 or BFloat16 result: round each value once to the dtype */
@@ -1596,11 +2084,44 @@ static EVCLONE void k_cast(int from, int to, const void *in, void *out, int n)
 	case RC_F32 * 4 + RC_F32: for (int k = 0; k < n; k++) of[k] = fi[k]; round_chunk(to, of, n); return;
 	case RC_F64 * 4 + RC_F32: for (int k = 0; k < n; k++) of[k] = round_to(di[k], to); return;
 	case RC_F64 * 4 + RC_F64: for (int k = 0; k < n; k++) od[k] = di[k]; return;
-	/* (int) of a float: PHP's conversion, then wrapped to the dtype */
-	case RC_F32 * 4 + RC_I64: for (int k = 0; k < n; k++) oi[k] = (uint64_t)buf_dval_to_lval(fi[k]); return;
-	case RC_F64 * 4 + RC_I64: for (int k = 0; k < n; k++) oi[k] = (uint64_t)buf_dval_to_lval(di[k]); return;
-	case RC_F32 * 4 + RC_I32: for (int k = 0; k < n; k++) ou[k] = (uint32_t)buf_dval_to_lval(fi[k]); k_wrap_u32(dt_sgn(to), dt_bits(to), ou, n); return;
-	case RC_F64 * 4 + RC_I32: for (int k = 0; k < n; k++) ou[k] = (uint32_t)buf_dval_to_lval(di[k]); k_wrap_u32(dt_sgn(to), dt_bits(to), ou, n); return;
+	/* (int) of a float: PHP's conversion, then wrapped to the dtype. Values well inside the 64-bit range truncate with
+	 * the CPU's conversion (vectorized); NaN, infinities and anything else take PHP's own rule. */
+#define F2I(SRC, DST, T) do { \
+		int bad = 0; \
+		for (int k = 0; k < n; k++) { \
+			double v = (double)SRC[k]; \
+			int ok = (v > -9.2e18) & (v < 9.2e18); \
+			DST[k] = (T)(int64_t)(ok ? v : 0.0); \
+			bad += !ok; \
+		} \
+		if (bad) { \
+			for (int k = 0; k < n; k++) { \
+				double v = (double)SRC[k]; \
+				if (!(v > -9.2e18 && v < 9.2e18)) DST[k] = (T)buf_dval_to_lval(v); \
+			} \
+		} \
+	} while (0)
+	case RC_F32 * 4 + RC_I64: F2I(fi, oi, uint64_t); return;
+	case RC_F64 * 4 + RC_I64: F2I(di, oi, uint64_t); return;
+	case RC_F32 * 4 + RC_I32: F2I(fi, ou, uint32_t); k_wrap_u32(dt_sgn(to), dt_bits(to), ou, n); return;
+	case RC_F64 * 4 + RC_I32: F2I(di, ou, uint32_t); k_wrap_u32(dt_sgn(to), dt_bits(to), ou, n); return;
+#undef F2I
+	}
+}
+
+/* keep e's error codes, take z's where e has none */
+static EVCLONE void merge_err(uint8_t *e, const uint8_t *z, int n)
+{
+	for (int k = 0; k < n; k++) e[k] = e[k] ? e[k] : z[k];
+}
+
+/* a select's error codes: the condition's, else those of the operand it selects */
+static EVCLONE void merge_err_select(uint8_t *e, const uint32_t *m, const uint8_t *zc, const uint8_t *za, const uint8_t *zb, int n)
+{
+	for (int k = 0; k < n; k++) {
+		uint8_t v = m[k] ? za[k] : zb[k];
+
+		e[k] = zc[k] ? zc[k] : v;
 	}
 }
 
@@ -1610,31 +2131,32 @@ static void errs_from(evalr *ev, const enode *x, int n)
 	uint8_t *e = ev->E[x->ereg];
 	int ops[3] = {x->a, x->b, x->c};
 
+	if (x->ealias) return;   /* the array of the operand it passes on */
 	memset(e, 0, (size_t)n);
 	if (x->kind == NK_SELECT) {
-		const uint32_t *m = PU(&ev->c->nodes[x->a]);
 		const enode *ec = &ev->c->nodes[x->a], *ea = &ev->c->nodes[x->b], *eb = &ev->c->nodes[x->c];
 
-		for (int k = 0; k < n; k++) {
-			uint8_t v = ec->ereg >= 0 ? ev->E[ec->ereg][k] : 0;
-
-			if (!v) v = m[k] ? (ea->ereg >= 0 ? ev->E[ea->ereg][k] : 0) : (eb->ereg >= 0 ? ev->E[eb->ereg][k] : 0);
-			e[k] = v;
-		}
+		merge_err_select(e, PU(ec), ec->ereg >= 0 ? ev->E[ec->ereg] : ev->zero, ea->ereg >= 0 ? ev->E[ea->ereg] : ev->zero,
+			eb->ereg >= 0 ? ev->E[eb->ereg] : ev->zero, n);
 		return;
 	}
 	if (x->kind == NK_GATHER) {
 		for (int i = 0; i < x->b; i++) {
 			const enode *ix = &ev->c->nodes[ev->c->pool[x->a + i]];
+			const uint8_t *z;
 
 			if (ix->ereg < 0) continue;
-			for (int k = 0; k < n; k++) if (!e[k]) e[k] = ev->E[ix->ereg][k];
+			z = ev->E[ix->ereg];
+			merge_err(e, z, n);
 		}
 		return;
 	}
 	for (int i = 0; i < 3; i++) {
+		const uint8_t *z;
+
 		if (ops[i] < 0 || ev->c->nodes[ops[i]].ereg < 0) continue;
-		for (int k = 0; k < n; k++) if (!e[k]) e[k] = ev->E[ev->c->nodes[ops[i]].ereg][k];
+		z = ev->E[ev->c->nodes[ops[i]].ereg];
+		merge_err(e, z, n);
 	}
 }
 
@@ -1799,37 +2321,52 @@ static void exec_node(evalr *ev, const enode *x, int n)
 			return;
 		}
 		return;
+	case NK_ERRS:
+		for (int k = 0; k < n; k++) PU(x)[k] = 0;
+		return;
+	case NK_NOERR:
+		memcpy(NP(x), NP(A), (size_t)n * 4);
+		return;
+	case NK_WITHERR:
+		memcpy(NP(x), NP(B), (size_t)n * (rc == RC_I64 || rc == RC_F64 ? 8 : 4));
+		return;
+	case NK_FAILC:
+		memset(NP(x), 0, (size_t)n * 8);
+		for (int k = 0; k < n; k++) e[k] = (uint8_t)x->k.i;
+		return;
 	case NK_GATHER: {
 		const buf_view *v = c->cap[x->slot];
+		int64_t *off = ev->off;
 
-		for (int k = 0; k < n; k++) {
-			int64_t off = 0;
-			bool bad = e[k] != 0;
+		const uint8_t *base = v->data;
 
-			for (int i = 0; i < x->b && !bad; i++) {
-				const enode *in = &c->nodes[c->pool[x->a + i]];
-				uint64_t ix = rclass(in->dt) == RC_I32 ? (uint64_t)(int64_t)(int32_t)PU(in)[k] : PI(in)[k];   /* negative: out of range */
+		/* byte offsets, axis by axis; an index outside its axis (negative ones included) is an error of the element,
+		 * which then reads index 0 (its value is never used). A constant index moves the base once. */
+		for (int k = 0; k < n; k++) off[k] = 0;
+		for (int i = 0; i < x->b; i++) {
+			const enode *in = &c->nodes[c->pool[x->a + i]];
+			uint64_t len = (uint64_t)v->shape[i];
+			int64_t sb = v->sbytes[i];
+			int nbad;
 
-				if (ix >= (uint64_t)v->shape[i]) bad = true;
-				else off += (int64_t)ix * v->sbytes[i];
-			}
-			if (bad) {
-				if (!e[k]) e[k] = E_RANGE;
-				switch (rc) {
-				case RC_I32: PU(x)[k] = 0; break;
-				case RC_I64: PI(x)[k] = 0; break;
-				case RC_F32: PF(x)[k] = 0; break;
-				default: PD(x)[k] = 0; break;
-				}
+			if (in->kind == NK_CONST) {
+				uint64_t u = rclass(in->dt) == RC_I32 ? (uint64_t)(int64_t)(int32_t)in->k.i : in->k.i;
+
+				if (u < len) { base += (int64_t)u * sb; continue; }
+				for (int k = 0; k < n; k++) if (!e[k]) e[k] = E_RANGE;
 				continue;
 			}
-			switch (rc) {
-			case RC_I32: load_elems(v->dt, v->data + off, 0, 1, &PU(x)[k]); break;
-			case RC_I64: load_elems(v->dt, v->data + off, 0, 1, &PI(x)[k]); break;
-			case RC_F32: load_elems(v->dt, v->data + off, 0, 1, &PF(x)[k]); break;
-			default: load_elems(v->dt, v->data + off, 0, 1, &PD(x)[k]); break;
+			nbad = rclass(in->dt) == RC_I32 ? gather_axis32((const int32_t *)PU(in), len, sb, off, n)
+				: gather_axis64((const int64_t *)PI(in), len, sb, off, n);
+			if (nbad) {
+				for (int k = 0; k < n; k++) {
+					uint64_t u = rclass(in->dt) == RC_I32 ? (uint64_t)(int64_t)((const int32_t *)PU(in))[k] : PI(in)[k];
+
+					if (u >= len && !e[k]) e[k] = E_RANGE;
+				}
 			}
 		}
+		gather_elems(v->dt, base, off, n, NP(x));
 		return;
 	}
 	}
@@ -1876,7 +2413,7 @@ static bool check_errors(evalr *ev, int n)
 			case E_DIV0: zend_throw_exception(zend_ce_division_by_zero_error, "Division by zero", 0); break;
 			case E_SHIFTNEG: zend_throw_exception(zend_ce_arithmetic_error, "Bit shift by negative number", 0); break;
 			case E_POWNEG: zend_value_error("Negative exponent in an integer power; convert() to a float dtype first"); break;
-			default: {
+			case E_RANGE: {
 				smart_str s = {0};
 
 				for (int i = 0; i < ev->c->nd; i++) {
@@ -1886,7 +2423,10 @@ static bool check_errors(evalr *ev, int n)
 				smart_str_0(&s);
 				zend_value_error("Buffers\\Tensor::%s(): an index of a captured tensor is out of range (at element [%s])", ev->c->method, s.s ? ZSTR_VAL(s.s) : "");
 				smart_str_free(&s);
+				break;
 			}
+			default:   /* an operation on constants */
+				zend_throw_exception(ev->c->ferr[code - E_CUSTOM].ce, ZSTR_VAL(ev->c->ferr[code - E_CUSTOM].msg), 0);
 			}
 			return false;
 		}
@@ -1899,7 +2439,7 @@ static void plan(evalr *ev)
 {
 	comp *c = ev->c;
 	int *stack = emalloc(sizeof(int) * (size_t)(c->nn + 1)), sp = 0, *freer = emalloc(sizeof(int) * (size_t)(c->nn + 1)), nfree = 0;
-	int *freee = emalloc(sizeof(int) * (size_t)(c->nn + 1)), nfreee = 0;
+	int *freee = emalloc(sizeof(int) * (size_t)(c->nn + 1)), nfreee = 0, *eroot, *elast;
 
 	for (int j = 0; j < ev->nout; j++) stack[sp++] = ev->out[j];
 	while (sp) {
@@ -1932,6 +2472,33 @@ static void plan(evalr *ev)
 		ev->order[ev->norder++] = i;
 	}
 	for (int j = 0; j < ev->nout; j++) c->nodes[ev->out[j]].last = INT_MAX;
+	/* error arrays: a node that can fail itself, a select, or one with two failing operands has its own; any other
+	 * failing node passes on the array of its one failing operand (eroot), which then lives until the last reader of
+	 * any node sharing it (elast) */
+	eroot = emalloc(sizeof(int) * (size_t)c->nn);
+	elast = emalloc(sizeof(int) * (size_t)c->nn);
+	for (int o = 0; o < ev->norder; o++) {
+		int i = ev->order[o], nf = 0, only = -1;
+		enode *x = &c->nodes[i];
+
+		eroot[i] = -1;
+		elast[i] = -1;
+		if (!x->fails) continue;
+		if (x->kind != NK_GATHER && x->kind != NK_SELECT && !x->owns) {
+			int ops[3] = {x->a, x->b, x->c};
+
+			for (int k = 0; k < 3; k++) {
+				if (ops[k] >= 0 && c->nodes[ops[k]].fails && ops[k] != only) { nf++; only = ops[k]; }
+			}
+		}
+		eroot[i] = nf == 1 ? eroot[only] : i;
+		x->ealias = eroot[i] != i;
+	}
+	for (int o = 0; o < ev->norder; o++) {
+		int i = ev->order[o];
+
+		if (eroot[i] >= 0 && c->nodes[i].last > elast[eroot[i]]) elast[eroot[i]] = c->nodes[i].last;
+	}
 	ev->nreg = ev->nereg = 0;
 	for (int o = 0; o < ev->norder; o++) {
 		int i = ev->order[o];
@@ -1939,7 +2506,7 @@ static void plan(evalr *ev)
 
 		/* a constant is filled once, so its register is its own for the whole evaluation */
 		x->reg = nfree && x->kind != NK_CONST ? freer[--nfree] : ev->nreg++;
-		if (x->fails) x->ereg = nfreee ? freee[--nfreee] : ev->nereg++;
+		if (x->fails) x->ereg = x->ealias ? c->nodes[eroot[i]].ereg : nfreee ? freee[--nfreee] : ev->nereg++;
 		/* operands read for the last time here: their registers are free for the nodes after this one */
 		{
 			int ops[3] = {-1, -1, -1};
@@ -1956,7 +2523,13 @@ static void plan(evalr *ev)
 					for (int q = 0; q < k; q++) dup = dup || ops[q] == ops[k];
 					if (dup) continue;
 					freer[nfree++] = y->reg;
-					if (y->ereg >= 0) freee[nfreee++] = y->ereg;
+				}
+				/* the error array, when this is the last reader of every node that shares it */
+				if (y->fails && elast[eroot[ops[k]]] == i) {
+					bool dup = false;
+
+					for (int q = 0; q < k; q++) dup = dup || (ops[q] >= 0 && c->nodes[ops[q]].fails && eroot[ops[q]] == eroot[ops[k]]);
+					if (!dup) { freee[nfreee++] = c->nodes[eroot[ops[k]]].ereg; elast[eroot[ops[k]]] = -2; }
 				}
 			}
 			if (x->kind == NK_GATHER) {
@@ -1965,9 +2538,10 @@ static void plan(evalr *ev)
 					bool dup = false;
 
 					for (int q = 0; q < k; q++) dup = dup || c->pool[x->a + q] == c->pool[x->a + k];
-					if (!dup && y->last == i && y->kind != NK_CONST) {
-						freer[nfree++] = y->reg;
-						if (y->ereg >= 0) freee[nfreee++] = y->ereg;
+					if (!dup && y->last == i && y->kind != NK_CONST) freer[nfree++] = y->reg;
+					if (y->fails && elast[eroot[c->pool[x->a + k]]] == i) {
+						freee[nfreee++] = c->nodes[eroot[c->pool[x->a + k]]].ereg;
+						elast[eroot[c->pool[x->a + k]]] = -2;
 					}
 				}
 			}
@@ -1976,6 +2550,8 @@ static void plan(evalr *ev)
 	efree(stack);
 	efree(freer);
 	efree(freee);
+	efree(eroot);
+	efree(elast);
 }
 
 /* the inputs: a Tensor, a TensorAggregate (its getTensor()) or a PHP scalar; false after throwing */
@@ -2094,6 +2670,8 @@ static void comp_free(comp *c, zval *holds)
 	for (int i = 0; i < c->ncapt; i++) zval_ptr_dtor(&c->capz[i]);
 	if (c->nodes) efree(c->nodes);
 	if (c->pool) efree(c->pool);
+	if (c->ht) efree(c->ht);
+	for (int i = 0; i < c->nferr; i++) zend_string_release(c->ferr[i].msg);
 }
 
 /* a captured tensor that shares memory with the destination is read from a copy made before the first write */
@@ -2165,7 +2743,7 @@ static void each_impl(INTERNAL_FUNCTION_PARAMETERS, bool assign)
 			RETURN_THROWS();
 		}
 	}
-	if (!compile(&c, fn)) { comp_free(&c, holds); RETURN_THROWS(); }
+	if (!run_func(&c, fn, NULL, 0)) { comp_free(&c, holds); RETURN_THROWS(); }
 
 	/* the outputs, in one dtype */
 	if (c.ret.t == V_LIST) {
@@ -2195,6 +2773,15 @@ static void each_impl(INTERNAL_FUNCTION_PARAMETERS, bool assign)
 		odt = c.nodes[ev.out[0]].dt;
 	}
 	ev.nout = kout;
+	/* assign(): computed in the destination's dtype when the conversion gives what convert() gives (every arithmetic
+	 * dtype; a Float64 result into BFloat16 is left to convert(), which rounds through Float32) */
+	if (assign && dt_arith(self->dt) && self->dt != odt && !(self->dt == BUF_T_BFLOAT16 && odt == BUF_T_FLOAT64)) {
+		for (int j = 0; j < kout; j++) {
+			ev.out[j] = cast(&c, ev.out[j], self->dt);
+			if (ev.out[j] < 0) { comp_free(&c, holds); RETURN_THROWS(); }
+		}
+		odt = self->dt;
+	}
 
 	for (int j = 0; j < c.nd; j++) {
 		if (buf_mul_ovf(total, c.shape[j], &total)) { zend_value_error("The result is too large"); comp_free(&c, holds); RETURN_THROWS(); }
@@ -2365,7 +2952,13 @@ static void each_impl(INTERNAL_FUNCTION_PARAMETERS, bool assign)
 					uint8_t *d = self->data;
 
 					for (int j = 0; j + 1 < nd; j++) { s += idx[j] * csb[j]; d += idx[j] * self->sbytes[j]; }
-					buffers_convert(odt, s, 1, self->dt, d, nd ? self->sbytes[nd - 1] / dsz : 1, in);
+					if (odt == self->dt) {
+						int64_t ds = nd ? self->sbytes[nd - 1] : 0;
+
+						for (int64_t k = 0; k < in; k++) memcpy(d + k * ds, s + k * dsz, (size_t)dsz);
+					} else {
+						buffers_convert(odt, s, 1, self->dt, d, nd ? self->sbytes[nd - 1] / dsz : 1, in);
+					}
 					for (int j = nd - 2; j >= 0; j--) {
 						if (++idx[j] < self->shape[j]) break;
 						idx[j] = 0;

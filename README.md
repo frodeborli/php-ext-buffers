@@ -430,9 +430,9 @@ $edge = $img->each(fn($v, $y, $x) => $x > 0 ? $v - $img[$y][$x - 1] : 0);       
 
 * Parameters: one per input (the tensor itself, then the extra arguments: tensors, `TensorAggregate`s, `int`/`float`/`bool`),
   then the element's coordinates as `Int64` (`Int32` on 32-bit PHP), one per axis.
-* The body may use the operators, element-wise comparisons, `?:`, `&&`, `||`, `!`, `(int)`/`(float)`/`(bool)`, `if` with
-  `return`, captured `int`/`float`/`bool` values and tensors, and `abs`, `floor`, `ceil`, `round`, `sqrt`, `min`, `max`,
-  `intdiv`, `fmod`, `is_nan`, `is_finite`, `is_infinite`. Anything else throws (`ValueError`, or `TypeError` for dtypes) before
+* The body may use the operators, element-wise comparisons, `?:`, `&&`, `||`, `!`, `(int)`/`(float)`/`(bool)`, local
+  variables, `if` with `return` (no loops), captured `int`/`float`/`bool` values and tensors, `abs`, `floor`, `ceil`, `round`, `sqrt`, `min`, `max`,
+  `intdiv`, `fmod`, `is_nan`, `is_finite`, `is_infinite`, and functions and static methods written in PHP, which are inlined. Anything else throws (`ValueError`, or `TypeError` for dtypes) before
   any element is computed.
 * Every operation gives the same bits as the operator does on whole tensors. Integer `%` by zero, negative shifts and
   out-of-range reads are raised for the first element, in row-major order, that needs them; a branch the element does
@@ -775,12 +775,12 @@ without the feature (see Performance).
 
 What has been run, on Linux x86-64 (Ubuntu host, Debian 12 and Alpine containers):
 
-* `tests/` phpt suite (76 files), run twice: with the extension alone, and with the API consumer test extension loaded. On PHP 8.4
-  and 8.5, Debian/glibc and Alpine/musl, NTS and ZTS (`tools/docker-test.sh`, 8 images): 50 + 69 pass, the rest skip (tests that
-  need the consumer, 32-bit-only tests, the PHP 8.3 variants). On PHP 8.3 (Debian and Alpine NTS): 47 + 66 pass; the tests of
+* `tests/` phpt suite (78 files), run twice: with the extension alone, and with the API consumer test extension loaded. On PHP 8.4
+  and 8.5, Debian/glibc and Alpine/musl, NTS and ZTS (`tools/docker-test.sh`, 8 images): 52 + 71 pass, the rest skip (tests that
+  need the consumer, 32-bit-only tests, the PHP 8.3 variants). On PHP 8.3 (Debian and Alpine NTS): 49 + 68 pass; the tests of
   property hooks skip and their 8.3 variants run. No compiler warnings with `-Wall -Wextra`.
 * 32-bit PHP (`DOCKER_PLATFORM=linux/386`, Debian, 8.5 and 8.3): 39 + 56 and 36 + 53 pass; the tests that need 64-bit dtypes skip.
-* The whole suite, both passes, under valgrind with `USE_ZEND_ALLOC=0` (`tools/valgrind.sh`, PHP 8.5 NTS): 49 + 68 pass, zero errors,
+* The whole suite, both passes, under valgrind with `USE_ZEND_ALLOC=0` (`tools/valgrind.sh`, PHP 8.5 NTS): 51 + 70 pass, zero errors,
   zero leaks.
 * Arithmetic: `arith_exact.phpt` compares every operator bit for bit with an independent oracle (PHP double and integer arithmetic,
   rounded once to the format) for `Float16`, `BFloat16`, `Float32`, `Float64` and 8/16/32-bit integers, on an AMD Ryzen 9 9950X3D
@@ -789,7 +789,8 @@ What has been run, on Linux x86-64 (Ubuntu host, Debian 12 and Alpine containers
   (`tools/promotion-table.php`) and checked against `buffers_dtype_promote()`.
 * `each()` and `assign()` (`tests/extras`): every operator on every pair of arithmetic dtypes and PHP scalars gives the same dtype,
   shape and bits (or the same exception) as the eager operator; 150 random nested expressions over three broadcast inputs equal the
-  same expression evaluated with the operators. The same results with opcache off and on and under both JIT modes (PHP 8.3), under
+  same expression evaluated with the operators; 200 random closures with errors under branches, gathers and calls raise exactly
+  what calling them in PHP element by element raises (and the same values otherwise). The same results with opcache off and on and under both JIT modes (PHP 8.3), under
   the tracing JIT (8.4, 8.5), and in a `-DBUF_FORCE_SWAP` build. Built with `--disable-buffers-extras`, the core passes the same tests
   and the extras tests skip.
 * `tools/oracle/run.sh decode|encode|doubles|ints`, against ml_dtypes 0.5.4: every code of every format of at most 16 bits decodes identically;

@@ -41,6 +41,8 @@ show('ternary', fn() => $b->each(fn($v) => $v > 15 ? $v : 0));
 show('short ternary', fn() => Tensor::fromArray([0, 3, 0, 5], DType::Int8)->each(fn($v) => $v ?: -1));
 show('and / or / not', fn() => $b->each(fn($v) => ($v > 10 && $v < 40) || !($v != 10)));
 show('mask input', fn() => $a->each(fn($v, $keep) => $keep ? $v : -$v, Tensor::fromArray([true, false, true, false], DType::Bool)));
+show('local variables', fn() => Tensor::fromArray([-2.0, 0.5, 3.0], DType::Float64)->each(function ($v) { $s = $v * 2; $s += 1; $t = $s; $t *= $t; if ($t > 10) { $t = 10; } return [$s, $t]; }));
+show('increments', fn() => Tensor::fromArray([1, 2], DType::Int32)->each(function ($v) { $i = $v; $j = $i++; ++$i; $k = --$j; return [$i, $j, $k]; }));
 show('if / elseif with returns', fn() => Tensor::fromArray([-2, 0, 3], DType::Int32)->each(function ($v) { if ($v > 0) { return 1; } elseif ($v < 0) { return -1; } return 0; }));
 
 echo "-- functions\n";
@@ -107,6 +109,8 @@ ternary: [0,20,30,40] Int32 [4]
 short ternary: [-1,3,-1,5] Int8 [4]
 and / or / not: [true,true,true,false] Bool [4]
 mask input: [1,-2,3,-4] Float32 [4]
+local variables: [[-3,9],[2,4],[7,10]] Float64 [3,2]
+increments: [[3,0,0],[4,1,1]] Int32 [2,3]
 if / elseif with returns: [-1,0,1] Int64 [3]
 -- functions
 min max clamp: [2,2,3,3] Float32 [4]

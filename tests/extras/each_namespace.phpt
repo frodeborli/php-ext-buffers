@@ -1,5 +1,5 @@
 --TEST--
-Tensor::each(): closures declared in a namespace (unqualified and namespaced function names)
+Tensor::each(): closures declared in a namespace (unqualified names, namespaced functions)
 --SKIPIF--
 <?php if (!extension_loaded('buffers') || !method_exists(Buffers\Tensor::class, 'each')) die('skip built without the extras'); ?>
 --FILE--
@@ -15,14 +15,14 @@ $a = Tensor::fromArray([-2.5, 0.25, 7.0], DType::Float32);
 echo json_encode($a->each(fn($v) => max(0.0, min(abs($v), 1.0)))->toArray()), "\n";
 echo json_encode($a->each(fn($v) => \max(0.0, \min($v, 1.0)))->toArray()), "\n";
 
-// a namespaced function of the same name is what PHP would call: not one of the supported functions
-function round(float $v): float { return $v; }
-try { $a->each(fn($v) => round($v)); } catch (\ValueError $e) { echo $e->getMessage(), "\n"; }
-try { $a->each(fn($v) => clampish($v)); } catch (\ValueError $e) { echo $e->getMessage(), "\n"; }
+// a namespaced function of the same name is what PHP calls: a function written in PHP, inlined like any other
+function round(float $v): float { return $v * 10; }
+echo json_encode($a->each(fn($v) => round($v))->toArray()), "\n";
+echo json_encode($a->each(fn($v) => clampish($v) + 1)->toArray()), "\n";
 echo json_encode($a->each(fn($v) => \round($v))->toArray()), "\n";
 --EXPECT--
 [1,0.25,1]
 [0,0.25,1]
-Buffers\Tensor::each(): the namespaced function App\Imaging\round() is not supported in a tensor expression (line 15)
-Buffers\Tensor::each(): the namespaced function App\Imaging\clampish() is not supported in a tensor expression (line 16)
+[-25,2.5,70]
+[-1.5,1.25,8]
 [-3,0,7]

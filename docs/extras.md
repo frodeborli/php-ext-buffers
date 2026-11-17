@@ -52,7 +52,9 @@ The result's dtype is the dtype of the returned expression; the elements of a re
 
 ## What the closure may contain
 
-The body is an expression (an arrow function), or `return` statements, possibly inside `if` / `elseif` / `else`. Accepted:
+The body is an expression (an arrow function), or statements without loops: assignments to local variables (`$a = …`,
+`$a += …` and the other compound operators, `++`, `--`), `if` / `elseif` / `else`, and `return`. A local variable names
+the value assigned to it; after an `if`, it has the value of the path the element took. Accepted in expressions:
 
 * parameters; captured variables of type `int`, `float` and `bool` (constants), and captured tensors (below);
 * literals of type `int`, `float` and `bool`;
@@ -67,14 +69,20 @@ The body is an expression (an arrow function), or `return` statements, possibly 
   infinities give 0), `(float)` (to `Float64`) and `(bool)`;
 * the functions below, called by their global names (also unqualified inside a namespace, unless the namespace defines a
   function of that name);
+* functions and static methods written in PHP (`helper($x)`, `self::helper($x)`, `ClassName::helper($x)`; `static::` only
+  where no subclass can override the method): they are evaluated as part of the expression, with PHP's conversions of
+  arguments and return values (an `int` passed to a `float` parameter becomes a float) and default arguments. The same
+  rules apply inside them. Recursion, and calls nested more than 8 deep, are rejected;
+* `[$a, $b] = $array` and `$array[0]` on arrays of fixed length (an `array` parameter, an array literal, a returned
+  array of an inlined function);
 * reading a captured tensor (below).
 
 Operations on constants only are what PHP computes for them (`2 ** 3` is `8`), as when the same expression is evaluated
 by PHP before it meets a tensor.
 
 Everything else is a `ValueError` (unsupported construct) or `TypeError` (dtypes), thrown by `each()` or `assign()`
-before any element is computed: other functions, strings, arrays other than a returned literal, assignments, other
-statements, loops, generators, by-reference parameters or captures, variadic parameters, named
+before any element is computed: other internal functions, instance methods, strings, arrays with keys,
+assignments to anything but a local variable, other statements, loops, generators, by-reference parameters or captures, variadic parameters, named
 arguments, and captured values of other types.
 
 ### Functions
@@ -102,10 +110,12 @@ writes into the same memory.
 ## Errors of elements
 
 Integer `%` and `intdiv()` by zero (`DivisionByZeroError`), a shift by a negative count (`ArithmeticError`), a negative
-integer exponent (`ValueError`) and an index out of range are errors of an element. The error raised is the one of the
-first element, in row-major order of the result, whose value needs an erroneous operation; when an element has
-several, the first in evaluation order. An operation in a branch of `?:`, `&&` or `||` that the element does not select
-raises nothing. After such an error, `each()` returns nothing and `assign()` leaves the tensor unchanged.
+integer exponent (`ValueError`), an index out of range, and an operation on constants that PHP itself rejects (`1 % 0`) are
+errors of an element. An element raises the error that calling the closure in PHP for that element would raise: the
+first one met in PHP's evaluation order, including conditions, operations whose value is not used and inlined calls; an
+operation in a branch of `?:`, `&&`, `||` or `if` that the element does not take raises nothing. Of the elements, the
+first in row-major order of the result that has an error raises it. After such an error, `each()` returns nothing and
+`assign()` leaves the tensor unchanged.
 
 ## assign()
 

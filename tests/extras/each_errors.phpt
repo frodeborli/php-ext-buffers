@@ -24,7 +24,6 @@ $o = new stdClass;
 attempt('captured object', fn() => $a->each(fn($v) => $o ? $v : 0));
 $x = 1;
 attempt('by-reference capture', fn() => $a->each(function ($v) use (&$x) { return $v + $x; }));
-attempt('assignment', fn() => $a->each(function ($v) { $w = $v * 2; return $w; }));
 attempt('loop', fn() => $a->each(function ($v) { for ($k = 0; $k < 3; $k++) $v += 1; return $v; }));
 attempt('generator', fn() => $a->each(function ($v) { yield $v; }));
 attempt('variadic', fn() => $a->each(fn(...$v) => 1));
@@ -75,29 +74,28 @@ string: ValueError: Buffers\Tensor::each(): the operation CONCAT is not supporte
 captured string: ValueError: Buffers\Tensor::each(): the captured variable $s of type string is not supported in a tensor expression (line 16)
 captured object: ValueError: Buffers\Tensor::each(): the captured variable $o of type stdClass is not supported in a tensor expression (line 18)
 by-reference capture: ValueError: Buffers\Tensor::each(): the by-reference capture of $x is not supported in a tensor expression (line 20)
-assignment: ValueError: Buffers\Tensor::each(): the operation ASSIGN is not supported in a tensor expression (line 21)
-loop: ValueError: Buffers\Tensor::each(): the operation ASSIGN is not supported in a tensor expression (line 22)
-generator: ValueError: Buffers\Tensor::each(): a generator is not supported in a tensor expression (line 23)
-variadic: ValueError: Buffers\Tensor::each(): a variadic parameter is not supported in a tensor expression (line 24)
-by-reference parameter: ValueError: Buffers\Tensor::each(): the by-reference parameter $v is not supported in a tensor expression (line 25)
+loop: ValueError: Buffers\Tensor::each(): a loop is not supported in a tensor expression (line 21)
+generator: ValueError: Buffers\Tensor::each(): a generator is not supported in a tensor expression (line 22)
+variadic: ValueError: Buffers\Tensor::each(): a variadic parameter is not supported in a tensor expression (line 23)
+by-reference parameter: ValueError: Buffers\Tensor::each(): the by-reference parameter $v is not supported in a tensor expression (line 24)
 array literal indexed with a constant: [2,3,4] Float32
-named arguments: ValueError: Buffers\Tensor::each(): this argument (named arguments are not supported) is not supported in a tensor expression (line 27)
+named arguments: ValueError: Buffers\Tensor::each(): this argument (named arguments are not supported) is not supported in a tensor expression (line 26)
 too few parameters: ArgumentCountError: Buffers\Tensor::each(): the closure must take a parameter for each of the 2 inputs, it takes 1
 too many coordinates: ArgumentCountError: Buffers\Tensor::each(): the closure takes 3 parameters, but there are 1 inputs and 1 axes to iterate over
 internal callable: ValueError: Buffers\Tensor::each(): Argument #1 ($fn) must be a closure written in PHP
 not a tensor input: TypeError: Buffers\Tensor::each(): Argument #2 must be of type Buffers\TensorAggregate|int|float|bool, string given
 -- dtype rules, as for the operators
-Bool arithmetic: TypeError: Buffers\Tensor::each(): unsupported operand dtypes for +: Bool and int (line 34)
-Bool with numbers in ?:: TypeError: Buffers\Tensor::each(): Bool and Float32 have no common dtype (line 35)
-bitwise on floats: TypeError: Buffers\Tensor::each(): unsupported operand dtypes for &: Float32 and int (line 36)
-int does not fit: ValueError: Buffers\Tensor::each(): operand 300 does not fit the dtype UInt8 of the other operand (line 37)
-Float16 with BFloat16: TypeError: Buffers\Tensor::each(): unsupported operand dtypes for +: Float16 and BFloat16 (line 38)
+Bool arithmetic: TypeError: Buffers\Tensor::each(): unsupported operand dtypes for +: Bool and int (line 33)
+Bool with numbers in ?:: TypeError: Buffers\Tensor::each(): the paths that reach this value give it dtypes that have no common dtype (such as Bool and a number), or an array on one and an element on another (line 34)
+bitwise on floats: TypeError: Buffers\Tensor::each(): unsupported operand dtypes for &: Float32 and int (line 35)
+int does not fit: ValueError: Buffers\Tensor::each(): operand 300 does not fit the dtype UInt8 of the other operand (line 36)
+Float16 with BFloat16: TypeError: Buffers\Tensor::each(): unsupported operand dtypes for +: Float16 and BFloat16 (line 37)
 storage dtype input: TypeError: Buffers\Tensor::each(): input 1 has dtype Float8E4M3FN, which has no arithmetic; convert() it first
-int parameter for floats: TypeError: Buffers\Tensor::each(): parameter $v does not accept elements of dtype Float32 (line 40)
+int parameter for floats: TypeError: Buffers\Tensor::each(): parameter $v does not accept elements of dtype Float32 (line 39)
 array parameter for a scalar: TypeError: Buffers\Tensor::each(): parameter $w is an array, so input 2 must have at least one axis
-array index out of range: ValueError: Buffers\Tensor::each(): index 2 is out of range for an array parameter of length 2 (line 42)
-array index not constant: ValueError: Buffers\Tensor::each(): indexing an array parameter with anything but an integer literal is not supported in a tensor expression (line 43)
-float tensor index: TypeError: Buffers\Tensor::each(): a tensor index must be an integer, not Float32 (line 44)
+array index out of range: ValueError: Buffers\Tensor::each(): index 2 is out of range for an array parameter of length 2 (line 41)
+array index not constant: ValueError: Buffers\Tensor::each(): indexing an array parameter with anything but an integer literal is not supported in a tensor expression (line 42)
+float tensor index: TypeError: Buffers\Tensor::each(): a tensor index must be an integer, not Float32 (line 43)
 -- errors of elements: raised for the first element that is selected
 modulo by zero: DivisionByZeroError: Modulo by zero
 not selected: [0,-1,0,0] Int32
