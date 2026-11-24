@@ -21,7 +21,7 @@
 
 extern zend_module_entry buffers_module_entry;
 #define phpext_buffers_ptr &buffers_module_entry
-#define PHP_BUFFERS_VERSION "0.1.0"
+#define PHP_BUFFERS_VERSION "0.2.0-beta1"
 
 #if defined(ZTS) && defined(COMPILE_DL_BUFFERS)
 ZEND_TSRMLS_CACHE_EXTERN()
